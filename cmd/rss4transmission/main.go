@@ -24,12 +24,13 @@ import (
 	"strings"
 
 	"github.com/alecthomas/kong"
-	"github.com/knadh/koanf"
-	// "github.com/knadh/koanf/parsers/yaml"
-	// "github.com/knadh/koanf/providers/file"
+	"github.com/hekmon/transmissionrpc/v2"
+	"github.com/knadh/koanf/parsers/yaml"
+	"github.com/knadh/koanf/providers/file"
+	"github.com/knadh/koanf/v2"
 	"github.com/mattn/go-colorable"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
 var Version = "unknown"
@@ -37,6 +38,7 @@ var Buildinfos = "unknown"
 var Tag = "NO-TAG"
 var CommitID = "unknown"
 var Delta = ""
+var log *logrus.Logger
 
 const (
 	Copyright = "2023"
@@ -49,9 +51,12 @@ var CONFIG_FILE = []string{
 }
 
 type RunContext struct {
-	Ctx  *kong.Context
-	Cli  *CLI
-	Konf *koanf.Koanf
+	Ctx          *kong.Context
+	Cli          *CLI
+	Konf         *koanf.Koanf
+	Config       Config
+	Cache        *CacheFile
+	Transmission *transmissionrpc.Client
 }
 
 type CLI struct {
@@ -72,13 +77,9 @@ type WatchCmd struct {
 	Sleep int      `kong:"short='s',default='60',help='Seconds to sleep between scraping'"`
 }
 
-type OnceCmd struct {
-	Feed        []string `kong:"help='Limit scraping to the given feed(s)'"`
-	Interactive bool     `kong:"short='i',help='Interactive mode',xor='action'"`
-	NoAction    bool     `kong:"short='n',help='Just print results and take no action',xor='action'"`
-}
-
 func main() {
+	log = logrus.New()
+
 	cli := CLI{}
 	ctx := kong.Parse(
 		&cli,
@@ -88,20 +89,27 @@ func main() {
 
 	switch cli.LogLevel {
 	case "debug":
-		log.SetLevel(log.DebugLevel)
+		log.SetLevel(logrus.DebugLevel)
 	case "info":
-		log.SetLevel(log.InfoLevel)
+		log.SetLevel(logrus.InfoLevel)
 		log.SetOutput(colorable.NewColorableStdout())
 	case "warn":
-		log.SetLevel(log.WarnLevel)
+		log.SetLevel(logrus.WarnLevel)
 		log.SetOutput(colorable.NewColorableStdout())
 	case "error":
-		log.SetLevel(log.ErrorLevel)
+		log.SetLevel(logrus.ErrorLevel)
 		log.SetOutput(colorable.NewColorableStdout())
 	}
 	if cli.Lines {
 		log.SetReportCaller(true)
 	}
+
+	log.SetFormatter(&logrus.TextFormatter{
+		DisableLevelTruncation: true,
+		PadLevelText:           true,
+		DisableTimestamp:       true,
+	})
+
 	if cli.LogFile == "stderr" {
 		log.SetOutput(os.Stderr)
 	} else {
@@ -112,25 +120,48 @@ func main() {
 		log.SetOutput(file)
 	}
 
-	rc := RunContext{
-		Cli:  &cli,
-		Ctx:  ctx,
-		Konf: koanf.New("."),
+	var cache *CacheFile
+	var err error
+	if cache, err = OpenCache(cli.Cache); err != nil {
+		log.WithError(err).Fatalf("Unable to open cache file")
 	}
 
-	/*
-		if ctx.Command() != "version" {
-			configFile := GetPath(cli.Config)
-			if err := rc.Konf.Load(file.Provider(configFile), yaml.Parser()); err != nil {
-				log.WithError(err).Fatalf("Unable to open config file: %s", configFile)
-			}
-		}
-	*/
+	rc := RunContext{
+		Cli:    &cli,
+		Ctx:    ctx,
+		Konf:   koanf.New("."),
+		Config: Config{},
+		Cache:  cache,
+	}
 
-	err := ctx.Run(&rc)
-	if err != nil {
+	if ctx.Command() != "version" {
+		configFile := GetPath(cli.Config)
+		if err := rc.Konf.Load(file.Provider(configFile), yaml.Parser()); err != nil {
+			log.WithError(err).Fatalf("Unable to open config file: %s", configFile)
+		}
+	}
+
+	ac := transmissionrpc.AdvancedConfig{
+		HTTPS:       rc.Konf.Bool("Transmission.HTTPS"),
+		Port:        uint16(rc.Konf.Int("Transmission.Port")),
+		RPCURI:      rc.Konf.String("Transmission.Path"),
+		HTTPTimeout: 30, // 30 sec
+		UserAgent:   fmt.Sprintf("rss4transmission/%s", Version),
+		Debug:       false,
+	}
+	if rc.Transmission, err = transmissionrpc.New(rc.Konf.String("Transmission.Host"),
+		rc.Konf.String("Transmission.Username"), rc.Konf.String("Transmission.Password"), &ac); err != nil {
+		log.WithError(err).Fatalf("Unable to setup Transmission client")
+	}
+
+	if err := rc.Konf.Unmarshal("", &rc.Config); err != nil {
+		log.WithError(err).Fatalf("Unable to process config")
+	}
+
+	if err = ctx.Run(&rc); err != nil {
 		log.Fatalf("Error running command: %s", err.Error())
 	}
+	rc.Cache.SaveCache()
 }
 
 type VersionCmd struct{}

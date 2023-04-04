@@ -6,19 +6,24 @@ require (
 	github.com/alecthomas/kong v0.7.1
 	github.com/gregdel/pushover v1.1.0
 	github.com/hekmon/transmissionrpc v1.1.0
+	github.com/hekmon/transmissionrpc/v2 v2.0.1
 	github.com/knadh/koanf v1.5.0
+	github.com/knadh/koanf/v2 v2.0.0
+	github.com/manifoldco/promptui v0.9.0
 	github.com/mattn/go-colorable v0.1.8
 	github.com/mmcdole/gofeed v1.2.0
 	github.com/sirupsen/logrus v1.8.1
 	golang.org/x/sys v0.5.0
 )
 
+require github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect
+
 require (
 	github.com/PuerkitoBio/goquery v1.8.0 // indirect
 	github.com/andybalholm/cascadia v1.3.1 // indirect
 	github.com/fsnotify/fsnotify v1.4.9 // indirect
-	github.com/hashicorp/go-cleanhttp v0.5.1 // indirect
-	github.com/hekmon/cunits/v2 v2.0.2 // indirect
+	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
+	github.com/hekmon/cunits/v2 v2.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/mattn/go-isatty v0.0.12 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
