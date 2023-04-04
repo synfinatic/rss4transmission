@@ -142,12 +142,12 @@ func main() {
 	}
 
 	ac := transmissionrpc.AdvancedConfig{
-		HTTPS:       rc.Konf.Bool("Transmission.HTTPS"),
-		Port:        uint16(rc.Konf.Int("Transmission.Port")),
-		RPCURI:      rc.Konf.String("Transmission.Path"),
-		HTTPTimeout: 30, // 30 sec
-		UserAgent:   fmt.Sprintf("rss4transmission/%s", Version),
-		Debug:       false,
+		// HTTPS:       rc.Konf.Bool("Transmission.HTTPS"),
+		// Port:        uint16(rc.Konf.Int("Transmission.Port")),
+		// RPCURI:      rc.Konf.String("Transmission.Path"),
+		// HTTPTimeout: 30, // 30 sec
+		UserAgent: fmt.Sprintf("rss4transmission/%s", Version),
+		Debug:     false,
 	}
 	if rc.Transmission, err = transmissionrpc.New(rc.Konf.String("Transmission.Host"),
 		rc.Konf.String("Transmission.Username"), rc.Konf.String("Transmission.Password"), &ac); err != nil {

@@ -25,6 +25,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"time"
 
 	"github.com/hekmon/transmissionrpc/v2"
 	"github.com/mmcdole/gofeed"
@@ -38,17 +39,20 @@ type FeedItem struct {
 	Item *gofeed.Item
 }
 
-func (fi *FeedItem) getTorrentContents() ([]byte, error) {
-	torrentUrl := ""
-
+func (fi *FeedItem) TorrentURL() (string, error) {
 	for _, enclosure := range fi.Item.Enclosures {
 		if enclosure.Type == "application/x-bittorrent" {
-			torrentUrl = enclosure.URL
-			break
+			return enclosure.URL, nil
 		}
 	}
-	if torrentUrl == "" {
-		return []byte{}, fmt.Errorf("Unable to find torrent link for %s", fi.Item.Title)
+
+	return "", fmt.Errorf("Unable to find Type = application/x-bittorrent for %s", fi.Item.Title)
+}
+
+func (fi *FeedItem) getTorrentContents() ([]byte, error) {
+	torrentUrl, err := fi.TorrentURL()
+	if err != nil {
+		return []byte{}, err
 	}
 
 	resp, err := http.Get(torrentUrl)
@@ -74,20 +78,25 @@ func (fi *FeedItem) Download(dir string) (string, error) {
 	return filePath, nil
 }
 
-func (fi *FeedItem) Torrent(t *transmissionrpc.Client, dir string) (string, error) {
+func (fi *FeedItem) Torrent(t *transmissionrpc.Client, dir string) error {
 	var err error
-	var filePath string
+	var torrentURL string
 
-	if filePath, err = fi.Download("/tmp"); err != nil {
-		return filePath, err
+	if torrentURL, err = fi.TorrentURL(); err != nil {
+		return err
 	}
 
-	ctx := context.TODO()
-	if _, err = t.TorrentAddFileDownloadDir(ctx, filePath, dir); err != nil {
-		return filePath, err
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	addPayload := transmissionrpc.TorrentAddPayload{
+		DownloadDir: &dir,
+		Filename:    &torrentURL,
+	}
+	if _, err = t.TorrentAdd(ctx, addPayload); err != nil {
+		return err
 	}
 
-	return filePath, nil
+	return nil
 }
 
 func (f *Feed) NewItems(feed *gofeed.Feed) []*FeedItem {

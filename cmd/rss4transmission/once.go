@@ -77,11 +77,11 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 					log.Infof("Downloading: %s", filePath)
 
 				case Torrent:
-					if filePath, err = item.Torrent(ctx.Transmission, feed.DownloadPath); err != nil {
+					if err = item.Torrent(ctx.Transmission, feed.DownloadPath); err != nil {
 						log.WithError(err).Errorf("Unable to torrent: %s", name)
 						continue
 					}
-					log.Infof("Torrenting: %s", filePath)
+					log.Infof("Torrenting: %s", item.Item.Title)
 
 				case Skip:
 					ctx.Cache.AddItem(item)
@@ -92,11 +92,11 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 					log.Errorf("Unknown reply")
 				}
 			} else {
-				if filePath, err = item.Torrent(ctx.Transmission, feed.DownloadPath); err != nil {
+				if err = item.Torrent(ctx.Transmission, feed.DownloadPath); err != nil {
 					log.WithError(err).Errorf("Unable to torrent: %s", name)
 					continue
 				}
-				log.Infof("Torrenting: %s", filePath)
+				log.Infof("Torrenting: %s", item.Item.Title)
 			}
 
 			// add to the cache
