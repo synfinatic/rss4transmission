@@ -35,6 +35,7 @@ type OnceCmd struct {
 	DownloadPath string   `kong:"short='p',help='Path to download torrent files to ($PWD)'"`
 	Interactive  bool     `kong:"short='i',help='Interactive mode',xor='action'"`
 	NoAction     bool     `kong:"short='n',help='Just print results and take no action',xor='action'"`
+	Skip         bool     `kong:"short="s",help='Just skip any matching torrents',xor='action'"`
 }
 
 func (cmd *OnceCmd) Run(ctx *RunContext) error {
@@ -58,38 +59,52 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 		}
 
 		for _, item := range feed.NewItems(name, cache[feed.URL]) {
+			if ctx.Cache.Exists(name, item) {
+				log.Debugf("Skipping due to cache hit: %s", item.Item.Title)
+				continue
+			}
+
 			if ctx.Cli.Once.NoAction {
 				log.Infof("%s match: %s", name, item.Item.Title)
-				continue
+			} else if ctx.Cli.Once.Skip {
+				// add to cache and do nothing
+				ctx.Cache.AddItem(item)
 			} else if ctx.Cli.Once.Download {
 				if filePath, err = item.Download(ctx.Cli.Once.DownloadPath); err != nil {
-					log.WithError(err).Errorf("Unable to download: %s", name)
+					log.WithError(err).Errorf("Unable to download: %s", filePath)
 					continue
 				}
-				log.Infof("Downloaded: %s", filePath)
+				// add to the cache
+				ctx.Cache.AddItem(item)
 			} else if ctx.Cli.Once.Interactive {
 				switch prompt(name, item.Item.Title) {
 				case Download:
 					if filePath, err = item.Download(ctx.Cli.Once.DownloadPath); err != nil {
-						log.WithError(err).Errorf("Unable to download: %s", name)
+						log.WithError(err).Errorf("Unable to download: %s", filePath)
 						continue
 					}
-					log.Infof("Downloading: %s", filePath)
+					// add to the cache
+					ctx.Cache.AddItem(item)
 
 				case Torrent:
 					if err = item.Torrent(ctx.Transmission, feed.DownloadPath); err != nil {
 						log.WithError(err).Errorf("Unable to torrent: %s", name)
 						continue
 					}
-					log.Infof("Torrenting: %s", item.Item.Title)
+					// add to the cache
+					ctx.Cache.AddItem(item)
 
 				case Skip:
+					// add to cache and do nothing
 					ctx.Cache.AddItem(item)
 					continue
+
 				case SkipOnce:
 					continue // don't add to the cache
+
 				case Quit:
 					return nil
+
 				default:
 					log.Errorf("Unknown reply")
 				}
@@ -98,11 +113,10 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 					log.WithError(err).Errorf("Unable to torrent: %s", name)
 					continue
 				}
-				log.Infof("Torrenting: %s", item.Item.Title)
+				// add to the cache
+				ctx.Cache.AddItem(item)
 			}
 
-			// add to the cache
-			ctx.Cache.AddItem(item)
 		}
 	}
 

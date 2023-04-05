@@ -25,6 +25,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strings"
 
 	"github.com/hekmon/transmissionrpc/v2"
 	"github.com/mmcdole/gofeed"
@@ -69,11 +70,13 @@ func (fi *FeedItem) Download(dir string) (string, error) {
 	var contents []byte
 	var err error
 
+	filePath := path.Join(dir, fmt.Sprintf("%s.torrent", fi.Item.Title))
+	log.Debugf("Attempting to download torrent file: %s", filePath)
+
 	if contents, err = fi.getTorrentContents(); err != nil {
 		return "", err
 	}
 
-	filePath := path.Join(dir, fmt.Sprintf("%s.torrent", fi.Item.Title))
 	if err = os.WriteFile(filePath, contents, 0644); err != nil {
 		return "", fmt.Errorf("Unable to write %s: %s", filePath, err.Error())
 	}
@@ -84,6 +87,7 @@ func (fi *FeedItem) Torrent(t *transmissionrpc.Client, dir string) error {
 	var err error
 	var torrentURL string
 
+	log.Debugf("Attempting to torrent: %s", fi.Item.Title)
 	if torrentURL, err = fi.TorrentURL(); err != nil {
 		return err
 	}
@@ -93,6 +97,10 @@ func (fi *FeedItem) Torrent(t *transmissionrpc.Client, dir string) error {
 		Filename:    &torrentURL,
 	}
 	if _, err = t.TorrentAdd(context.TODO(), addPayload); err != nil {
+		if strings.Contains(err.Error(), "duplicate torrent") {
+			log.Warnf("Skipping duplicate torrent: %s", fi.Item.Title)
+			return nil // return success to add to cache
+		}
 		return err
 	}
 

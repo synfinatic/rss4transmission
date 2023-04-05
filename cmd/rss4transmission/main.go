@@ -66,7 +66,7 @@ type CLI struct {
 	Lines    bool   `kong:"help='Include line numbers in logs'"`
 	LogFile  string `kong:"help='Output log file (default: stderr)',default='stderr'"`
 	Config   string `kong:"help='Override path to config file'"`
-	Cache    string `kong:"help='Override path to cache file'"`
+	SeenFile string `kong:"help='Override path to SeenFile file'"`
 
 	// comamnds
 	Version VersionCmd `kong:"cmd,help='Print version and exit'"`
@@ -136,15 +136,30 @@ func main() {
 
 	// load our defaults
 	rc.Konf.Load(confmap.Provider(ConfigDefaults, "."), nil)
+	var configFile string
 
-	configFile := GetPath(cli.Config)
+	if cli.Config != "" {
+		configFile = GetPath(cli.Config)
+	} else {
+		for _, fName := range CONFIG_FILE {
+			if _, err := os.Stat(GetPath(fName)); err == nil {
+				configFile = fName
+				break
+			}
+		}
+	}
+	if configFile == "" {
+		log.Fatalf("Unable to locate config file")
+	}
+
 	if err := rc.Konf.Load(file.Provider(configFile), yaml.Parser()); err != nil {
 		log.WithError(err).Fatalf("Unable to open config file: %s", configFile)
 	}
 
+	// use our SeenFile
 	seenFileName := rc.Konf.String("SeenFile")
-	if cli.Cache != "" {
-		seenFileName = cli.Cache
+	if cli.SeenFile != "" {
+		seenFileName = cli.SeenFile
 	}
 
 	var err error
@@ -156,7 +171,7 @@ func main() {
 		HTTPS:       rc.Konf.Bool("Transmission.HTTPS"),
 		Port:        uint16(rc.Konf.Int("Transmission.Port")),
 		RPCURI:      rc.Konf.String("Transmission.Path"),
-		HTTPTimeout: 30, // 30 sec
+		HTTPTimeout: time.Duration(30 * time.Second), // 30 sec
 		UserAgent:   fmt.Sprintf("rss4transmission/%s", Version),
 		Debug:       false,
 	}

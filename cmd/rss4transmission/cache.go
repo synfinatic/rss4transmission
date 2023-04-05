@@ -67,7 +67,6 @@ func OpenCache(path string) (*CacheFile, error) {
 // duration
 func (c *CacheFile) SaveCache(d time.Duration) error {
 	NewSeen := []CacheRecord{}
-	log.Debugf("%v", c.Seen)
 	for _, s := range c.Seen {
 		if time.Since(s.AddTime) < d {
 			NewSeen = append(NewSeen, s)

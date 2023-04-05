@@ -1,4 +1,4 @@
 dist
-internal/old 
-test.yaml
+*.yaml
+*.json
 *.torrent

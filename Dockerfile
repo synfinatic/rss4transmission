@@ -9,4 +9,4 @@ COPY --from=builder  /code/dist/rss4transmission /usr/local/bin/
 ENV POLL_SECONDS=60
 ENV LOG_LEVEL="info"
 ENTRYPOINT ["/usr/local/bin/rss4transmission", "watch", "--sleep=$POLL_SECONDS", "--log-level=$LOG_LEVEL"]
-CMD ["--config=/mnt/config.yaml", "--cache=/mnt/cache.json"]
+CMD ["--config=/mnt/config.yaml", "--seen-file=/mnt/cache.json"]

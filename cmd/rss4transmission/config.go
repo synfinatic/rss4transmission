@@ -30,6 +30,7 @@ var ConfigDefaults = map[string]interface{}{
 	"Transmission.Path":     "/transmission/rpc",
 	"Transmission.Username": "admin",
 	"Transmission.Password": "admin",
+	"SeenCacheDays":         30,
 }
 
 type Config struct {
@@ -95,7 +96,6 @@ func (m *Feed) Check(item *gofeed.Item) bool {
 	}
 
 	// no match
-	log.Debugf("Skipped %s", item.Title)
 	return false
 }
 
