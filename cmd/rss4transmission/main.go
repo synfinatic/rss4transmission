@@ -22,10 +22,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/hekmon/transmissionrpc/v2"
 	"github.com/knadh/koanf/parsers/yaml"
+	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 	"github.com/mattn/go-colorable"
@@ -120,34 +122,43 @@ func main() {
 		log.SetOutput(file)
 	}
 
-	var cache *CacheFile
-	var err error
-	if cache, err = OpenCache(cli.Cache); err != nil {
-		log.WithError(err).Fatalf("Unable to open cache file")
-	}
-
 	rc := RunContext{
 		Cli:    &cli,
 		Ctx:    ctx,
 		Konf:   koanf.New("."),
 		Config: Config{},
-		Cache:  cache,
 	}
 
-	if ctx.Command() != "version" {
-		configFile := GetPath(cli.Config)
-		if err := rc.Konf.Load(file.Provider(configFile), yaml.Parser()); err != nil {
-			log.WithError(err).Fatalf("Unable to open config file: %s", configFile)
-		}
+	if ctx.Command() == "versin" {
+		ctx.Run(&rc)
+		return
+	}
+
+	// load our defaults
+	rc.Konf.Load(confmap.Provider(ConfigDefaults, "."), nil)
+
+	configFile := GetPath(cli.Config)
+	if err := rc.Konf.Load(file.Provider(configFile), yaml.Parser()); err != nil {
+		log.WithError(err).Fatalf("Unable to open config file: %s", configFile)
+	}
+
+	seenFileName := rc.Konf.String("SeenFile")
+	if cli.Cache != "" {
+		seenFileName = cli.Cache
+	}
+
+	var err error
+	if rc.Cache, err = OpenCache(seenFileName); err != nil {
+		log.WithError(err).Fatalf("Unable to open cache file: %s", seenFileName)
 	}
 
 	ac := transmissionrpc.AdvancedConfig{
-		// HTTPS:       rc.Konf.Bool("Transmission.HTTPS"),
-		// Port:        uint16(rc.Konf.Int("Transmission.Port")),
-		// RPCURI:      rc.Konf.String("Transmission.Path"),
-		// HTTPTimeout: 30, // 30 sec
-		UserAgent: fmt.Sprintf("rss4transmission/%s", Version),
-		Debug:     false,
+		HTTPS:       rc.Konf.Bool("Transmission.HTTPS"),
+		Port:        uint16(rc.Konf.Int("Transmission.Port")),
+		RPCURI:      rc.Konf.String("Transmission.Path"),
+		HTTPTimeout: 30, // 30 sec
+		UserAgent:   fmt.Sprintf("rss4transmission/%s", Version),
+		Debug:       false,
 	}
 	if rc.Transmission, err = transmissionrpc.New(rc.Konf.String("Transmission.Host"),
 		rc.Konf.String("Transmission.Username"), rc.Konf.String("Transmission.Password"), &ac); err != nil {
@@ -159,9 +170,13 @@ func main() {
 	}
 
 	if err = ctx.Run(&rc); err != nil {
-		log.Fatalf("Error running command: %s", err.Error())
+		log.WithError(err).Fatalf("Error running command")
 	}
-	rc.Cache.SaveCache()
+
+	cacheTime := time.Duration(rc.Konf.Int("SeenCacheDays")*24) * time.Hour
+	if err = rc.Cache.SaveCache(cacheTime); err != nil {
+		log.WithError(err).Fatalf("Unable to save cache")
+	}
 }
 
 type VersionCmd struct{}

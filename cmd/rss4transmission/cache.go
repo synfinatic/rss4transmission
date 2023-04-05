@@ -25,19 +25,30 @@ import (
 )
 
 const (
-	ERROR_HOLD_DOWN = 4 // hours
+	ERROR_HOLD_DOWN = 1 // hours
+	CACHE_VERSION   = 1
 )
 
 type CacheFile struct {
-	filename string
+	Version  int              `json:"Version"`
 	Errors   map[string]int64 `json:"Errors"`
-	Items    []*FeedItem      `json:"Items"`
+	Seen     []CacheRecord    `json:"Seen"`
+	filename string
+}
+
+type CacheRecord struct {
+	Feed      string    `json:"Feed"`
+	Published time.Time `json:"Published"`
+	AddTime   time.Time `json:"AddTime"`
+	GUID      string    `json:"GUID"`
+	Complete  bool      `json:"Complete"`
 }
 
 func OpenCache(path string) (*CacheFile, error) {
 	cache := CacheFile{
-		Errors: map[string]int64{},
-		Items:  []*FeedItem{},
+		Version: CACHE_VERSION,
+		Errors:  map[string]int64{},
+		Seen:    []CacheRecord{},
 	}
 	cacheFile := GetPath(path)
 	cacheBytes, err := ioutil.ReadFile(cacheFile)
@@ -52,24 +63,74 @@ func OpenCache(path string) (*CacheFile, error) {
 	return &cache, nil
 }
 
-func (c *CacheFile) SaveCache() error {
+// SaveCache updates the cache and removes any entries older than the specified
+// duration
+func (c *CacheFile) SaveCache(d time.Duration) error {
+	NewSeen := []CacheRecord{}
+	log.Debugf("%v", c.Seen)
+	for _, s := range c.Seen {
+		if time.Since(s.AddTime) < d {
+			NewSeen = append(NewSeen, s)
+		}
+	}
+	c.Seen = NewSeen
+
 	cacheBytes, _ := json.MarshalIndent(*c, "", "  ")
 	return ioutil.WriteFile(c.filename, cacheBytes, 0644)
 }
 
-// returns true if the error for the given entry is 'new'
-func (c *CacheFile) CheckNewError(entry string) bool {
-	expire, ok := c.Errors[entry]
+// AddItem adds the given FeedItem to our seen cach
+func (c *CacheFile) AddItem(item *FeedItem) {
+	now := time.Now()
+	cr := CacheRecord{
+		Feed:     item.Feed,
+		AddTime:  now,
+		GUID:     item.Item.GUID,
+		Complete: item.Complete,
+	}
+
+	if item.Item.PublishedParsed != nil {
+		cr.Published = *item.Item.PublishedParsed
+	}
+	c.Seen = append(c.Seen, cr)
+}
+
+/*
+func (c *CacheFile) MarkComplete(item *FeedItem) {
+	for _, s := range c.Seen {
+		if s.GUID == item.Item.GUID && s.Feed == XXX {
+			s.Complete = true
+			break
+		}
+	}
+}
+*/
+
+// Exists checks to see if the given FeedItem already exists in the Seen cache
+func (c *CacheFile) Exists(feedName string, item *FeedItem) bool {
+	for _, s := range c.Seen {
+		if s.GUID == item.Item.GUID && s.Feed == feedName {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckError determines if the given error entry is new or not
+func (c *CacheFile) CheckError(item FeedItem) bool {
+	expire, ok := c.Errors[item.Item.GUID]
 	if ok {
 		return expire < time.Now().Unix()
 	}
 	return true
 }
 
-func (c *CacheFile) AddError(entry string) {
-	c.Errors[entry] = time.Now().Add(time.Hour * ERROR_HOLD_DOWN).Unix()
-}
-
-func (c *CacheFile) AddItem(item *FeedItem) {
-	c.Items = append(c.Items, item)
+// AddError adds the given entry to or error cache and returns true
+// if the error entry is new or false if the error entry was cached
+func (c *CacheFile) AddError(item FeedItem) bool {
+	if c.CheckError(item) {
+		c.Errors[item.Item.GUID] = time.Now().Add(time.Hour * ERROR_HOLD_DOWN).Unix()
+		return true
+	}
+	return false
 }

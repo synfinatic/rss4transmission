@@ -158,3 +158,8 @@ $(DARWIN_BIN): $(wildcard */*.go) .prepare
 $(OUTPUT_NAME): $(wildcard */*.go) .prepare
 	go build -ldflags='$(LDFLAGS)' -o $(OUTPUT_NAME) ./cmd/$(PROJECT_NAME)/...
 	@echo "Created: $(OUTPUT_NAME)"
+
+.PHONY: docker
+docker:
+	docker build -t $(DOCKER_REPO)/$(PROJECT_NAME):v$(PROJECT_VERSION) .
+

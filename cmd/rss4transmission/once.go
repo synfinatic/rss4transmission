@@ -57,7 +57,7 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 			}
 		}
 
-		for _, item := range feed.NewItems(cache[feed.URL]) {
+		for _, item := range feed.NewItems(name, cache[feed.URL]) {
 			if ctx.Cli.Once.NoAction {
 				log.Infof("%s match: %s", name, item.Item.Title)
 				continue
@@ -88,6 +88,8 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 					continue
 				case SkipOnce:
 					continue // don't add to the cache
+				case Quit:
+					return nil
 				default:
 					log.Errorf("Unknown reply")
 				}
@@ -107,23 +109,6 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 	return nil
 }
 
-func download(ctx *RunContext, item *gofeed.Item) error {
-
-	return nil
-}
-
-func torrent(ctx *RunContext, item *gofeed.Item) error {
-
-	return nil
-}
-
-func yesNoPos(val bool) int {
-	if val {
-		return 1
-	}
-	return 0
-}
-
 type selectOptions struct {
 	Name  string
 	Value SelectType
@@ -132,13 +117,22 @@ type selectOptions struct {
 type SelectType int
 
 const (
-	Skip SelectType = iota
-	SkipOnce
+	Torrent SelectType = iota
 	Download
-	Torrent
+	Skip
+	SkipOnce
+	Quit
 )
 
 var selectItems = []selectOptions{
+	{
+		Name:  "Torrent",
+		Value: Torrent,
+	},
+	{
+		Name:  "Download",
+		Value: Download,
+	},
 	{
 		Name:  "Skip",
 		Value: Skip,
@@ -148,12 +142,8 @@ var selectItems = []selectOptions{
 		Value: SkipOnce,
 	},
 	{
-		Name:  "Download",
-		Value: Download,
-	},
-	{
-		Name:  "Torrent",
-		Value: Torrent,
+		Name:  "Quit",
+		Value: Quit,
 	},
 }
 

@@ -19,5 +19,4 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			}
 		}
 	}
-	return nil
 }

@@ -19,13 +19,25 @@ package main
 
 import (
 	"regexp"
+
+	"github.com/mmcdole/gofeed"
 )
 
+var ConfigDefaults = map[string]interface{}{
+	"Transmission.Host":     "localhost",
+	"Transmission.Port":     9091,
+	"Transmission.HTTPS":    false,
+	"Transmission.Path":     "/transmission/rpc",
+	"Transmission.Username": "admin",
+	"Transmission.Password": "admin",
+}
+
 type Config struct {
-	Pushover     Pushover        `koanf:"Pushover"`
-	Feeds        map[string]Feed `koanf:"Feeds"`
-	Transmission Transmission    `koanf:"Transmission"`
-	SeenFile     string          `koanf:"SeenFile"`
+	Pushover      Pushover        `koanf:"Pushover"`
+	Feeds         map[string]Feed `koanf:"Feeds"`
+	Transmission  Transmission    `koanf:"Transmission"`
+	SeenFile      string          `koanf:"SeenFile"`
+	SeenCacheDays int             `koanf:"SeenCacheDays"`
 }
 
 type Pushover struct {
@@ -37,7 +49,7 @@ type Transmission struct {
 	Host     string `koanf:"Host"`
 	Port     int    `koanf:"Port"`
 	HTTPS    bool   `koanf:"HTTPS"`
-	Path     string `koanf:"Path"`
+	Path     string `koanf:"Path""`
 	Username string `koanf:"Username"`
 	Password string `koanf:"Password"`
 }
@@ -56,4 +68,43 @@ type Feed struct {
 	compiled bool
 	regexp   []*regexp.Regexp
 	exclude  []*regexp.Regexp
+}
+
+// Check if a given item should be processed
+func (m *Feed) Check(item *gofeed.Item) bool {
+	m.compile()
+
+	// first see if we exclude it
+	for i, r := range m.exclude {
+		// use compiled
+		match := r.Find([]byte(item.Title))
+		if match != nil {
+			log.Debugf("Exclude %s => %s", item.Title, m.Exclude[i])
+			return false
+		}
+	}
+
+	// then see if we match
+	for i, r := range m.regexp {
+		// use compiled
+		match := r.Find([]byte(item.Title))
+		if match != nil {
+			log.Infof("Matched %s => %s", item.Title, m.Regexp[i])
+			return true
+		}
+	}
+
+	// no match
+	log.Debugf("Skipped %s", item.Title)
+	return false
+}
+
+// Does the RssFilter have the given category?
+func (m *Feed) HasCategory(category string) bool {
+	for _, c := range m.Categories {
+		if c == category {
+			return true
+		}
+	}
+	return false
 }
