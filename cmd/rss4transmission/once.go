@@ -21,6 +21,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	// "github.com/hekmon/transmissionrpc/v2"
 	"github.com/manifoldco/promptui"
@@ -120,6 +121,10 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 		}
 	}
 
+	cacheTime := time.Duration(ctx.Konf.Int("SeenCacheDays")*24) * time.Hour
+	if err = ctx.Cache.SaveCache(cacheTime); err != nil {
+		return fmt.Errorf("Unable to save seen cache: %s", err.Error())
+	}
 	return nil
 }
 
@@ -178,6 +183,7 @@ func prompt(feed, name string) SelectType {
 	sel := promptui.Select{
 		Label:        label,
 		Items:        selectItems,
+		Stdout:       &BellSkipper{},
 		HideSelected: false,
 		Templates:    makeSelectTemplate(label),
 	}
@@ -186,4 +192,30 @@ func prompt(feed, name string) SelectType {
 		log.WithError(err).Fatalf("Unable to select option")
 	}
 	return selectItems[i].Value
+}
+
+/*
+ * BellSkipper implements an io.WriteCloser that skips the terminal bell
+ * character (ASCII code 7), and writes the rest to os.Stderr. It is used to
+ * replace readline.Stdout, that is the package used by promptui to display the
+ * prompts.
+ *
+ * This is a workaround for the bell issue documented in
+ * https://github.com/manifoldco/promptui/issues/49#issuecomment-573814976
+ */
+type BellSkipper struct{}
+
+// Write implements an io.WriterCloser over os.Stderr, but it skips the terminal
+// bell character.
+func (bs *BellSkipper) Write(b []byte) (int, error) {
+	const charBell = 7 // c.f. readline.CharBell
+	if len(b) == 1 && b[0] == charBell {
+		return 0, nil
+	}
+	return os.Stderr.Write(b)
+}
+
+// Close implements an io.WriterCloser over os.Stderr.
+func (bs *BellSkipper) Close() error {
+	return os.Stderr.Close()
 }

@@ -187,11 +187,6 @@ func main() {
 	if err = ctx.Run(&rc); err != nil {
 		log.WithError(err).Fatalf("Error running command")
 	}
-
-	cacheTime := time.Duration(rc.Konf.Int("SeenCacheDays")*24) * time.Hour
-	if err = rc.Cache.SaveCache(cacheTime); err != nil {
-		log.WithError(err).Fatalf("Unable to save cache")
-	}
 }
 
 type VersionCmd struct{}
