@@ -115,12 +115,9 @@ func (fi *FeedItem) Torrent(ctx *RunContext, dir string) error {
 }
 
 func (fi *FeedItem) IsComplete() bool {
-	if fi.Complete == true {
-		return true
-	}
+	return fi.Complete
 
-	// XXX: ask transmission for an update
-	return false
+	// XXX: ask transmission for an update if we are not complete
 }
 
 func (f *Feed) NewItems(feedName string, feed *gofeed.Feed) []*FeedItem {

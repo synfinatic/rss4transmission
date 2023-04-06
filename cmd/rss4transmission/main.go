@@ -74,11 +74,6 @@ type CLI struct {
 	Once    OnceCmd    `kong:"cmd,help='Scrape RSS feeds once'"`
 }
 
-type WatchCmd struct {
-	Feed  []string `kong:"help='Limit scraping to the given feed(s)'"`
-	Sleep int      `kong:"short='s',default='60',help='Seconds to sleep between scraping'"`
-}
-
 func main() {
 	log = logrus.New()
 
@@ -129,13 +124,15 @@ func main() {
 		Config: Config{},
 	}
 
-	if ctx.Command() == "versin" {
-		ctx.Run(&rc)
+	if ctx.Command() == "version" {
+		_ = ctx.Run(&rc)
 		return
 	}
 
 	// load our defaults
-	rc.Konf.Load(confmap.Provider(ConfigDefaults, "."), nil)
+	if err := rc.Konf.Load(confmap.Provider(ConfigDefaults, "."), nil); err != nil {
+		log.WithError(err).Fatalf("Unable to load defaults")
+	}
 	var configFile string
 
 	if cli.Config != "" {
@@ -171,7 +168,7 @@ func main() {
 		HTTPS:       rc.Konf.Bool("Transmission.HTTPS"),
 		Port:        uint16(rc.Konf.Int("Transmission.Port")),
 		RPCURI:      rc.Konf.String("Transmission.Path"),
-		HTTPTimeout: time.Duration(30 * time.Second), // 30 sec
+		HTTPTimeout: time.Duration(30 * time.Second),
 		UserAgent:   fmt.Sprintf("rss4transmission/%s", Version),
 		Debug:       false,
 	}

@@ -6,7 +6,7 @@ RUN cd /code && make
 
 FROM alpine:latest
 COPY --from=builder  /code/dist/rss4transmission /usr/local/bin/ 
-ENV POLL_SECONDS=60
+ENV POLL_SECONDS=300
 ENV LOG_LEVEL="info"
 
 ENTRYPOINT exec /usr/local/bin/rss4transmission watch --sleep $POLL_SECONDS \

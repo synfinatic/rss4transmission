@@ -50,7 +50,7 @@ type Transmission struct {
 	Host     string `koanf:"Host"`
 	Port     int    `koanf:"Port"`
 	HTTPS    bool   `koanf:"HTTPS"`
-	Path     string `koanf:"Path""`
+	Path     string `koanf:"Path"`
 	Username string `koanf:"Username"`
 	Password string `koanf:"Password"`
 }

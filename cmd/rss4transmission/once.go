@@ -36,7 +36,7 @@ type OnceCmd struct {
 	DownloadPath string   `kong:"short='p',help='Path to download torrent files to ($PWD)'"`
 	Interactive  bool     `kong:"short='i',help='Interactive mode',xor='action'"`
 	NoAction     bool     `kong:"short='n',help='Just print results and take no action',xor='action'"`
-	Skip         bool     `kong:"short="s",help='Just skip any matching torrents',xor='action'"`
+	Skip         bool     `kong:"short='s',help='Just skip any matching torrents',xor='action'"`
 }
 
 func (cmd *OnceCmd) Run(ctx *RunContext) error {

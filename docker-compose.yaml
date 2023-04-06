@@ -1,0 +1,30 @@
+# example, edit to taste
+version: "3"
+
+services:
+  rss4transmission:
+    container_name: rss4transmission
+    restart: unless-stopped
+    image: synfinatic/rss4transmission:latest
+    network_mode: host
+    user: 1026:100
+    environment:
+      - POLL_SECONDS=120
+      - LOG_LEVEL=info
+    volumes:
+      - /volume1/docker/transmission/rss4transmission:/config
+
+  transmission:
+    container_name: transmission
+    restart: unless-stopped
+    image: lscr.io/linuxserver/transmission:latest
+    network_mode: host
+    environment:
+      - PUID=1026
+      - GUID=100
+      - TZ=US/Pacific
+      - USER=admin
+      - PASS=admin
+    volumes:
+      - /volume1/docker/transmission/data:/config
+      - /volume1/video/torrents:/torrents
