@@ -23,11 +23,11 @@ read the RSS feed once, even though I've got 10 different categories.
 # how to talk to transmission, defaults shown below
 Transmission:
     Host: localhost
-	Port:     9091
+    Port:     9091
     Username: admin
     Password: admin
-	HTTPS:    false
-	Path:     /transmission/rpc
+    HTTPS:    false
+    Path:     /transmission/rpc
 
 # SeenFile can be overridden via --send-file option
 SeenFile: /path/to/seen.json
