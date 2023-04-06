@@ -71,29 +71,23 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 				// add to cache and do nothing
 				ctx.Cache.AddItem(item)
 			} else if ctx.Cli.Once.Download {
-				if filePath, err = item.Download(ctx.Cli.Once.DownloadPath); err != nil {
+				if filePath, err = item.Download(ctx, ctx.Cli.Once.DownloadPath); err != nil {
 					log.WithError(err).Errorf("Unable to download: %s", filePath)
 					continue
 				}
-				// add to the cache
-				ctx.Cache.AddItem(item)
 			} else if ctx.Cli.Once.Interactive {
 				switch prompt(name, item.Item.Title) {
 				case Download:
-					if filePath, err = item.Download(ctx.Cli.Once.DownloadPath); err != nil {
+					if filePath, err = item.Download(ctx, ctx.Cli.Once.DownloadPath); err != nil {
 						log.WithError(err).Errorf("Unable to download: %s", filePath)
 						continue
 					}
-					// add to the cache
-					ctx.Cache.AddItem(item)
 
 				case Torrent:
-					if err = item.Torrent(ctx.Transmission, feed.DownloadPath); err != nil {
+					if err = item.Torrent(ctx, feed.DownloadPath); err != nil {
 						log.WithError(err).Errorf("Unable to torrent: %s", name)
 						continue
 					}
-					// add to the cache
-					ctx.Cache.AddItem(item)
 
 				case Skip:
 					// add to cache and do nothing
@@ -110,14 +104,11 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 					log.Errorf("Unknown reply")
 				}
 			} else {
-				if err = item.Torrent(ctx.Transmission, feed.DownloadPath); err != nil {
+				if err = item.Torrent(ctx, feed.DownloadPath); err != nil {
 					log.WithError(err).Errorf("Unable to torrent: %s", name)
 					continue
 				}
-				// add to the cache
-				ctx.Cache.AddItem(item)
 			}
-
 		}
 	}
 

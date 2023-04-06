@@ -66,7 +66,7 @@ func (fi *FeedItem) getTorrentContents() ([]byte, error) {
 
 }
 
-func (fi *FeedItem) Download(dir string) (string, error) {
+func (fi *FeedItem) Download(ctx *RunContext, dir string) (string, error) {
 	var contents []byte
 	var err error
 
@@ -80,10 +80,14 @@ func (fi *FeedItem) Download(dir string) (string, error) {
 	if err = os.WriteFile(filePath, contents, 0644); err != nil {
 		return "", fmt.Errorf("Unable to write %s: %s", filePath, err.Error())
 	}
+
+	log.Infof("Downloading: %s", filePath)
+	ctx.Cache.AddItem(fi)
+
 	return filePath, nil
 }
 
-func (fi *FeedItem) Torrent(t *transmissionrpc.Client, dir string) error {
+func (fi *FeedItem) Torrent(ctx *RunContext, dir string) error {
 	var err error
 	var torrentURL string
 
@@ -96,13 +100,16 @@ func (fi *FeedItem) Torrent(t *transmissionrpc.Client, dir string) error {
 		DownloadDir: &dir,
 		Filename:    &torrentURL,
 	}
-	if _, err = t.TorrentAdd(context.TODO(), addPayload); err != nil {
+	if _, err = ctx.Transmission.TorrentAdd(context.TODO(), addPayload); err != nil {
 		if strings.Contains(err.Error(), "duplicate torrent") {
 			log.Warnf("Skipping duplicate torrent: %s", fi.Item.Title)
 			return nil // return success to add to cache
 		}
 		return err
 	}
+
+	log.Infof("Torrenting: %s", fi.Item.Title)
+	ctx.Cache.AddItem(fi)
 
 	return nil
 }

@@ -86,11 +86,10 @@ func (m *Feed) Check(item *gofeed.Item) bool {
 	}
 
 	// then see if we match
-	for i, r := range m.regexp {
+	for _, r := range m.regexp {
 		// use compiled
 		match := r.Find([]byte(item.Title))
 		if match != nil {
-			log.Infof("Matched %s => %s", item.Title, m.Regexp[i])
 			return true
 		}
 	}
