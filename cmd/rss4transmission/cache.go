@@ -20,7 +20,7 @@ package main
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"os"
 	"time"
 )
 
@@ -51,7 +51,7 @@ func OpenCache(path string) (*CacheFile, error) {
 		Seen:    []CacheRecord{},
 	}
 	cacheFile := GetPath(path)
-	cacheBytes, err := ioutil.ReadFile(cacheFile)
+	cacheBytes, err := os.ReadFile(cacheFile)
 	if err != nil {
 		log.Warnf("Creating new cache file: %s", cacheFile)
 	} else {
@@ -75,7 +75,7 @@ func (c *CacheFile) SaveCache(d time.Duration) error {
 	c.Seen = NewSeen
 
 	cacheBytes, _ := json.MarshalIndent(*c, "", "  ")
-	return ioutil.WriteFile(c.filename, cacheBytes, 0644)
+	return os.WriteFile(c.filename, cacheBytes, 0644)
 }
 
 // AddItem adds the given FeedItem to our seen cach
