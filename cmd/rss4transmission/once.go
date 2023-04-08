@@ -48,9 +48,13 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 		ctx.Cli.Once.DownloadPath = os.Getenv("PWD")
 	}
 
+	// we cache gofeed results for each URL so we can re-use the feed results without hitting
+	// the RSS multiple times
 	cache := FeedCache{}
+
 	for name, feed := range ctx.Config.Feeds {
 		log.Debugf("Processing %s: %v", name, feed)
+		// have we already fetched this RSS feed?
 		if _, ok := cache[feed.URL]; !ok {
 			p := gofeed.NewParser()
 			if cache[feed.URL], err = p.ParseURL(feed.URL); err != nil {

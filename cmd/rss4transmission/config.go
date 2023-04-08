@@ -34,16 +34,10 @@ var ConfigDefaults = map[string]interface{}{
 }
 
 type Config struct {
-	Pushover      Pushover        `koanf:"Pushover"`
 	Feeds         map[string]Feed `koanf:"Feeds"`
 	Transmission  Transmission    `koanf:"Transmission"`
 	SeenFile      string          `koanf:"SeenFile"`
 	SeenCacheDays int             `koanf:"SeenCacheDays"`
-}
-
-type Pushover struct {
-	AppToken string   `koanf:"AppToken"`
-	Users    []string `koanf:"Users"`
 }
 
 type Transmission struct {
@@ -76,11 +70,11 @@ func (m *Feed) Check(item *gofeed.Item) bool {
 	m.compile()
 
 	// first see if we exclude it
-	for i, r := range m.exclude {
+	for _, r := range m.exclude {
 		// use compiled
 		match := r.Find([]byte(item.Title))
 		if match != nil {
-			log.Debugf("Exclude %s => %s", item.Title, m.Exclude[i])
+			// log.Debugf("Exclude %s => %s", item.Title, m.Exclude[i])
 			return false
 		}
 	}

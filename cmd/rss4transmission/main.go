@@ -59,6 +59,7 @@ type RunContext struct {
 	Config       Config
 	Cache        *CacheFile
 	Transmission *transmissionrpc.Client
+	Provider     *file.File
 }
 
 type CLI struct {
@@ -149,7 +150,8 @@ func main() {
 		log.Fatalf("Unable to locate config file")
 	}
 
-	if err := rc.Konf.Load(file.Provider(configFile), yaml.Parser()); err != nil {
+	rc.Provider = file.Provider(configFile)
+	if err := rc.Konf.Load(rc.Provider, yaml.Parser()); err != nil {
 		log.WithError(err).Fatalf("Unable to open config file: %s", configFile)
 	}
 
