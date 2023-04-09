@@ -103,7 +103,8 @@ func (fi *FeedItem) Torrent(ctx *RunContext, dir string) error {
 	if _, err = ctx.Transmission.TorrentAdd(context.TODO(), addPayload); err != nil {
 		if strings.Contains(err.Error(), "duplicate torrent") {
 			log.Warnf("Skipping duplicate torrent: %s", fi.Item.Title)
-			return nil // return success to add to cache
+			ctx.Cache.AddItem(fi)
+			return nil
 		}
 		return err
 	}
