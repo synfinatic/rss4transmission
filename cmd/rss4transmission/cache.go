@@ -47,9 +47,10 @@ type CacheRecord struct {
 
 func OpenCache(path string) (*CacheFile, error) {
 	cache := CacheFile{
-		Version: CACHE_VERSION,
-		Errors:  map[string]int64{},
-		Seen:    []CacheRecord{},
+		Version:  CACHE_VERSION,
+		Errors:   map[string]int64{},
+		Seen:     []CacheRecord{},
+		needSave: false,
 	}
 	cacheFile := GetPath(path)
 	cacheBytes, err := os.ReadFile(cacheFile)
