@@ -34,6 +34,7 @@ type CacheFile struct {
 	Errors   map[string]int64 `json:"Errors"`
 	Seen     []CacheRecord    `json:"Seen"`
 	filename string
+	needSave bool
 }
 
 type CacheRecord struct {
@@ -66,20 +67,18 @@ func OpenCache(path string) (*CacheFile, error) {
 // SaveCache updates the cache and removes any entries older than the specified
 // duration
 func (c *CacheFile) SaveCache(d time.Duration) error {
-	needSave := false
+	deletedRecord := false
 	NewSeen := []CacheRecord{}
+
 	for _, s := range c.Seen {
 		if time.Since(s.AddTime) < d {
 			NewSeen = append(NewSeen, s)
 		} else {
-			needSave = true
+			deletedRecord = true
 			log.Debugf("Removing %s from cache", s.GUID)
 		}
 	}
-	if len(c.Seen) != len(NewSeen) {
-		needSave = true
-	}
-	if !needSave {
+	if !deletedRecord && !c.needSave {
 		log.Debugf("skipping cache saving")
 		return nil
 	}
@@ -87,7 +86,12 @@ func (c *CacheFile) SaveCache(d time.Duration) error {
 
 	log.Infof("saving cache with %d entries less than %d days old", len(c.Seen), int(d.Hours()/24))
 	cacheBytes, _ := json.MarshalIndent(*c, "", "  ")
-	return os.WriteFile(c.filename, cacheBytes, 0644)
+	err := os.WriteFile(c.filename, cacheBytes, 0644)
+	if err != nil {
+		c.needSave = false
+		return nil
+	}
+	return err
 }
 
 // AddItem adds the given FeedItem to our seen cach
@@ -104,6 +108,7 @@ func (c *CacheFile) AddItem(item *FeedItem) {
 		cr.Published = *item.Item.PublishedParsed
 	}
 	c.Seen = append(c.Seen, cr)
+	c.needSave = true
 }
 
 /*
