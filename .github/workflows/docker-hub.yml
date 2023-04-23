@@ -11,19 +11,19 @@ jobs:
     steps:
       - name: Check out the repo
         uses: actions/checkout@v3
-      
+
       - name: Log in to Docker Hub
         uses: docker/login-action@v2
         with:
           username: synfinatic
           password: ${{ secrets.DOCKER_HUB_SECRET }}
-      
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v4
         with:
           images: synfinatic/rss4transmission
-      
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
