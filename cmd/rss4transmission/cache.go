@@ -72,23 +72,27 @@ func (c *CacheFile) SaveCache(d time.Duration) error {
 	NewSeen := []CacheRecord{}
 
 	for _, s := range c.Seen {
-		if time.Since(s.AddTime) < d {
+		if time.Since(s.Published).Hours() < d.Hours() {
 			NewSeen = append(NewSeen, s)
 		} else {
 			deletedRecord = true
-			log.Debugf("Removing %s from cache", s.GUID)
+			log.Infof("Removing %s from cache", s.GUID)
 		}
 	}
+
 	if !deletedRecord && !c.needSave {
-		log.Debugf("skipping cache saving")
+		log.Debugf("no changes, so skipping cache saving")
 		return nil
 	}
+
+	// move seen records over
 	c.Seen = NewSeen
 
 	log.Infof("saving cache with %d entries less than %d days old", len(c.Seen), int(d.Hours()/24))
 	cacheBytes, _ := json.MarshalIndent(*c, "", "  ")
 	err := os.WriteFile(c.filename, cacheBytes, 0644)
 	if err != nil {
+		c.needSave = true // force save again, incase we deleted a record
 		return err
 	}
 	c.needSave = false

@@ -23,12 +23,11 @@ import (
 	"os"
 	"time"
 
-	// "github.com/hekmon/transmissionrpc/v2"
 	"github.com/manifoldco/promptui"
 	"github.com/mmcdole/gofeed"
 )
 
-type FeedCache map[string]*gofeed.Feed
+type Feeds map[string]*gofeed.Feed
 
 type OnceCmd struct {
 	Feed         []string `kong:"help='Limit scraping to the given feed(s)'"`
@@ -50,20 +49,28 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 
 	// we cache gofeed results for each URL so we can re-use the feed results without hitting
 	// the RSS multiple times
-	cache := FeedCache{}
+	feeds := Feeds{}
 
+	quit := false
 	for name, feed := range ctx.Config.Feeds {
+		if quit {
+			break
+		}
+
 		log.Debugf("Processing %s: %v", name, feed)
 		// have we already fetched this RSS feed?
-		if _, ok := cache[feed.URL]; !ok {
+		if _, ok := feeds[feed.URL]; !ok {
 			p := gofeed.NewParser()
-			if cache[feed.URL], err = p.ParseURL(feed.URL); err != nil {
+			if feeds[feed.URL], err = p.ParseURL(feed.URL); err != nil {
 				log.WithError(err).Warnf("Unable to process URL: %s", feed.URL)
 				continue
 			}
 		}
 
-		for _, item := range feed.NewItems(name, cache[feed.URL]) {
+		for _, item := range feed.NewItems(name, feeds[feed.URL]) {
+			if quit {
+				break
+			}
 			if ctx.Cache.Exists(name, item) {
 				log.Debugf("Skipping due to cache hit: %s", item.Item.Title)
 				continue
@@ -102,7 +109,7 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 					continue // don't add to the cache
 
 				case Quit:
-					return nil
+					quit = true
 
 				default:
 					log.Errorf("Unknown reply")
