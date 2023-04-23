@@ -89,10 +89,10 @@ func (c *CacheFile) SaveCache(d time.Duration) error {
 	cacheBytes, _ := json.MarshalIndent(*c, "", "  ")
 	err := os.WriteFile(c.filename, cacheBytes, 0644)
 	if err != nil {
-		c.needSave = false
-		return nil
+		return err
 	}
-	return err
+	c.needSave = false
+	return nil
 }
 
 // AddItem adds the given FeedItem to our seen cach

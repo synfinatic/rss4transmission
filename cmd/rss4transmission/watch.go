@@ -30,14 +30,16 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		defer mu.Unlock()
 
 		log.Infof("config changed. reloading...")
-		// throw the old config and reload
-		ctx.Konf = koanf.New(".")
-		if err := ctx.Konf.Load(ctx.Provider, yaml.Parser()); err != nil {
+		konf := koanf.New(".")
+		if err := konf.Load(ctx.Provider, yaml.Parser()); err != nil {
 			log.WithError(err).Errorf("unable to load config")
+			return
 		}
-		if err := ctx.Konf.Unmarshal("", &ctx.Config); err != nil {
+		if err := konf.Unmarshal("", &ctx.Config); err != nil {
 			log.WithError(err).Errorf("unable to process config")
+			return
 		}
+		ctx.Konf = konf
 	})
 
 	ticker := time.NewTicker(time.Duration(ctx.Cli.Watch.Sleep) * time.Second)
@@ -60,7 +62,6 @@ func runOnce(ctx *RunContext, mu *sync.Mutex) error {
 	mu.Lock()
 	defer mu.Unlock()
 	if err := once.Run(ctx); err != nil {
-		mu.Unlock()
 		return err
 	}
 	return nil
