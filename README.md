@@ -1,5 +1,8 @@
 # RSS4Transmission
 
+[![Tests](https://github.com/synfinatic/rss4transmission/actions/workflows/tests.yml/badge.svg)](https://github.com/synfinatic/rss4transmission/actions/workflows/tests.yml)
+[![golangci-lint](https://github.com/synfinatic/rss4transmission/actions/workflows/golangci-lint.yml/badge.svg)](https://github.com/synfinatic/rss4transmission/actions/workflows/golangci-lint.yml)
+
 ### About
 
 RSS4Transmission is a tool for fetching torrents over RSS for [Transmission](
