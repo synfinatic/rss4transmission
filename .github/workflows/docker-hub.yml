@@ -29,5 +29,5 @@ jobs:
         with:
           context: .
           push: true
-          tags: synfinatic/rss4transmission:latest
-          # labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

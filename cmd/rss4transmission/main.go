@@ -56,6 +56,7 @@ type RunContext struct {
 	Ctx          *kong.Context
 	Cli          *CLI
 	Konf         *koanf.Koanf
+	configFile   string
 	Config       Config
 	Cache        *CacheFile
 	Transmission *transmissionrpc.Client
@@ -118,41 +119,34 @@ func main() {
 		log.SetOutput(file)
 	}
 
-	rc := RunContext{
+	rc := &RunContext{
 		Cli:    &cli,
 		Ctx:    ctx,
-		Konf:   koanf.New("."),
 		Config: Config{},
 	}
 
 	if ctx.Command() == "version" {
-		_ = ctx.Run(&rc)
+		_ = ctx.Run(rc)
 		return
 	}
 
-	// load our defaults
-	if err := rc.Konf.Load(confmap.Provider(ConfigDefaults, "."), nil); err != nil {
-		log.WithError(err).Fatalf("Unable to load defaults")
-	}
-	var configFile string
-
 	if cli.Config != "" {
-		configFile = GetPath(cli.Config)
+		rc.configFile = GetPath(cli.Config)
 	} else {
 		for _, fName := range CONFIG_FILE {
 			if _, err := os.Stat(GetPath(fName)); err == nil {
-				configFile = fName
+				rc.configFile = fName
 				break
 			}
 		}
 	}
-	if configFile == "" {
+	if rc.configFile == "" {
 		log.Fatalf("Unable to locate config file")
 	}
 
-	rc.Provider = file.Provider(configFile)
-	if err := rc.Konf.Load(rc.Provider, yaml.Parser()); err != nil {
-		log.WithError(err).Fatalf("Unable to open config file: %s", configFile)
+	var err error
+	if rc.Konf, err = rc.loadConfig(rc.configFile); err != nil {
+		log.WithError(err).Fatalf("Unable to load %s", rc.configFile)
 	}
 
 	// use our SeenFile
@@ -161,7 +155,6 @@ func main() {
 		seenFileName = cli.SeenFile
 	}
 
-	var err error
 	if rc.Cache, err = OpenCache(seenFileName); err != nil {
 		log.WithError(err).Fatalf("Unable to open cache file: %s", seenFileName)
 	}
@@ -179,11 +172,7 @@ func main() {
 		log.WithError(err).Fatalf("Unable to setup Transmission client")
 	}
 
-	if err := rc.Konf.Unmarshal("", &rc.Config); err != nil {
-		log.WithError(err).Fatalf("Unable to process config")
-	}
-
-	if err = ctx.Run(&rc); err != nil {
+	if err = ctx.Run(rc); err != nil {
 		log.WithError(err).Fatalf("Error running command")
 	}
 }
@@ -204,4 +193,24 @@ func (cmd *VersionCmd) Run(ctx *RunContext) error {
 // Returns the config file path.
 func GetPath(path string) string {
 	return strings.Replace(path, "~", os.Getenv("HOME"), 1)
+}
+
+func (rc *RunContext) loadConfig(configFile string) (*koanf.Koanf, error) {
+	konf := koanf.New(".")
+
+	// load our defaults
+	if err := konf.Load(confmap.Provider(ConfigDefaults, "."), nil); err != nil {
+		log.WithError(err).Fatalf("Unable to load defaults")
+	}
+
+	rc.Provider = file.Provider(configFile)
+	if err := konf.Load(rc.Provider, yaml.Parser()); err != nil {
+		return konf, err
+	}
+
+	if err := konf.Unmarshal("", &rc.Config); err != nil {
+		return konf, err
+	}
+
+	return konf, nil
 }

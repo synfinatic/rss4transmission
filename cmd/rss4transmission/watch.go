@@ -3,9 +3,6 @@ package main
 import (
 	"sync"
 	"time"
-
-	"github.com/knadh/koanf/parsers/yaml"
-	"github.com/knadh/koanf/v2"
 )
 
 type WatchCmd struct {
@@ -30,39 +27,30 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		defer mu.Unlock()
 
 		log.Infof("config changed. reloading...")
-		konf := koanf.New(".")
-		if err := konf.Load(ctx.Provider, yaml.Parser()); err != nil {
-			log.WithError(err).Errorf("unable to load config")
-			return
-		}
-		if err := konf.Unmarshal("", &ctx.Config); err != nil {
-			log.WithError(err).Errorf("unable to process config")
+		konf, err := ctx.loadConfig(ctx.configFile)
+		if err != nil {
+			log.WithError(err).Errorf("failed to reload config file")
 			return
 		}
 		ctx.Konf = konf
 	})
 
 	ticker := time.NewTicker(time.Duration(ctx.Cli.Watch.Sleep) * time.Second)
-	// Run once and then sleep between later runs...
-	for ; true; <-ticker.C {
-		if err := runOnce(ctx, &mu); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
-func runOnce(ctx *RunContext, mu *sync.Mutex) error {
+	// watch just calls `once` in a loop
 	once := OnceCmd{
 		Feed:         ctx.Cli.Watch.Feed,
 		Download:     ctx.Cli.Watch.Download,
 		DownloadPath: ctx.Cli.Watch.DownloadPath,
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-	if err := once.Run(ctx); err != nil {
-		return err
+	// Run once and then sleep between later runs...
+	for ; true; <-ticker.C {
+		mu.Lock()
+		if err := once.Run(ctx); err != nil {
+			return err
+		}
+		mu.Unlock()
 	}
 	return nil
 }
