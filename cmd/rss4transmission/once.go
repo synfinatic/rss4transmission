@@ -59,12 +59,15 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 
 		log.Debugf("Processing %s: %v", name, feed)
 		// have we already fetched this RSS feed?
-		if _, ok := feeds[feed.URL]; !ok {
+		if f, ok := feeds[feed.URL]; !ok {
 			p := gofeed.NewParser()
 			if feeds[feed.URL], err = p.ParseURL(feed.URL); err != nil {
 				log.WithError(err).Warnf("Unable to process URL: %s", feed.URL)
 				continue
 			}
+		} else if f == nil {
+			// we can have the same URL in multiple feeds, so we need to skip them too
+			continue
 		}
 
 		for _, item := range feed.NewItems(name, feeds[feed.URL]) {
