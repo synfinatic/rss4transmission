@@ -9,7 +9,7 @@ endif
 BUILDINFOSDET ?=
 PROGRAM_ARGS ?=
 
-PROJECT_VERSION           := 1.0.5
+PROJECT_VERSION           := 1.0.6
 DOCKER_REPO               := synfinatic
 PROJECT_NAME              := rss4transmission
 PROJECT_TAG               := $(shell git describe --tags 2>/dev/null $(git rev-list --tags --max-count=1))
