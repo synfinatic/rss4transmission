@@ -12,6 +12,7 @@ require (
 	github.com/mattn/go-colorable v0.1.8
 	github.com/mmcdole/gofeed v1.2.0
 	github.com/sirupsen/logrus v1.8.1
+	github.com/xhit/go-str2duration/v2 v2.1.0
 )
 
 require (
