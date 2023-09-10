@@ -19,6 +19,7 @@ package main
 
 import (
 	"regexp"
+	"strconv"
 
 	"github.com/mmcdole/gofeed"
 )
@@ -58,11 +59,15 @@ type Feed struct {
 	NoValidateCert bool     `koanf:"NoValidateCert"`
 	NoSubmit       bool     `koanf:"NoSubmit"`
 	NoNotify       bool     `koanf:"NoNotify"`
+	MaxSize        string   `koanf:"MaxSize"`
+	MinSize        string   `koanf:"MinSize"`
 
 	// internal
 	compiled bool
 	regexp   []*regexp.Regexp
 	exclude  []*regexp.Regexp
+	minSize  uint64
+	maxSize  uint64
 }
 
 // Check if a given item should be processed
@@ -77,6 +82,26 @@ func (m *Feed) Check(item *gofeed.Item) bool {
 			// log.Debugf("Exclude %s => %s", item.Title, m.Exclude[i])
 			return false
 		}
+	}
+
+	var totalSize uint64
+	for _, e := range item.Enclosures {
+		size, err := strconv.ParseUint(e.Length, 10, 64)
+		if err != nil {
+			log.WithError(err).Errorf("Unable to parse enclosure length: %s", e.Length)
+		}
+		totalSize += size
+	}
+
+	// Check Min/MaxSize
+	if m.minSize > 0 && totalSize < m.minSize {
+		log.Debugf("Too small: %s [%d]", item.Title, totalSize)
+		return false
+	}
+
+	if m.maxSize > 0 && totalSize > m.maxSize {
+		log.Debugf("Too large: %s [%d]", item.Title, totalSize)
+		return false
 	}
 
 	// then see if we match

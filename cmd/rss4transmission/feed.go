@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/hekmon/transmissionrpc/v2"
+	bytesize "github.com/inhies/go-bytesize"
 	"github.com/mmcdole/gofeed"
 )
 
@@ -159,6 +160,22 @@ func (m *Feed) compile() {
 			log.WithError(err).Errorf("Unable to compile Exclude: %s", exclude)
 		}
 		m.exclude = append(m.exclude, r)
+	}
+
+	if m.MaxSize != "" {
+		size, err := bytesize.Parse(m.MaxSize)
+		if err != nil {
+			log.WithError(err).Errorf("Unable to parse MaxSize: %s", m.MaxSize)
+		}
+		m.maxSize = uint64(size)
+	}
+
+	if m.MinSize != "" {
+		size, err := bytesize.Parse(m.MinSize)
+		if err != nil {
+			log.WithError(err).Errorf("Unable to parse MinSize: %s", m.MinSize)
+		}
+		m.minSize = uint64(size)
 	}
 
 	m.compiled = true

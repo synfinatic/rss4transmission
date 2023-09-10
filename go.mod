@@ -4,19 +4,20 @@ go 1.18
 
 require (
 	github.com/alecthomas/kong v0.7.1
-	github.com/gregdel/pushover v1.1.0
-	github.com/hekmon/transmissionrpc v1.1.0
 	github.com/hekmon/transmissionrpc/v2 v2.0.1
+	github.com/inhies/go-bytesize v0.0.0-20220417184213-4913239db9cf
 	github.com/knadh/koanf v1.5.0
 	github.com/knadh/koanf/v2 v2.0.0
 	github.com/manifoldco/promptui v0.9.0
 	github.com/mattn/go-colorable v0.1.8
 	github.com/mmcdole/gofeed v1.2.0
 	github.com/sirupsen/logrus v1.8.1
-	golang.org/x/sys v0.5.0
 )
 
-require github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect
+require (
+	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect
+	golang.org/x/sys v0.5.0 // indirect
+)
 
 require (
 	github.com/PuerkitoBio/goquery v1.8.0 // indirect
