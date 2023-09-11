@@ -46,6 +46,8 @@ Feeds:
             - (?i)^KindaFancyContent.*
         Exclude:
             - .*720p.*
+        MinSize: 100MB
+        MaxSize: 10GB
     Second:
         DownloadPath: /torrents/second
         Url: https://rss.foo.com/feed
