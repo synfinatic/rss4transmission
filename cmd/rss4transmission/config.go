@@ -37,6 +37,7 @@ var ConfigDefaults = map[string]interface{}{
 type Config struct {
 	Feeds         map[string]Feed `koanf:"Feeds"`
 	Transmission  Transmission    `koanf:"Transmission"`
+	Gluetun       GluetunConfig   `koanf:"Gluetun"`
 	SeenFile      string          `koanf:"SeenFile"`
 	SeenCacheDays int             `koanf:"SeenCacheDays"`
 }
@@ -48,6 +49,14 @@ type Transmission struct {
 	Path     string `koanf:"Path"`
 	Username string `koanf:"Username"`
 	Password string `koanf:"Password"`
+}
+
+type GluetunConfig struct {
+	Host             string `koanf:"Host"`
+	Port             int    `koanf:"Port"`
+	HTTPS            bool   `koanf:"HTTPS"`
+	RotateTime       string `koanf:"Rotate"`
+	ClosedPortChecks int    `koanf:"ClosedPortChecks"`
 }
 
 type Feed struct {
@@ -89,6 +98,7 @@ func (m *Feed) Check(item *gofeed.Item) bool {
 		size, err := strconv.ParseUint(e.Length, 10, 64)
 		if err != nil {
 			log.WithError(err).Errorf("Unable to parse enclosure length: %s", e.Length)
+			continue
 		}
 		totalSize += size
 	}

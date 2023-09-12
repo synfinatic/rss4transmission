@@ -150,14 +150,14 @@ func (m *Feed) compile() {
 
 	for _, match := range m.Regexp {
 		if r, err = regexp.Compile(match); err != nil {
-			log.WithError(err).Errorf("Unable to compile Regexp: %s", match)
+			log.WithError(err).Fatalf("Unable to compile Regexp: %s", match)
 		}
 		m.regexp = append(m.regexp, r)
 	}
 
 	for _, exclude := range m.Exclude {
 		if r, err = regexp.Compile(exclude); err != nil {
-			log.WithError(err).Errorf("Unable to compile Exclude: %s", exclude)
+			log.WithError(err).Fatalf("Unable to compile Exclude: %s", exclude)
 		}
 		m.exclude = append(m.exclude, r)
 	}
@@ -165,7 +165,7 @@ func (m *Feed) compile() {
 	if m.MaxSize != "" {
 		size, err := bytesize.Parse(m.MaxSize)
 		if err != nil {
-			log.WithError(err).Errorf("Unable to parse MaxSize: %s", m.MaxSize)
+			log.WithError(err).Fatalf("Unable to parse MaxSize: %s", m.MaxSize)
 		}
 		m.maxSize = uint64(size)
 	}
@@ -173,7 +173,7 @@ func (m *Feed) compile() {
 	if m.MinSize != "" {
 		size, err := bytesize.Parse(m.MinSize)
 		if err != nil {
-			log.WithError(err).Errorf("Unable to parse MinSize: %s", m.MinSize)
+			log.WithError(err).Fatalf("Unable to parse MinSize: %s", m.MinSize)
 		}
 		m.minSize = uint64(size)
 	}

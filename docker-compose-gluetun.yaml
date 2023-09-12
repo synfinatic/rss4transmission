@@ -1,0 +1,60 @@
+# example for using with Gluetun, edit to taste
+version: "3"
+
+services:
+  rss4transmission:
+    image: synfinatic/rss4transmission:latest
+    container_name: rss4transmission
+    restart: unless-stopped
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+      - transmission
+    user: 1026:100
+    environment:
+      - POLL_SECONDS=120
+      - LOG_LEVEL=info
+    volumes:
+      - /volume1/docker/transmission/rss4transmission:/config
+
+  transmission:
+    image: lscr.io/linuxserver/transmission:latest
+    container_name: transmission
+    restart: unless-stopped
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    environment:
+      - PUID=1026
+      - GUID=100
+      - TZ=US/Pacific
+      - USER=XXXX
+      - PASS=XXXX
+    volumes:
+      - /volume1/docker/transmission/data:/config
+      - /volume1/video/torrents:/torrents
+
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - /volume1/docker/transmission/gluetun:/gluetun
+    environment:
+      - VPN_SERVICE_PROVIDER=protonvpn
+      - VPN_TYPE=openvpn
+      - OPENVPN_USER=XXXXX
+      - OPENVPN_PASSWORD=XXXX
+      - OPENVPN_VERSION=2.6
+      - VPN_PORT_FORWARDING=on
+      - SERVER_HOSTNAMES=XXXXX,YYYYYY,ZZZZZ
+      - HTTP_CONTROL_SERVER_LOG=off
+    ports:
+      - "0.0.0.0:9091:9091/tcp"
+      - 51413:51413/tcp
+      - 51413:51413/udp
+      - 9092:8000/tcp   # move the Control Server to 9092

@@ -44,6 +44,11 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		DownloadPath: ctx.Cli.Watch.DownloadPath,
 	}
 
+	var g *Gluetun
+	if ctx.Config.Gluetun.Host != "" && ctx.Config.Gluetun.Port != 0 {
+		g = NewGluetun(ctx.Config.Gluetun, ctx.Transmission)
+	}
+
 	// Run once and then sleep between later runs...
 	for ; true; <-ticker.C {
 		mu.Lock()
@@ -51,6 +56,9 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			return err
 		}
 		mu.Unlock()
+		if g != nil {
+			g.CheckVpnTunnel()
+		}
 	}
 	return nil
 }
