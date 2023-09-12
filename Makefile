@@ -1,4 +1,5 @@
-PROJECT_VERSION           := 1.0.7
+PROJECT_VERSION := 1.0.8
+
 DIST_DIR ?= dist/
 GOOS ?= $(shell uname -s | tr "[:upper:]" "[:lower:]")
 ARCH ?= $(shell uname -m)
