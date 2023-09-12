@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
@@ -45,6 +44,11 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		DownloadPath: ctx.Cli.Watch.DownloadPath,
 	}
 
+	var g *Gluetun
+	if ctx.Config.Gluetun.Host != "" && ctx.Config.Gluetun.Port != 0 {
+		g = NewGluetun(ctx.Config.Gluetun, ctx.Transmission)
+	}
+
 	// Run once and then sleep between later runs...
 	for ; true; <-ticker.C {
 		mu.Lock()
@@ -52,57 +56,9 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			return err
 		}
 		mu.Unlock()
-		checkVpnTunnel(ctx)
+		if g != nil {
+			g.CheckVpnTunnel()
+		}
 	}
 	return nil
-}
-
-var ForceRotate bool // flag to force rotation again due to failure
-
-// checkVpnTunnel restarts / rotates the VPN tunnel as necessary
-func checkVpnTunnel(rc *RunContext) {
-	var err error
-
-	// not configured, so skip it
-	if rc.Config.Gluetun.Host == "" || rc.Config.Gluetun.Port == 0 {
-		return
-	}
-
-	g := NewGluetun(rc.Config.Gluetun, rc.Transmission)
-
-	if g.RotateNow() || ForceRotate {
-		err = g.Rotate()
-		if err != nil {
-			log.WithError(err).Errorf("Rotate() failed")
-			ForceRotate = true
-			return
-		}
-	}
-	ForceRotate = false
-
-	var open bool
-	err = fmt.Errorf("force execution")
-	for i := 0; err != nil && i < 3; i++ {
-		open, err = g.IsPortOpen()
-		if err != nil {
-			time.Sleep(3 * time.Second)
-		}
-	}
-	if err != nil {
-		log.WithError(err).Errorf("Unable to check IsPortOpen()")
-		return
-	}
-
-	if !open {
-		err = fmt.Errorf("force execution")
-		for i := 0; err != nil && i < 3; i++ {
-			err = g.UpdatePort()
-			if err != nil {
-				time.Sleep(3 * time.Second)
-			}
-		}
-	}
-	if err != nil {
-		log.WithError(err).Errorf("Unable to UpdatePort()")
-	}
 }

@@ -52,11 +52,11 @@ type Transmission struct {
 }
 
 type GluetunConfig struct {
-	Host          string `koanf:"Host"`
-	Port          int    `koanf:"Port"`
-	HTTPS         bool   `koanf:"HTTPS"`
-	RotateTime    string `koanf:"Rotate"`
-	RotateFailure int    `koanf:"RotateFailure"`
+	Host             string `koanf:"Host"`
+	Port             int    `koanf:"Port"`
+	HTTPS            bool   `koanf:"HTTPS"`
+	RotateTime       string `koanf:"Rotate"`
+	ClosedPortChecks int    `koanf:"ClosedPortChecks"`
 }
 
 type Feed struct {

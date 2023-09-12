@@ -32,12 +32,12 @@ import (
 
 type Gluetun struct {
 	URL              string
-	RotateTime       time.Duration
-	RotateFailure    int
+	RotateTime       time.Duration // how often to rotate
+	ClosedPortChecks int           // force rotation after X Port Forward Checks
+	Transmission     *transmissionrpc.Client
 	lastRotate       time.Time
 	peerPort         int64
-	portUpdateFailed int
-	Transmission     *transmissionrpc.Client
+	portCheckFailed  int
 }
 
 func NewGluetun(g GluetunConfig, t *transmissionrpc.Client) *Gluetun {
@@ -57,11 +57,56 @@ func NewGluetun(g GluetunConfig, t *transmissionrpc.Client) *Gluetun {
 	}
 
 	return &Gluetun{
-		URL:           fmt.Sprintf("%s://%s:%d", proto, g.Host, g.Port),
-		RotateTime:    r,
-		RotateFailure: g.RotateFailure,
-		lastRotate:    time.Now(),
-		Transmission:  t,
+		URL:              fmt.Sprintf("%s://%s:%d", proto, g.Host, g.Port),
+		RotateTime:       r,
+		ClosedPortChecks: g.ClosedPortChecks,
+		Transmission:     t,
+		lastRotate:       time.Now(),
+		peerPort:         -1,
+		portCheckFailed:  0,
+	}
+}
+
+var ForceRotate bool // flag to force rotation again due to failure
+
+// checkVpnTunnel restarts / rotates the VPN tunnel as necessary
+func (g *Gluetun) CheckVpnTunnel() {
+	var err error
+
+	if g.rotateNow() || ForceRotate {
+		err = g.rotate()
+		if err != nil {
+			log.WithError(err).Errorf("Rotate() failed")
+			ForceRotate = true
+			return
+		}
+	}
+	ForceRotate = false
+
+	var open bool
+	err = fmt.Errorf("force execution")
+	for i := 0; err != nil && i < 3; i++ {
+		open, err = g.isPortOpen()
+		if err != nil {
+			time.Sleep(3 * time.Second)
+		}
+	}
+	if err != nil {
+		log.WithError(err).Errorf("Unable to check IsPortOpen()")
+		return
+	}
+
+	if !open {
+		err = fmt.Errorf("force execution")
+		for i := 0; err != nil && i < 3; i++ {
+			err = g.updatePort()
+			if err != nil {
+				time.Sleep(3 * time.Second)
+			}
+		}
+	}
+	if err != nil {
+		log.WithError(err).Errorf("Unable to UpdatePort()")
 	}
 }
 
@@ -76,8 +121,8 @@ type PortResponse struct {
 	Port int64 `json:"port"`
 }
 
-// GetPort returns the forwarded port
-func (g *Gluetun) GetPort() (int64, error) {
+// getPort returns the forwarded port from Gluetun
+func (g *Gluetun) getPort() (int64, error) {
 	resp, err := http.Get(fmt.Sprintf("%s/v1/openvpn/portforwarded", g.URL))
 	if err != nil {
 		return int64(0), err
@@ -101,8 +146,8 @@ type StatusResponse struct {
 	Status string `json:"status"`
 }
 
-// GetStatus returns the status of the VPN tunnel
-func (g *Gluetun) GetStatus() (VPNStatus, error) {
+// getStatus returns the status of the VPN tunnel from Gluetun
+func (g *Gluetun) getStatus() (VPNStatus, error) {
 	resp, err := http.Get(fmt.Sprintf("%s/v1/openvpn/status", g.URL))
 	if err != nil {
 		return VPNDown, err
@@ -130,8 +175,8 @@ func (g *Gluetun) GetStatus() (VPNStatus, error) {
 	}
 }
 
-// RestartVPN tells Gluetun to stop OpenVPN which will cause it to be auto-restarted
-func (g *Gluetun) RestartVPN() error {
+// restartVPN tells Gluetun to stop OpenVPN which will cause it to be auto-restarted
+func (g *Gluetun) restartVPN() error {
 	body := []byte("{\"status\":\"stopped\"}")
 
 	log.Infof("restarting VPN tunnel")
@@ -139,8 +184,9 @@ func (g *Gluetun) RestartVPN() error {
 	return err
 }
 
-func (g *Gluetun) UpdatePort() error {
-	port, err := g.GetPort()
+// updatePort queries Gluetun and updates the peer port in Transmission if it changed
+func (g *Gluetun) updatePort() error {
+	port, err := g.getPort()
 	if err != nil {
 		return err
 	}
@@ -159,7 +205,8 @@ func (g *Gluetun) UpdatePort() error {
 	return g.Transmission.SessionArgumentsSet(context.TODO(), payload)
 }
 
-func (g *Gluetun) IsPortOpen() (bool, error) {
+// isPortOpen checks Transmission to see if it detects the peer port as open
+func (g *Gluetun) isPortOpen() (bool, error) {
 	// check the port
 	open, err := g.Transmission.PortTest(context.TODO())
 	if err != nil {
@@ -168,17 +215,17 @@ func (g *Gluetun) IsPortOpen() (bool, error) {
 
 	// track that this failed.
 	if !open {
-		g.portUpdateFailed += 1
+		g.portCheckFailed += 1
 	} else {
-		g.portUpdateFailed = 0
+		g.portCheckFailed = 0
 	}
 
 	return open, nil
 }
 
-// RotateNow tells us if we should rotate now or not
-func (g *Gluetun) RotateNow() bool {
-	if g.RotateFailure > 0 && g.portUpdateFailed > g.RotateFailure {
+// rotateNow tells us if we should rotate now or not
+func (g *Gluetun) rotateNow() bool {
+	if g.ClosedPortChecks > 0 && g.portCheckFailed > g.ClosedPortChecks {
 		return true
 	}
 
@@ -189,8 +236,9 @@ func (g *Gluetun) RotateNow() bool {
 	return false
 }
 
-func (g *Gluetun) Rotate() error {
-	err := g.RestartVPN()
+// rotate shuts down the VPN tunnel and updates the peer port for Transmission
+func (g *Gluetun) rotate() error {
+	err := g.restartVPN()
 	if err != nil {
 		return fmt.Errorf("Unable to RestartVPN(): %s", err.Error())
 	}
@@ -199,7 +247,7 @@ func (g *Gluetun) Rotate() error {
 	for i := 0; status != VPNUp && i < 10; i++ {
 		i += 1
 
-		status, err = g.GetStatus()
+		status, err = g.getStatus()
 		if err != nil {
 			log.WithError(err).Errorf("Unable to GetStatus")
 			time.Sleep(time.Duration(3 * time.Second))
@@ -213,10 +261,11 @@ func (g *Gluetun) Rotate() error {
 	}
 
 	g.lastRotate = time.Now()
-	g.portUpdateFailed = 0
+	g.portCheckFailed = 0
+	g.peerPort = -1
 	err = fmt.Errorf("force execution")
 	for i := 0; err != nil && i < 3; i++ {
-		err = g.UpdatePort()
+		err = g.updatePort()
 		if err != nil {
 			time.Sleep(3 * time.Second)
 		}
