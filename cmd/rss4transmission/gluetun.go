@@ -190,6 +190,9 @@ func (g *Gluetun) updatePort() error {
 	if err != nil {
 		return err
 	}
+	if port == 0 {
+		return fmt.Errorf("gluetun doesn't know the port yet")
+	}
 	// if the port didn't change, we're good
 	if g.peerPort == port {
 		return nil

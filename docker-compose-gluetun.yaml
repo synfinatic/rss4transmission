@@ -6,7 +6,8 @@ services:
     image: synfinatic/rss4transmission:latest
     container_name: rss4transmission
     restart: unless-stopped
-    network_mode: "service:gluetun"
+    # note that this is not on the gluetun network so fetching RSS feeds does
+    # not happen over the VPN
     depends_on:
       - gluetun
       - transmission
@@ -21,7 +22,7 @@ services:
     image: lscr.io/linuxserver/transmission:latest
     container_name: transmission
     restart: unless-stopped
-    network_mode: "service:gluetun"
+    network_mode: "service:gluetun"  # forces traffic over gluetun
     depends_on:
       - gluetun
     environment:
@@ -54,7 +55,7 @@ services:
       - SERVER_HOSTNAMES=XXXXX,YYYYYY,ZZZZZ
       - HTTP_CONTROL_SERVER_LOG=off
     ports:
-      - "0.0.0.0:9091:9091/tcp"
+      - "0.0.0.0:9091:9091/tcp"  # expose Transmission RPC/Webui to local network
       - 51413:51413/tcp
       - 51413:51413/udp
-      - 9092:8000/tcp   # move the Control Server to 9092
+      - 9092:8000/tcp   # move the Control Server to 9092 on local network

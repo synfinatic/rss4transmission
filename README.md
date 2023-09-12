@@ -31,8 +31,9 @@ for that.
 
 Note that this functionality is currently experimental.
 
-### Configuration
+### Basic Configuration
 
+Note that this config file works with [docker-compose.yaml](docker-compose.yaml)
 
 ```yaml
 # how to talk to transmission, defaults shown below
@@ -43,13 +44,6 @@ Transmission:
     Password: admin
     HTTPS:    false
     Path:     /transmission/rpc
-
-# Gluetun must be configured to be enabled
-Gluetun:
-    Host: localhost
-    Port: 9092
-    RotateTime: 12h  # how often to restart the VPN
-    ClosedPortChecks: 5 # how many times Transmission reports a closed peer port before forcing a rotation
 
 # SeenFile can be overridden via --send-file option
 SeenFile: /path/to/seen.json
@@ -79,6 +73,32 @@ Feeds:
         Url: https://rss.barbaz.com/rss?apikey=xxxxx
         Regexp:
             - (?i)^NeatStuff.*
+```
+
+### Gluetun Configuration
+
+Note that this config file works with [docker-compose-gluetun.yaml](docker-compose-gluetun.yaml)
+
+```yaml
+# When using gluetun, the networking is slightly different because
+# we are using Docker service networking
+Transmission:
+    Host: gluetun
+    Port:     9091
+    Username: admin
+    Password: admin
+
+Gluetun:
+    Host: gluetun
+    Port: 8000
+    RotateTime: 12h
+    ClosedPortChecks: 5
+
+# SeenFile can be overridden via --send-file option
+SeenFile: /path/to/seen.json
+SeenCacheDays: 30 # default
+
+# your feeds go here...
 ```
 
 ### License

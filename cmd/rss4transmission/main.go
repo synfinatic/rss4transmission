@@ -30,7 +30,6 @@ import (
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
-	"github.com/mattn/go-colorable"
 
 	"github.com/sirupsen/logrus"
 )
@@ -91,13 +90,10 @@ func main() {
 		log.SetLevel(logrus.DebugLevel)
 	case "info":
 		log.SetLevel(logrus.InfoLevel)
-		log.SetOutput(colorable.NewColorableStdout())
 	case "warn":
 		log.SetLevel(logrus.WarnLevel)
-		log.SetOutput(colorable.NewColorableStdout())
 	case "error":
 		log.SetLevel(logrus.ErrorLevel)
-		log.SetOutput(colorable.NewColorableStdout())
 	}
 	if cli.Lines {
 		log.SetReportCaller(true)
