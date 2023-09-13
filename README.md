@@ -3,12 +3,12 @@
 [![Tests](https://github.com/synfinatic/rss4transmission/actions/workflows/tests.yml/badge.svg)](https://github.com/synfinatic/rss4transmission/actions/workflows/tests.yml)
 [![golangci-lint](https://github.com/synfinatic/rss4transmission/actions/workflows/golangci-lint.yml/badge.svg)](https://github.com/synfinatic/rss4transmission/actions/workflows/golangci-lint.yml)
 
-### About
+## About
 
 RSS4Transmission is a tool for fetching torrents over RSS for [Transmission](
 https://transmissionbt.com).
 
-### Why?
+## Why?
 
 There are already a few tools that do this... most notably [rss-transmission](
 https://github.com/nning/transmission-rss) is the closest, and I frankly stole
@@ -19,7 +19,11 @@ pull down a lot of different files from the same feed and want them saved to
 different directories.  I wanted something that would be "nice" and only
 read the RSS feed once, even though I've got 10 different categories.
 
-### Gluetun Compatability
+## Images
+
+Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinatic/rss4transmission).
+
+## Gluetun Compatability
 
 RSS4Transmission now supports integrating with [Gluetun](https://github.com/qdm12/gluetun).
 
@@ -30,6 +34,8 @@ assuming that [Gluetun supports your VPN provider](https://github.com/qdm12/glue
 for that.
 
 Note that this functionality is currently experimental.
+
+## Configuration
 
 ### Basic Configuration
 
