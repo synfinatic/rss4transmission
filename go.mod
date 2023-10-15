@@ -9,7 +9,6 @@ require (
 	github.com/knadh/koanf v1.5.0
 	github.com/knadh/koanf/v2 v2.0.0
 	github.com/manifoldco/promptui v0.9.0
-	github.com/mattn/go-colorable v0.1.8
 	github.com/mmcdole/gofeed v1.2.0
 	github.com/sirupsen/logrus v1.8.1
 	github.com/xhit/go-str2duration/v2 v2.1.0
@@ -27,7 +26,6 @@ require (
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hekmon/cunits/v2 v2.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/mattn/go-isatty v0.0.12 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
