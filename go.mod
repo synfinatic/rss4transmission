@@ -10,7 +10,7 @@ require (
 	github.com/knadh/koanf/v2 v2.0.1
 	github.com/manifoldco/promptui v0.9.0
 	github.com/mmcdole/gofeed v1.2.1
-	github.com/sirupsen/logrus v1.8.1
+	github.com/sirupsen/logrus v1.9.3
 	github.com/xhit/go-str2duration/v2 v2.1.0
 )
 
