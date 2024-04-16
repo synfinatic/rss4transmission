@@ -7,7 +7,7 @@ require (
 	github.com/hekmon/transmissionrpc/v2 v2.0.1
 	github.com/inhies/go-bytesize v0.0.0-20220417184213-4913239db9cf
 	github.com/knadh/koanf v1.5.0
-	github.com/knadh/koanf/v2 v2.0.1
+	github.com/knadh/koanf/v2 v2.1.1
 	github.com/manifoldco/promptui v0.9.0
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/sirupsen/logrus v1.9.3
@@ -16,6 +16,7 @@ require (
 
 require (
 	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect
+	github.com/go-viper/mapstructure/v2 v2.0.0-alpha.1 // indirect
 	golang.org/x/sys v0.13.0 // indirect
 )
 
@@ -27,7 +28,6 @@ require (
 	github.com/hekmon/cunits/v2 v2.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
-	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/mmcdole/goxpp v1.1.1-0.20240225020742-a0c311522b23 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
