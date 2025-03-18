@@ -1,6 +1,8 @@
 module github.com/synfinatic/rss4transmission
 
-go 1.23
+go 1.23.0
+
+toolchain go1.23.5
 
 require (
 	github.com/alecthomas/kong v1.7.0
@@ -17,7 +19,7 @@ require (
 require (
 	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
-	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
 )
 
 require (
@@ -32,7 +34,7 @@ require (
 	github.com/mmcdole/goxpp v1.1.1-0.20240225020742-a0c311522b23 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	golang.org/x/net v0.33.0 // indirect; security
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/net v0.36.0 // indirect; security
+	golang.org/x/text v0.22.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
