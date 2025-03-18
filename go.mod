@@ -1,6 +1,9 @@
 module github.com/synfinatic/rss4transmission
 
-go 1.23
+go 1.23.0
+
+toolchain go1.23.5
+
 require (
 	github.com/alecthomas/kong v1.7.0
 	github.com/hekmon/transmissionrpc/v2 v2.0.1
