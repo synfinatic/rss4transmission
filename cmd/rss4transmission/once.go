@@ -128,7 +128,7 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 
 	cacheTime := time.Duration(ctx.Konf.Int("SeenCacheDays")) * time.Duration(24) * time.Hour
 	if err = ctx.Cache.SaveCache(cacheTime); err != nil {
-		return fmt.Errorf("Unable to save seen cache: %s", err.Error())
+		return fmt.Errorf("unable to save seen cache: %s", err.Error())
 	}
 	return nil
 }

@@ -52,7 +52,7 @@ func NewGluetun(g GluetunConfig, t *transmissionrpc.Client) *Gluetun {
 	if g.RotateTime != "" {
 		r, err = str2duration.ParseDuration(g.RotateTime)
 		if err != nil {
-			log.WithError(err).Fatalf("Unable to parse RotateTime: %s", g.RotateTime)
+			log.WithError(err).Fatalf("unable to parse RotateTime: %s", g.RotateTime)
 		}
 	}
 
@@ -129,15 +129,17 @@ func (g *Gluetun) getPort() (int64, error) {
 		return int64(0), err
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return int64(0), fmt.Errorf("Unable to read body: %s", err.Error())
+		return int64(0), fmt.Errorf("unable to read body: %s", err.Error())
 	}
 
 	pr := PortResponse{}
 	if err = json.Unmarshal(body, &pr); err != nil {
-		return int64(0), fmt.Errorf("Unable to parse json: %s", err.Error())
+		return int64(0), fmt.Errorf("unable to parse json: %s", err.Error())
 	}
 
 	return pr.Port, nil
@@ -154,15 +156,17 @@ func (g *Gluetun) getStatus() (VPNStatus, error) {
 		return VPNDown, err
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return VPNDown, fmt.Errorf("Unable to read body: %s", err.Error())
+		return VPNDown, fmt.Errorf("unable to read body: %s", err.Error())
 	}
 
 	sr := StatusResponse{}
 	if err = json.Unmarshal(body, &sr); err != nil {
-		return VPNDown, fmt.Errorf("Unable to parse json: %s", err.Error())
+		return VPNDown, fmt.Errorf("unable to parse json: %s", err.Error())
 	}
 
 	switch sr.Status {
@@ -172,7 +176,7 @@ func (g *Gluetun) getStatus() (VPNStatus, error) {
 		log.Infof("VPN tunnel is down")
 		return VPNDown, nil
 	default:
-		return VPNDown, fmt.Errorf("Unsupported status: %s", sr.Status)
+		return VPNDown, fmt.Errorf("unsupported status: %s", sr.Status)
 	}
 }
 
@@ -245,7 +249,7 @@ func (g *Gluetun) rotate() error {
 	log.Info("Rotating VPN...")
 	err := g.restartVPN()
 	if err != nil {
-		return fmt.Errorf("Unable to RestartVPN(): %s", err.Error())
+		return fmt.Errorf("unable to RestartVPN(): %s", err.Error())
 	}
 
 	status := VPNDown
@@ -262,7 +266,7 @@ func (g *Gluetun) rotate() error {
 	}
 
 	if status != VPNUp {
-		return fmt.Errorf("Aborting rotation: VPN Failed to come back up")
+		return fmt.Errorf("aborting rotation: VPN Failed to come back up")
 	}
 
 	g.lastRotate = time.Now()

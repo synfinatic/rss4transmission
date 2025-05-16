@@ -155,9 +155,12 @@ func main() {
 		log.WithError(err).Fatalf("Unable to open cache file: %s", seenFileName)
 	}
 
+	if rc.Konf.Int("Transmission.Port") < 0 || rc.Konf.Int("Transmission.Port") > 65535 {
+		log.Fatalf("Invalid port number: %d", rc.Konf.Int("Transmission.Port"))
+	}
 	ac := transmissionrpc.AdvancedConfig{
 		HTTPS:       rc.Konf.Bool("Transmission.HTTPS"),
-		Port:        uint16(rc.Konf.Int("Transmission.Port")),
+		Port:        uint16(rc.Konf.Int("Transmission.Port")), // nolint:gosec
 		RPCURI:      rc.Konf.String("Transmission.Path"),
 		HTTPTimeout: time.Duration(30 * time.Second),
 		UserAgent:   fmt.Sprintf("rss4transmission/%s", Version),
