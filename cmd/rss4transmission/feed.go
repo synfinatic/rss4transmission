@@ -50,7 +50,7 @@ func (fi *FeedItem) TorrentURL() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("Unable to find Type = application/x-bittorrent for %s", fi.Item.Title)
+	return "", fmt.Errorf("unable to find Type = application/x-bittorrent for %s", fi.Item.Title)
 }
 
 func (fi *FeedItem) getTorrentContents() ([]byte, error) {
@@ -59,12 +59,11 @@ func (fi *FeedItem) getTorrentContents() ([]byte, error) {
 		return []byte{}, err
 	}
 
-	resp, err := http.Get(torrentUrl)
+	resp, err := http.Get(torrentUrl) //nolint:gosec
 	if err != nil {
-		return []byte{}, fmt.Errorf("Unable to download %s: %s", torrentUrl, err)
+		return []byte{}, fmt.Errorf("unable to download %s: %s", torrentUrl, err)
 	}
 	return io.ReadAll(resp.Body)
-
 }
 
 func (fi *FeedItem) Download(ctx *RunContext, dir string) (string, error) {
@@ -78,8 +77,8 @@ func (fi *FeedItem) Download(ctx *RunContext, dir string) (string, error) {
 		return "", err
 	}
 
-	if err = os.WriteFile(filePath, contents, 0644); err != nil {
-		return "", fmt.Errorf("Unable to write %s: %s", filePath, err.Error())
+	if err = os.WriteFile(filePath, contents, 0644); err != nil { // nolint:gosec
+		return "", fmt.Errorf("unable to write %s: %s", filePath, err.Error())
 	}
 
 	log.Infof("Downloading: %s", filePath)

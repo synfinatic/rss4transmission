@@ -90,7 +90,7 @@ func (c *CacheFile) SaveCache(d time.Duration) error {
 
 	log.Infof("saving cache with %d entries less than %d days old", len(c.Seen), int(d.Hours()/24))
 	cacheBytes, _ := json.MarshalIndent(*c, "", "  ")
-	err := os.WriteFile(c.filename, cacheBytes, 0644)
+	err := os.WriteFile(c.filename, cacheBytes, 0644) // nolint:gosec
 	if err != nil {
 		c.needSave = true // force save again, incase we deleted a record
 		return err
