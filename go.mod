@@ -5,7 +5,7 @@ go 1.23.0
 toolchain go1.23.5
 
 require (
-	github.com/alecthomas/kong v1.9.0
+	github.com/alecthomas/kong v1.12.0
 	github.com/hekmon/transmissionrpc/v2 v2.0.1
 	github.com/inhies/go-bytesize v0.0.0-20220417184213-4913239db9cf
 	github.com/knadh/koanf v1.5.0
