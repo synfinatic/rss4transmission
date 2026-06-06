@@ -57,6 +57,9 @@ type GluetunConfig struct {
 	HTTPS            bool   `koanf:"HTTPS"`
 	RotateTime       string `koanf:"Rotate"`
 	ClosedPortChecks int    `koanf:"ClosedPortChecks"`
+	AuthUsername     string `koanf:"AuthUsername"`
+	AuthPassword     string `koanf:"AuthPassword"`
+	AuthAPIKey       string `koanf:"AuthAPIKey"`
 }
 
 type Feed struct {
