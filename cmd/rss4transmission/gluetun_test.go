@@ -69,7 +69,7 @@ func TestGetPort(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"port":51820}`))
+		_, _ = w.Write([]byte(`{"ports":[51820]}`))
 	}))
 	defer ts.Close()
 

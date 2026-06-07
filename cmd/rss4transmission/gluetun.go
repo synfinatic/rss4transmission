@@ -139,7 +139,7 @@ const (
 )
 
 type PortResponse struct {
-	Port int64 `json:"port"`
+	Ports []int64 `json:"ports"`
 }
 
 // getPort returns the forwarded port from Gluetun
@@ -167,7 +167,10 @@ func (g *Gluetun) getPort() (int64, error) {
 		return int64(0), fmt.Errorf("unable to parse json: %s", err.Error())
 	}
 
-	return pr.Port, nil
+	if len(pr.Ports) == 0 {
+		return int64(0), fmt.Errorf("no ports returned")
+	}
+	return pr.Ports[0], nil
 }
 
 type StatusResponse struct {
