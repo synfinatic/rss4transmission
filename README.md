@@ -99,6 +99,10 @@ Gluetun:
     Port: 8000
     RotateTime: 12h
     ClosedPortChecks: 5
+    # set AuthUsername + AuthPassword OR AuthAPIKey
+    AuthUsername: Basic Auth Username
+    AuthPassword: Basic Auth Password
+    AuthAPIKey: API Key
 
 # SeenFile can be overridden via --send-file option
 SeenFile: /path/to/seen.json
