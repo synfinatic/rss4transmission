@@ -26,7 +26,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hekmon/transmissionrpc/v2"
+	"github.com/hekmon/transmissionrpc/v3"
 	str2duration "github.com/xhit/go-str2duration/v2"
 )
 
@@ -149,7 +149,7 @@ func (g *Gluetun) getPort() (int64, error) {
 	if err != nil {
 		return int64(0), err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) // nolint:gosec
 	if err != nil {
 		return int64(0), err
 	}
@@ -184,7 +184,7 @@ func (g *Gluetun) getStatus() (VPNStatus, error) {
 	if err != nil {
 		return VPNDown, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) // nolint:gosec
 	if err != nil {
 		return VPNDown, err
 	}
@@ -222,7 +222,7 @@ func (g *Gluetun) restartVPN() error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) // nolint:gosec
 	if err != nil {
 		return err
 	}
@@ -259,7 +259,7 @@ func (g *Gluetun) getPublicIp() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) // nolint:gosec
 	if err != nil {
 		return "", err
 	}

@@ -20,12 +20,12 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/hekmon/transmissionrpc/v2"
+	"github.com/hekmon/transmissionrpc/v3"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/file"
@@ -158,19 +158,23 @@ func main() {
 	if rc.Konf.Int("Transmission.Port") < 0 || rc.Konf.Int("Transmission.Port") > 65535 {
 		log.Fatalf("Invalid port number: %d", rc.Konf.Int("Transmission.Port"))
 	}
-	ac := transmissionrpc.AdvancedConfig{
-		HTTPS:       rc.Konf.Bool("Transmission.HTTPS"),
-		Port:        uint16(rc.Konf.Int("Transmission.Port")), // nolint:gosec
-		RPCURI:      rc.Konf.String("Transmission.Path"),
-		HTTPTimeout: time.Duration(30 * time.Second),
-		UserAgent:   fmt.Sprintf("rss4transmission/%s", Version),
-		Debug:       false,
+	config := transmissionrpc.Config{
+		UserAgent: fmt.Sprintf("rss4transmission/%s", Version),
 	}
-	if rc.Transmission, err = transmissionrpc.New(rc.Konf.String("Transmission.Host"),
-		rc.Konf.String("Transmission.Username"), rc.Konf.String("Transmission.Password"), &ac); err != nil {
+	proto := "http"
+	if rc.Konf.Bool("Transmission.HTTPS") {
+		proto = "https"
+	}
+	transmissionUrl := fmt.Sprintf("%s://%s:%d%s", proto,
+		rc.Konf.String("Transmission.Host"), rc.Konf.Int("Transmission.Port"), rc.Konf.String("Transmission.Path"))
+	log.Debugf("Transmission URL: %s", transmissionUrl)
+	connectUrl, err := url.Parse(transmissionUrl)
+	if err != nil {
+		log.WithError(err).Fatalf("Unable to parse Transmission URL: %s", transmissionUrl)
+	}
+	if rc.Transmission, err = transmissionrpc.New(connectUrl, &config); err != nil {
 		log.WithError(err).Fatalf("Unable to setup Transmission client")
 	}
-
 	if err = ctx.Run(rc); err != nil {
 		log.WithError(err).Fatalf("Error running command")
 	}

@@ -38,6 +38,7 @@ LINUX_BIN                 := $(DIST_DIR)$(PROJECT_NAME)-$(PROJECT_VERSION)-linux
 LINUXARM64_BIN            := $(DIST_DIR)$(PROJECT_NAME)-$(PROJECT_VERSION)-linux-arm64
 LINUXARM32_BIN            := $(DIST_DIR)$(PROJECT_NAME)-$(PROJECT_VERSION)-linux-arm32
 DARWIN_BIN                := $(DIST_DIR)$(PROJECT_NAME)-$(PROJECT_VERSION)-darwin-amd64
+GOLANGCI_LINT_VERSION     := 2.10.1
 
 
 
@@ -116,8 +117,24 @@ test-tidy:  ## Test to make sure go.mod is tidy
 
 precheck: test test-fmt test-tidy lint ## Run all tests that happen in a PR 
 
-lint:  ## Run golangci-lint
+lint: .lint-check  ## Run golangci-lint
 	golangci-lint run
+
+lint-install:  ## Install golangci-lint
+	curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(shell go env GOPATH)/bin v$(GOLANGCI_LINT_VERSION)
+
+.PHONY: .print-golangci-lint-version
+.print-golangci-lint-version:  ## Print golangci-lint version
+	@echo v$(GOLANGCI_LINT_VERSION)
+
+.PHONY: .lint-check
+.lint-check:
+	@if test $$(golangci-lint --version 2>&1 | grep -c "version $(GOLANGCI_LINT_VERSION)") -eq 0 ; then \
+	   echo "Need to install golangci-lint $(GOLANGCI_LINT_VERSION)" ; \
+	   echo "Run: make lint-install" ; \
+	   exit -1 ; \
+	fi
+	
 
 # Build targets for our supported plaforms
 windows: $(WINDOWS_BIN)  ## Build 64bit Windows binary
