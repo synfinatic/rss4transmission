@@ -73,15 +73,18 @@ func NewGluetun(g GluetunConfig, t *transmissionrpc.Client) *Gluetun {
 	}
 }
 
-func (g *Gluetun) newRequest(method, url string, body io.Reader) *http.Request {
-	req, _ := http.NewRequest(method, url, body)
+func (g *Gluetun) newRequest(method, url string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
 	if g.AuthUsername != "" && g.AuthPassword != "" {
 		req.SetBasicAuth(g.AuthUsername, g.AuthPassword)
 	}
 	if g.AuthAPIKey != "" {
 		req.Header.Set("X-API-Key", g.AuthAPIKey)
 	}
-	return req
+	return req, nil
 }
 
 var ForceRotate bool // flag to force rotation again due to failure
@@ -142,11 +145,17 @@ type PortResponse struct {
 // getPort returns the forwarded port from Gluetun
 func (g *Gluetun) getPort() (int64, error) {
 	body := new(bytes.Buffer)
-	req := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/portforward", g.URL), body)
+	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/portforward", g.URL), body)
+	if err != nil {
+		return int64(0), err
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return int64(0), err
 	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -168,7 +177,10 @@ type StatusResponse struct {
 // getStatus returns the status of the VPN tunnel from Gluetun
 func (g *Gluetun) getStatus() (VPNStatus, error) {
 	body := new(bytes.Buffer)
-	req := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/vpn/status", g.URL), body)
+	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/vpn/status", g.URL), body)
+	if err != nil {
+		return VPNDown, err
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return VPNDown, err
@@ -203,12 +215,15 @@ func (g *Gluetun) restartVPN() error {
 	body := []byte("{\"status\":\"stopped\"}")
 
 	log.Infof("restarting VPN tunnel")
-	req, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/v1/vpn/status", g.URL), bytes.NewReader(body))
+	req, err := g.newRequest(http.MethodPut, fmt.Sprintf("%s/v1/vpn/status", g.URL), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	_, err = http.DefaultClient.Do(req)
-	return err
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
 }
 
 // updatePort queries Gluetun and updates the peer port in Transmission if it changed
@@ -237,7 +252,10 @@ func (g *Gluetun) updatePort() error {
 
 func (g *Gluetun) getPublicIp() (string, error) {
 	body := new(bytes.Buffer)
-	req := g.newRequest(http.MethodGet, fmt.Sprintf("%s/publicip/ip", g.URL), body)
+	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/publicip/ip", g.URL), body)
+	if err != nil {
+		return "", err
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err

@@ -140,7 +140,10 @@ func TestNewRequest_BasicAuth(t *testing.T) {
 		AuthUsername: "user",
 		AuthPassword: "pass",
 	}
-	req := g.newRequest(http.MethodGet, "http://localhost/test", nil)
+	req, err := g.newRequest(http.MethodGet, "http://localhost/test", nil)
+	if err != nil {
+		t.Fatalf("newRequest returned error: %v", err)
+	}
 	authHeader := req.Header.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Basic ") {
 		t.Fatalf("Authorization header = %q, want Basic ...", authHeader)
@@ -159,7 +162,10 @@ func TestNewRequest_APIKey(t *testing.T) {
 		URL:        "http://localhost",
 		AuthAPIKey: "secret-key",
 	}
-	req := g.newRequest(http.MethodGet, "http://localhost/test", nil)
+	req, err := g.newRequest(http.MethodGet, "http://localhost/test", nil)
+	if err != nil {
+		t.Fatalf("newRequest returned error: %v", err)
+	}
 	apiKey := req.Header.Get("X-API-Key")
 	if apiKey != "secret-key" {
 		t.Errorf("X-API-Key = %q, want secret-key", apiKey)
@@ -168,7 +174,10 @@ func TestNewRequest_APIKey(t *testing.T) {
 
 func TestNewRequest_NoAuth(t *testing.T) {
 	g := &Gluetun{URL: "http://localhost"}
-	req := g.newRequest(http.MethodGet, "http://localhost/test", nil)
+	req, err := g.newRequest(http.MethodGet, "http://localhost/test", nil)
+	if err != nil {
+		t.Fatalf("newRequest returned error: %v", err)
+	}
 	if req.Header.Get("Authorization") != "" {
 		t.Error("Authorization header should not be set when no credentials configured")
 	}
