@@ -38,6 +38,9 @@ type Gluetun struct {
 	lastRotate       time.Time
 	peerPort         int64
 	portCheckFailed  int
+	AuthUsername     string
+	AuthPassword     string
+	AuthAPIKey       string
 }
 
 func NewGluetun(g GluetunConfig, t *transmissionrpc.Client) *Gluetun {
@@ -64,7 +67,24 @@ func NewGluetun(g GluetunConfig, t *transmissionrpc.Client) *Gluetun {
 		lastRotate:       time.Now(),
 		peerPort:         -1,
 		portCheckFailed:  0,
+		AuthUsername:     g.AuthUsername,
+		AuthPassword:     g.AuthPassword,
+		AuthAPIKey:       g.AuthAPIKey,
 	}
+}
+
+func (g *Gluetun) newRequest(method, url string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	if g.AuthUsername != "" && g.AuthPassword != "" {
+		req.SetBasicAuth(g.AuthUsername, g.AuthPassword)
+	}
+	if g.AuthAPIKey != "" {
+		req.Header.Set("X-API-Key", g.AuthAPIKey)
+	}
+	return req, nil
 }
 
 var ForceRotate bool // flag to force rotation again due to failure
@@ -124,21 +144,26 @@ type PortResponse struct {
 
 // getPort returns the forwarded port from Gluetun
 func (g *Gluetun) getPort() (int64, error) {
-	resp, err := http.Get(fmt.Sprintf("%s/v1/openvpn/portforwarded", g.URL))
+	body := new(bytes.Buffer)
+	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/portforward", g.URL), body)
 	if err != nil {
 		return int64(0), err
 	}
-
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return int64(0), err
+	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
-	body, err := io.ReadAll(resp.Body)
+
+	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return int64(0), fmt.Errorf("unable to read body: %s", err.Error())
 	}
 
 	pr := PortResponse{}
-	if err = json.Unmarshal(body, &pr); err != nil {
+	if err = json.Unmarshal(bodyBytes, &pr); err != nil {
 		return int64(0), fmt.Errorf("unable to parse json: %s", err.Error())
 	}
 
@@ -151,7 +176,12 @@ type StatusResponse struct {
 
 // getStatus returns the status of the VPN tunnel from Gluetun
 func (g *Gluetun) getStatus() (VPNStatus, error) {
-	resp, err := http.Get(fmt.Sprintf("%s/v1/openvpn/status", g.URL))
+	body := new(bytes.Buffer)
+	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/vpn/status", g.URL), body)
+	if err != nil {
+		return VPNDown, err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return VPNDown, err
 	}
@@ -159,13 +189,13 @@ func (g *Gluetun) getStatus() (VPNStatus, error) {
 	defer func() {
 		_ = resp.Body.Close()
 	}()
-	body, err := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return VPNDown, fmt.Errorf("unable to read body: %s", err.Error())
 	}
 
 	sr := StatusResponse{}
-	if err = json.Unmarshal(body, &sr); err != nil {
+	if err = json.Unmarshal(bodyBytes, &sr); err != nil {
 		return VPNDown, fmt.Errorf("unable to parse json: %s", err.Error())
 	}
 
@@ -185,8 +215,15 @@ func (g *Gluetun) restartVPN() error {
 	body := []byte("{\"status\":\"stopped\"}")
 
 	log.Infof("restarting VPN tunnel")
-	_, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/v1/openvpn/status", g.URL), bytes.NewReader(body))
-	return err
+	req, err := g.newRequest(http.MethodPut, fmt.Sprintf("%s/v1/vpn/status", g.URL), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
 }
 
 // updatePort queries Gluetun and updates the peer port in Transmission if it changed
@@ -211,6 +248,35 @@ func (g *Gluetun) updatePort() error {
 		PeerPort: &port,
 	}
 	return g.Transmission.SessionArgumentsSet(context.TODO(), payload)
+}
+
+func (g *Gluetun) getPublicIp() (string, error) {
+	body := new(bytes.Buffer)
+	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/publicip/ip", g.URL), body)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("unable to read body: %s", err.Error())
+	}
+
+	type IPResponse struct {
+		IP string `json:"public_ip"`
+	}
+	ipResp := IPResponse{}
+	if err = json.Unmarshal(bodyBytes, &ipResp); err != nil {
+		return "", fmt.Errorf("unable to parse json: %s", err.Error())
+	}
+
+	return ipResp.IP, nil
 }
 
 // isPortOpen checks Transmission to see if it detects the peer port as open
