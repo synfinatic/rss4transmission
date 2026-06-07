@@ -48,7 +48,7 @@ type Transmission struct {
 	HTTPS    bool   `koanf:"HTTPS"`
 	Path     string `koanf:"Path"`
 	Username string `koanf:"Username"`
-	Password string `koanf:"Password"`
+	Password string `koanf:"Password"` // nolint:gosec
 }
 
 type GluetunConfig struct {

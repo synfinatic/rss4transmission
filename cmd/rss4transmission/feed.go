@@ -27,7 +27,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hekmon/transmissionrpc/v2"
+	"github.com/hekmon/transmissionrpc/v3"
 	bytesize "github.com/inhies/go-bytesize"
 	"github.com/mmcdole/gofeed"
 )
