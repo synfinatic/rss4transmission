@@ -18,6 +18,7 @@ package main
  */
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 
@@ -32,14 +33,32 @@ var ConfigDefaults = map[string]interface{}{
 	"Transmission.Username": "admin",
 	"Transmission.Password": "admin",
 	"SeenCacheDays":         30,
+	"Anthropic.Model":       "claude-haiku-4-5-20251001",
 }
 
 type Config struct {
 	Feeds         map[string]Feed `koanf:"Feeds"`
 	Transmission  Transmission    `koanf:"Transmission"`
 	Gluetun       GluetunConfig   `koanf:"Gluetun"`
+	Anthropic     AnthropicConfig `koanf:"Anthropic"`
 	SeenFile      string          `koanf:"SeenFile"`
 	SeenCacheDays int             `koanf:"SeenCacheDays"`
+}
+
+// AnthropicConfig holds API credentials for the Anthropic normalizer.
+type AnthropicConfig struct {
+	APIKey string `koanf:"APIKey"` //nolint:gosec
+	Model  string `koanf:"Model"`
+}
+
+// AISelection defines structured selection rules that replace regexp matching.
+type AISelection struct {
+	Series        []string `koanf:"Series"`
+	Sessions      []string `koanf:"Sessions"`
+	FeedPriority  []string `koanf:"FeedPriority"`
+	MinResolution string   `koanf:"MinResolution"`
+	Languages     []string `koanf:"Languages"`
+	ExcludeFlags  []string `koanf:"ExcludeFlags"`
 }
 
 type Transmission struct {
@@ -63,16 +82,17 @@ type GluetunConfig struct {
 }
 
 type Feed struct {
-	URL            string   `koanf:"URL"`
-	Regexp         []string `koanf:"Regexp"`
-	Exclude        []string `koanf:"Exclude"`
-	Categories     []string `koanf:"Categories"`
-	DownloadPath   string   `koanf:"DownloadPath"`
-	NoValidateCert bool     `koanf:"NoValidateCert"`
-	NoSubmit       bool     `koanf:"NoSubmit"`
-	NoNotify       bool     `koanf:"NoNotify"`
-	MaxSize        string   `koanf:"MaxSize"`
-	MinSize        string   `koanf:"MinSize"`
+	URL            string       `koanf:"URL"`
+	Regexp         []string     `koanf:"Regexp"`
+	Exclude        []string     `koanf:"Exclude"`
+	Categories     []string     `koanf:"Categories"`
+	DownloadPath   string       `koanf:"DownloadPath"`
+	NoValidateCert bool         `koanf:"NoValidateCert"`
+	NoSubmit       bool         `koanf:"NoSubmit"`
+	NoNotify       bool         `koanf:"NoNotify"`
+	MaxSize        string       `koanf:"MaxSize"`
+	MinSize        string       `koanf:"MinSize"`
+	AISelection    *AISelection `koanf:"AISelection"`
 
 	// internal
 	compiled bool
@@ -80,6 +100,14 @@ type Feed struct {
 	exclude  []*regexp.Regexp
 	minSize  uint64
 	maxSize  uint64
+}
+
+// Validate checks the feed config for inconsistencies that cannot be caught by YAML parsing.
+func (m *Feed) Validate(name string) error {
+	if m.AISelection != nil && len(m.Regexp) > 0 {
+		return fmt.Errorf("feed %q: AISelection and Regexp are mutually exclusive; use Exclude for the escape hatch", name)
+	}
+	return nil
 }
 
 // Check if a given item should be processed

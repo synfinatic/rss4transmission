@@ -29,20 +29,32 @@ const (
 	CACHE_VERSION   = 1
 )
 
+// NormalizedKey identifies a downloaded session by its structured metadata.
+// SourceFeed is the canonical broadcaster name (e.g. "TNT Sports") used for feed-priority comparison.
+type NormalizedKey struct {
+	Series     string `json:"Series,omitempty"`
+	Year       int    `json:"Year,omitempty"`
+	Round      int    `json:"Round,omitempty"`
+	Session    string `json:"Session,omitempty"`
+	SourceFeed string `json:"SourceFeed,omitempty"`
+}
+
 type CacheFile struct {
-	Version  int              `json:"Version"`
-	Errors   map[string]int64 `json:"Errors"`
-	Seen     []CacheRecord    `json:"Seen"`
-	filename string
-	needSave bool
+	Version        int                          `json:"Version"`
+	Errors         map[string]int64             `json:"Errors"`
+	Seen           []CacheRecord                `json:"Seen"`
+	NormalizeCache map[string]NormalizedTorrent `json:"NormalizeCache,omitempty"`
+	filename       string
+	needSave       bool
 }
 
 type CacheRecord struct {
-	Feed      string    `json:"Feed"`
-	Published time.Time `json:"Published"`
-	AddTime   time.Time `json:"AddTime"`
-	GUID      string    `json:"GUID"`
-	Complete  bool      `json:"Complete"`
+	Feed       string         `json:"Feed"`
+	Published  time.Time      `json:"Published"`
+	AddTime    time.Time      `json:"AddTime"`
+	GUID       string         `json:"GUID"`
+	Complete   bool           `json:"Complete"`
+	Normalized *NormalizedKey `json:"Normalized,omitempty"`
 }
 
 func OpenCache(path string) (*CacheFile, error) {
@@ -154,4 +166,48 @@ func (c *CacheFile) AddError(item FeedItem) bool {
 		return true
 	}
 	return false
+}
+
+// AddNormalizedItem adds a FeedItem with normalized metadata to the seen cache.
+func (c *CacheFile) AddNormalizedItem(item *FeedItem, norm *NormalizedTorrent) {
+	now := time.Now()
+	cr := CacheRecord{
+		Feed:     item.Feed,
+		AddTime:  now,
+		GUID:     item.Item.GUID,
+		Complete: item.Complete,
+		Normalized: &NormalizedKey{
+			Series:     norm.Series,
+			Year:       norm.Year,
+			Round:      norm.Round,
+			Session:    norm.Session,
+			SourceFeed: norm.Feed,
+		},
+	}
+	if item.Item.PublishedParsed != nil {
+		cr.Published = *item.Item.PublishedParsed
+	}
+	c.Seen = append(c.Seen, cr)
+	c.needSave = true
+}
+
+// ExistsByKey returns true if any seen record has a NormalizedKey matching
+// the given (series, year, round, session) tuple.
+func (c *CacheFile) ExistsByKey(series string, year, round int, session string) bool {
+	return c.FindByKey(series, year, round, session) != nil
+}
+
+// FindByKey returns the NormalizedKey of the first seen record matching
+// (series, year, round, session), or nil if no match exists.
+func (c *CacheFile) FindByKey(series string, year, round int, session string) *NormalizedKey {
+	for i := range c.Seen {
+		nk := c.Seen[i].Normalized
+		if nk == nil {
+			continue
+		}
+		if nk.Series == series && nk.Year == year && nk.Round == round && nk.Session == session {
+			return nk
+		}
+	}
+	return nil
 }

@@ -19,6 +19,7 @@ package main
  */
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -40,7 +41,6 @@ type OnceCmd struct {
 
 func (cmd *OnceCmd) Run(ctx *RunContext) error {
 	var err error
-	var filePath string
 
 	log.Debugf("Starting our run...")
 	if ctx.Cli.Once.DownloadPath == "" {
@@ -70,7 +70,20 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 			continue
 		}
 
-		for _, item := range feed.NewItems(name, feeds[feed.URL]) {
+		// Collect candidate items: either all feed items (for AI path) or regexp-filtered items.
+		var candidates []*FeedItem
+		feedCopy := feed
+		if feed.AISelection != nil && ctx.Normalizer != nil {
+			// AI path: consider all items from the feed (no regexp pre-filter)
+			for _, rawItem := range feeds[feed.URL].Items {
+				candidates = append(candidates, &FeedItem{Feed: name, Item: rawItem})
+			}
+		} else {
+			// Regexp path: use existing filter
+			candidates = append(candidates, feedCopy.NewItems(name, feeds[feed.URL])...)
+		}
+
+		for _, item := range candidates {
 			if quit {
 				break
 			}
@@ -79,49 +92,31 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 				continue
 			}
 
-			if ctx.Cli.Once.NoAction {
-				log.Infof("%s match: %s", name, item.Item.Title)
-			} else if ctx.Cli.Once.Skip {
-				// add to cache and do nothing
-				ctx.Cache.AddItem(item)
-			} else if ctx.Cli.Once.Download {
-				if filePath, err = item.Download(ctx, ctx.Cli.Once.DownloadPath); err != nil {
-					log.WithError(err).Errorf("Unable to download: %s", filePath)
-					continue
-				}
-			} else if ctx.Cli.Once.Interactive {
-				switch prompt(name, item.Item.Title) {
-				case Download:
-					if filePath, err = item.Download(ctx, ctx.Cli.Once.DownloadPath); err != nil {
-						log.WithError(err).Errorf("Unable to download: %s", filePath)
+			var norm *NormalizedTorrent
+			if feed.AISelection != nil && ctx.Normalizer != nil {
+				n, normErr := ctx.Normalizer.Normalize(context.Background(), item.Item.Title)
+				if normErr != nil {
+					log.WithError(normErr).Warnf("Normalizer failed for %q, falling back to regexp", item.Item.Title)
+					if !feedCopy.Check(item.Item) {
 						continue
 					}
-
-				case Torrent:
-					if err = item.Torrent(ctx, feed.DownloadPath); err != nil {
-						log.WithError(err).Errorf("Unable to torrent: %s", name)
+				} else {
+					ok, reason := AISelect(n, feed.AISelection, ctx.Cache, item.Item.Title, &feedCopy)
+					if !ok {
+						log.Debugf("AI rejected %q: %s", item.Item.Title, reason)
 						continue
 					}
-
-				case Skip:
-					// add to cache and do nothing
-					ctx.Cache.AddItem(item)
-					continue
-
-				case SkipOnce:
-					continue // don't add to the cache
-
-				case Quit:
-					quit = true
-
-				default:
-					log.Errorf("Unknown reply")
+					norm = n
 				}
-			} else {
-				if err = item.Torrent(ctx, feed.DownloadPath); err != nil {
-					log.WithError(err).Errorf("Unable to torrent: %s", name)
-					continue
-				}
+			}
+
+			var stopLoop bool
+			if stopLoop, err = cmd.dispatchItem(ctx, name, &feedCopy, item, norm); err != nil {
+				log.WithError(err).Errorf("Unable to dispatch: %s", item.Item.Title)
+				continue
+			}
+			if stopLoop {
+				quit = true
 			}
 		}
 	}
@@ -223,4 +218,72 @@ func (bs *BellSkipper) Write(b []byte) (int, error) {
 // Close implements an io.WriterCloser over os.Stderr.
 func (bs *BellSkipper) Close() error {
 	return os.Stderr.Close()
+}
+
+// dispatchItem dispatches a single feed item according to the active mode flags.
+// norm is non-nil when the AI path selected this item; nil for the regexp path.
+// Returns (stopLoop, error): stopLoop is true when the user chose Quit in interactive mode.
+func (cmd *OnceCmd) dispatchItem(ctx *RunContext, name string, feed *Feed, item *FeedItem, norm *NormalizedTorrent) (bool, error) {
+	addToCache := func() {
+		if norm != nil {
+			ctx.Cache.AddNormalizedItem(item, norm)
+		} else {
+			ctx.Cache.AddItem(item)
+		}
+	}
+
+	label := "match"
+	if norm != nil {
+		label = "AI match"
+	}
+
+	switch {
+	case ctx.Cli.Once.NoAction:
+		log.Infof("%s %s: %s", name, label, item.Item.Title)
+
+	case ctx.Cli.Once.Skip:
+		addToCache()
+
+	case ctx.Cli.Once.Download:
+		filePath, err := item.Download(ctx, ctx.Cli.Once.DownloadPath)
+		if err != nil {
+			return false, fmt.Errorf("download %s: %w", filePath, err)
+		}
+		addToCache()
+
+	case ctx.Cli.Once.Interactive:
+		return cmd.dispatchInteractive(ctx, name, feed, item, addToCache)
+
+	default:
+		if err := item.Torrent(ctx, feed.DownloadPath); err != nil {
+			return false, fmt.Errorf("torrent %s: %w", name, err)
+		}
+		addToCache()
+	}
+	return false, nil
+}
+
+func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, name string, feed *Feed, item *FeedItem, addToCache func()) (bool, error) {
+	switch prompt(name, item.Item.Title) {
+	case Download:
+		filePath, err := item.Download(ctx, ctx.Cli.Once.DownloadPath)
+		if err != nil {
+			return false, fmt.Errorf("download %s: %w", filePath, err)
+		}
+		addToCache()
+	case Torrent:
+		if err := item.Torrent(ctx, feed.DownloadPath); err != nil {
+			return false, fmt.Errorf("torrent %s: %w", name, err)
+		}
+		addToCache()
+	case Skip:
+		addToCache()
+	case SkipOnce:
+		// intentionally don't add to cache
+	case Quit:
+		return true, nil
+	default:
+		log.Errorf("Unknown reply")
+	}
+	return false, nil
 }

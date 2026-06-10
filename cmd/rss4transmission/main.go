@@ -60,6 +60,7 @@ type RunContext struct {
 	Cache        *CacheFile
 	Transmission *transmissionrpc.Client
 	Provider     *file.File
+	Normalizer   Normalizer // nil when no Anthropic API key is configured
 }
 
 type CLI struct {
@@ -153,6 +154,19 @@ func main() {
 
 	if rc.Cache, err = OpenCache(seenFileName); err != nil {
 		log.WithError(err).Fatalf("Unable to open cache file: %s", seenFileName)
+	}
+
+	// Validate feed configs
+	for name, feed := range rc.Config.Feeds {
+		if err = feed.Validate(name); err != nil {
+			log.WithError(err).Fatalf("Invalid feed config")
+		}
+	}
+
+	// Wire up AI normalizer if API key is available (config or env)
+	if rc.Config.Anthropic.APIKey != "" || os.Getenv("ANTHROPIC_API_KEY") != "" {
+		inner := NewAnthropicNormalizer(rc.Config.Anthropic.APIKey, rc.Config.Anthropic.Model)
+		rc.Normalizer = NewCachingNormalizer(inner, rc.Cache)
 	}
 
 	if rc.Konf.Int("Transmission.Port") < 0 || rc.Konf.Int("Transmission.Port") > 65535 {
