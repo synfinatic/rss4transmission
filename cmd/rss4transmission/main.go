@@ -71,9 +71,10 @@ type CLI struct {
 	SeenFile string `kong:"help='Override path to SeenFile file'"`
 
 	// comamnds
-	Version VersionCmd `kong:"cmd,help='Print version and exit'"`
-	Watch   WatchCmd   `kong:"cmd,help='Scrape RSS feeds in a loop'"`
-	Once    OnceCmd    `kong:"cmd,help='Scrape RSS feeds once'"`
+	Version  VersionCmd  `kong:"cmd,help='Print version and exit'"`
+	Watch    WatchCmd    `kong:"cmd,help='Scrape RSS feeds in a loop'"`
+	Once     OnceCmd     `kong:"cmd,help='Scrape RSS feeds once'"`
+	Simulate SimulateCmd `kong:"cmd,help='Simulate feed processing from a local RSS XML file'"`
 }
 
 func main() {
