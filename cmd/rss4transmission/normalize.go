@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -250,9 +251,28 @@ func (a *AnthropicNormalizer) Normalize(ctx context.Context, title string) (*Nor
 		return nil, fmt.Errorf("anthropic API: unexpected content type %q", block.Type)
 	}
 
+	raw := stripMarkdownFences(block.Text)
 	var norm NormalizedTorrent
-	if err := json.Unmarshal([]byte(block.Text), &norm); err != nil {
-		return nil, fmt.Errorf("anthropic API: parse JSON %q: %w", block.Text, err)
+	if err := json.Unmarshal([]byte(raw), &norm); err != nil {
+		return nil, fmt.Errorf("anthropic API: parse JSON %q: %w", raw, err)
 	}
 	return &norm, nil
+}
+
+// stripMarkdownFences removes optional ```json or ``` fences that some model
+// versions add despite being instructed not to.
+func stripMarkdownFences(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "```") {
+		// drop the opening fence line
+		if i := strings.IndexByte(s, '\n'); i >= 0 {
+			s = s[i+1:]
+		}
+		// drop the closing fence
+		if i := strings.LastIndex(s, "```"); i >= 0 {
+			s = s[:i]
+		}
+		s = strings.TrimSpace(s)
+	}
+	return s
 }

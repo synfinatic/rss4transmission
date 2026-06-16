@@ -52,18 +52,41 @@ func (cmd *SimulateCmd) Run(ctx *RunContext) error {
 	items := sortItemsByDate(parsed.Items)
 	batches := splitBatches(items, cmd.NewItem)
 
+	// Determine once whether any in-scope feed uses AI selection.
+	needsAI := ctx.Normalizer != nil
+	if needsAI {
+		needsAI = false
+		for name, feed := range ctx.Config.Feeds {
+			if cmd.inFeedFilter(name) && feed.AISelection != nil {
+				needsAI = true
+				break
+			}
+		}
+	}
+
 	for i, batch := range batches {
 		if len(batches) > 1 {
 			log.Infof("[Batch %d] %d item(s)", i+1, len(batch))
 		}
 
-		for name, feed := range ctx.Config.Feeds {
-			if !cmd.inFeedFilter(name) {
-				continue
+		// Item-first loop: normalize each item exactly once, then evaluate all feeds.
+		for _, rawItem := range batch {
+			var norm *NormalizedTorrent
+			if needsAI {
+				n, normErr := ctx.Normalizer.Normalize(context.Background(), rawItem.Title)
+				if normErr != nil {
+					log.WithError(normErr).Warnf("Normalizer failed for %q, falling back to regexp", rawItem.Title)
+				} else {
+					norm = n
+				}
 			}
 
-			feedCopy := feed
-			for _, rawItem := range batch {
+			for name, feed := range ctx.Config.Feeds {
+				if !cmd.inFeedFilter(name) {
+					continue
+				}
+
+				feedCopy := feed
 				item := &FeedItem{Feed: name, Item: rawItem}
 
 				if ctx.Cache.Exists(name, item) {
@@ -71,21 +94,18 @@ func (cmd *SimulateCmd) Run(ctx *RunContext) error {
 					continue
 				}
 
-				var norm *NormalizedTorrent
 				if feed.AISelection != nil && ctx.Normalizer != nil {
-					n, normErr := ctx.Normalizer.Normalize(context.Background(), rawItem.Title)
-					if normErr != nil {
-						log.WithError(normErr).Warnf("Normalizer failed for %q, falling back to regexp", rawItem.Title)
+					if norm == nil {
+						// normalization failed; fall back to regexp
 						if !feedCopy.Check(rawItem) {
 							continue
 						}
 					} else {
-						ok, reason := AISelect(n, feed.AISelection, ctx.Cache, rawItem.Title, &feedCopy)
+						ok, reason := AISelect(norm, feed.AISelection, ctx.Cache, rawItem.Title, &feedCopy)
 						if !ok {
-							log.Debugf("AI rejected %q: %s", rawItem.Title, reason)
+							log.Debugf("AI rejected %q for %s: %s", rawItem.Title, name, reason)
 							continue
 						}
-						norm = n
 					}
 				} else {
 					if !feedCopy.Check(rawItem) {

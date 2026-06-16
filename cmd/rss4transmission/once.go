@@ -28,8 +28,6 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-type Feeds map[string]*gofeed.Feed
-
 type OnceCmd struct {
 	Feed         []string `kong:"help='Limit scraping to the given feed(s)'"`
 	Download     bool     `kong:"short='d',help='Download torrent file instead of torrenting',xor='action'"`
@@ -37,6 +35,12 @@ type OnceCmd struct {
 	Interactive  bool     `kong:"short='i',help='Interactive mode',xor='action'"`
 	NoAction     bool     `kong:"short='n',help='Just print results and take no action',xor='action'"`
 	Skip         bool     `kong:"short='s',help='Just skip any matching torrents',xor='action'"`
+}
+
+// urlGroup holds all configured feeds that share the same RSS URL.
+type urlGroup struct {
+	names []string
+	feeds []Feed
 }
 
 func (cmd *OnceCmd) Run(ctx *RunContext) error {
@@ -47,76 +51,102 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 		ctx.Cli.Once.DownloadPath = os.Getenv("PWD")
 	}
 
-	// we cache gofeed results for each URL so we can re-use the feed results without hitting
-	// the RSS multiple times
-	feeds := Feeds{}
+	// Group feeds by URL so each RSS endpoint is fetched exactly once and each
+	// item is normalized exactly once regardless of how many feeds share the URL.
+	groups := map[string]*urlGroup{}
+	for name, feed := range ctx.Config.Feeds {
+		g, ok := groups[feed.URL]
+		if !ok {
+			g = &urlGroup{}
+			groups[feed.URL] = g
+		}
+		g.names = append(g.names, name)
+		g.feeds = append(g.feeds, feed)
+	}
 
 	quit := false
-	for name, feed := range ctx.Config.Feeds {
+	for url, grp := range groups {
 		if quit {
 			break
 		}
 
-		log.Debugf("Processing %s: %v", name, feed)
-		// have we already fetched this RSS feed?
-		if f, ok := feeds[feed.URL]; !ok {
-			p := gofeed.NewParser()
-			if feeds[feed.URL], err = p.ParseURL(feed.URL); err != nil {
-				log.WithError(err).Warnf("Unable to process URL: %s", feed.URL)
-				continue
-			}
-		} else if f == nil {
-			// we can have the same URL in multiple feeds, so we need to skip them too
+		p := gofeed.NewParser()
+		parsed, err := p.ParseURL(url)
+		if err != nil {
+			log.WithError(err).Warnf("Unable to process URL: %s", url)
 			continue
 		}
 
-		// Collect candidate items: either all feed items (for AI path) or regexp-filtered items.
-		var candidates []*FeedItem
-		feedCopy := feed
-		if feed.AISelection != nil && ctx.Normalizer != nil {
-			// AI path: consider all items from the feed (no regexp pre-filter)
-			for _, rawItem := range feeds[feed.URL].Items {
-				candidates = append(candidates, &FeedItem{Feed: name, Item: rawItem})
+		// Determine once whether any feed in this group uses AI selection.
+		groupNeedsAI := ctx.Normalizer != nil
+		if groupNeedsAI {
+			groupNeedsAI = false
+			for _, feed := range grp.feeds {
+				if feed.AISelection != nil {
+					groupNeedsAI = true
+					break
+				}
 			}
-		} else {
-			// Regexp path: use existing filter
-			candidates = append(candidates, feedCopy.NewItems(name, feeds[feed.URL])...)
 		}
 
-		for _, item := range candidates {
+		// Item-first loop: normalize each item exactly once, then evaluate all feeds.
+		for _, rawItem := range parsed.Items {
 			if quit {
 				break
 			}
-			if ctx.Cache.Exists(name, item) {
-				log.Debugf("Skipping due to cache hit: %s", item.Item.Title)
-				continue
-			}
 
 			var norm *NormalizedTorrent
-			if feed.AISelection != nil && ctx.Normalizer != nil {
-				n, normErr := ctx.Normalizer.Normalize(context.Background(), item.Item.Title)
+			if groupNeedsAI {
+				n, normErr := ctx.Normalizer.Normalize(context.Background(), rawItem.Title)
 				if normErr != nil {
-					log.WithError(normErr).Warnf("Normalizer failed for %q, falling back to regexp", item.Item.Title)
-					if !feedCopy.Check(item.Item) {
-						continue
-					}
+					log.WithError(normErr).Warnf("Normalizer failed for %q, falling back to regexp", rawItem.Title)
 				} else {
-					ok, reason := AISelect(n, feed.AISelection, ctx.Cache, item.Item.Title, &feedCopy)
-					if !ok {
-						log.Debugf("AI rejected %q: %s", item.Item.Title, reason)
-						continue
-					}
 					norm = n
 				}
 			}
 
-			var stopLoop bool
-			if stopLoop, err = cmd.dispatchItem(ctx, name, &feedCopy, item, norm); err != nil {
-				log.WithError(err).Errorf("Unable to dispatch: %s", item.Item.Title)
-				continue
-			}
-			if stopLoop {
-				quit = true
+			for i, name := range grp.names {
+				if quit {
+					break
+				}
+				feed := grp.feeds[i]
+				feedCopy := feed
+				item := &FeedItem{Feed: name, Item: rawItem}
+
+				if ctx.Cache.Exists(name, item) {
+					log.Debugf("Skipping due to cache hit: %s", rawItem.Title)
+					continue
+				}
+
+				var selectedNorm *NormalizedTorrent
+				if feed.AISelection != nil && ctx.Normalizer != nil {
+					if norm == nil {
+						// normalization failed; fall back to regexp
+						if !feedCopy.Check(rawItem) {
+							continue
+						}
+					} else {
+						ok, reason := AISelect(norm, feed.AISelection, ctx.Cache, rawItem.Title, &feedCopy)
+						if !ok {
+							log.Debugf("AI rejected %q for %s: %s", rawItem.Title, name, reason)
+							continue
+						}
+						selectedNorm = norm
+					}
+				} else {
+					if !feedCopy.Check(rawItem) {
+						continue
+					}
+				}
+
+				var stopLoop bool
+				if stopLoop, err = cmd.dispatchItem(ctx, name, &feedCopy, item, selectedNorm); err != nil {
+					log.WithError(err).Errorf("Unable to dispatch: %s", rawItem.Title)
+					continue
+				}
+				if stopLoop {
+					quit = true
+				}
 			}
 		}
 	}
