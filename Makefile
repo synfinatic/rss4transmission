@@ -1,4 +1,4 @@
-PROJECT_VERSION := 1.0.11
+PROJECT_VERSION := 1.1.0
 
 DIST_DIR ?= dist/
 GOOS ?= $(shell uname -s | tr "[:upper:]" "[:lower:]")
