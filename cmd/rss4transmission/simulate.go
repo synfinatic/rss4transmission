@@ -41,7 +41,9 @@ func (cmd *SimulateCmd) Run(ctx *RunContext) error {
 	if err != nil {
 		return fmt.Errorf("open %s: %w", cmd.File, err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	p := gofeed.NewParser()
 	parsed, err := p.Parse(f)

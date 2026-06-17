@@ -61,10 +61,12 @@ func writeRSSFile(t *testing.T, items []struct{ title, guid string }) string {
 	if err != nil {
 		t.Fatalf("create temp file: %v", err)
 	}
+	defer func() {
+		_ = f.Close()
+	}()
 	if _, err = f.WriteString(content); err != nil {
 		t.Fatalf("write rss file: %v", err)
 	}
-	f.Close()
 	return f.Name()
 }
 

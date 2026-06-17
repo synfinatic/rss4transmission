@@ -302,6 +302,17 @@ func parseNormalizerResponse(provider, raw string) (*NormalizedTorrent, error) {
 	if err := json.Unmarshal([]byte(raw), &norm); err != nil {
 		return nil, fmt.Errorf("%s: parse JSON %q: %w", provider, raw, err)
 	}
+	norm.Session = strings.TrimSpace(norm.Session)
+	norm.Series = strings.TrimSpace(norm.Series)
+	if norm.Series == "" {
+		return nil, fmt.Errorf("%s: missing required field \"series\" in %q", provider, raw)
+	}
+	if norm.Session == "" {
+		return nil, fmt.Errorf("%s: missing required field \"session\" in %q", provider, raw)
+	}
+	if !isValidSession(norm.Session) {
+		return nil, fmt.Errorf("%s: unrecognised session value %q in %q", provider, norm.Session, raw)
+	}
 	return &norm, nil
 }
 

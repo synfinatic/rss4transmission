@@ -160,6 +160,8 @@ func (c *CacheFile) AddItem(item *FeedItem) {
 
 	if item.Item.PublishedParsed != nil {
 		cr.Published = *item.Item.PublishedParsed
+	} else {
+		cr.Published = now
 	}
 	c.Seen = append(c.Seen, cr)
 	if c.seenIndex != nil {
@@ -225,6 +227,8 @@ func (c *CacheFile) AddNormalizedItem(item *FeedItem, norm *NormalizedTorrent) {
 	}
 	if item.Item.PublishedParsed != nil {
 		cr.Published = *item.Item.PublishedParsed
+	} else {
+		cr.Published = now
 	}
 	c.Seen = append(c.Seen, cr)
 	if c.seenIndex != nil {

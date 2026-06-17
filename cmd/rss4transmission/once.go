@@ -55,6 +55,9 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 	// item is normalized exactly once regardless of how many feeds share the URL.
 	groups := map[string]*urlGroup{}
 	for name, feed := range ctx.Config.Feeds {
+		if !cmd.inFeedFilter(name) {
+			continue
+		}
 		g, ok := groups[feed.URL]
 		if !ok {
 			g = &urlGroup{}
@@ -320,4 +323,17 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, name string, feed *Feed
 		log.Errorf("Unknown reply")
 	}
 	return false, nil
+}
+
+// inFeedFilter returns true if name should be processed given cmd.Feed.
+func (cmd *OnceCmd) inFeedFilter(name string) bool {
+	if len(cmd.Feed) == 0 {
+		return true
+	}
+	for _, f := range cmd.Feed {
+		if f == name {
+			return true
+		}
+	}
+	return false
 }

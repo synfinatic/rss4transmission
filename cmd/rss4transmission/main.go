@@ -167,6 +167,14 @@ func main() {
 
 	rc.setupNormalizer(cli.AIProvider)
 
+	if rc.Normalizer == nil {
+		for name, feed := range rc.Config.Feeds {
+			if feed.AISelection != nil {
+				log.Fatalf("Feed %q uses AISelection but no AI API key is configured", name)
+			}
+		}
+	}
+
 	if rc.Konf.Int("Transmission.Port") < 0 || rc.Konf.Int("Transmission.Port") > 65535 {
 		log.Fatalf("Invalid port number: %d", rc.Konf.Int("Transmission.Port"))
 	}
