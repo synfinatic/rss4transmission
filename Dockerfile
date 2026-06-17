@@ -1,6 +1,6 @@
 FROM golang:1.26-alpine AS builder
 RUN apk add --update build-base git && \
-	mkdir /codde
+	mkdir /code
 COPY . /code/
 RUN cd /code && make
 
