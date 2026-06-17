@@ -27,6 +27,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"google.golang.org/genai"
 )
 
 // NormalizedTorrent is structured metadata extracted from a raw torrent title.
@@ -246,10 +247,60 @@ func (a *AnthropicNormalizer) Normalize(ctx context.Context, title string) (*Nor
 		return nil, fmt.Errorf("anthropic API: unexpected content type %q", block.Type)
 	}
 
-	raw := stripMarkdownFences(block.Text)
+	return parseNormalizerResponse("anthropic API", block.Text)
+}
+
+// --- GeminiNormalizer ---
+
+// GeminiNormalizer calls the Gemini API to normalize torrent titles.
+type GeminiNormalizer struct {
+	client *genai.Client
+	model  string
+}
+
+// NewGeminiNormalizer creates a GeminiNormalizer. apiKey may be empty, in which
+// case GEMINI_API_KEY is read from the environment. Note: the genai SDK also
+// reads GOOGLE_API_KEY automatically when apiKey is empty after this fallback,
+// but auto-detection in setupNormalizer only checks GEMINI_API_KEY, so set
+// that variable (not GOOGLE_API_KEY) to enable Gemini in auto-detect mode.
+func NewGeminiNormalizer(apiKey, model string) (*GeminiNormalizer, error) {
+	if apiKey == "" {
+		apiKey = os.Getenv("GEMINI_API_KEY")
+	}
+	client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey:  apiKey,
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("gemini client: %w", err)
+	}
+	return &GeminiNormalizer{client: client, model: model}, nil
+}
+
+func (g *GeminiNormalizer) Normalize(ctx context.Context, title string) (*NormalizedTorrent, error) {
+	result, err := g.client.Models.GenerateContent(ctx, g.model,
+		[]*genai.Content{genai.NewContentFromText(title, genai.RoleUser)},
+		&genai.GenerateContentConfig{
+			SystemInstruction: genai.NewContentFromText(normalizerSystemPrompt, ""),
+			MaxOutputTokens:   512,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("gemini API: %w", err)
+	}
+	return parseNormalizerResponse("gemini API", result.Text())
+}
+
+// parseNormalizerResponse strips markdown fences and unmarshals the JSON
+// returned by either AI provider into a NormalizedTorrent.
+func parseNormalizerResponse(provider, raw string) (*NormalizedTorrent, error) {
+	raw = stripMarkdownFences(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("%s: empty response", provider)
+	}
 	var norm NormalizedTorrent
 	if err := json.Unmarshal([]byte(raw), &norm); err != nil {
-		return nil, fmt.Errorf("anthropic API: parse JSON %q: %w", raw, err)
+		return nil, fmt.Errorf("%s: parse JSON %q: %w", provider, raw, err)
 	}
 	return &norm, nil
 }

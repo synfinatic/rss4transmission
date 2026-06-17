@@ -60,7 +60,7 @@ type CacheFile struct {
 	NormalizeCache map[string]NormalizedTorrent `json:"NormalizeCache,omitempty"`
 	filename       string
 	needSave       bool
-	seenIndex      map[seenIndexKey]struct{}  // feed+GUID → present
+	seenIndex      map[seenIndexKey]struct{}       // feed+GUID → present
 	normIndex      map[normIndexKey]*NormalizedKey // series/year/round/session → key
 }
 

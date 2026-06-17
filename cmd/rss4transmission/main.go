@@ -64,11 +64,12 @@ type RunContext struct {
 }
 
 type CLI struct {
-	LogLevel string `kong:"default='info',enum='error,warn,info,debug',help='Log Level [error|warn|info|debug]'"`
-	Lines    bool   `kong:"help='Include line numbers in logs'"`
-	LogFile  string `kong:"help='Output log file (default: stderr)',default='stderr'"`
-	Config   string `kong:"help='Override path to config file'"`
-	SeenFile string `kong:"help='Override path to SeenFile file'"`
+	LogLevel   string `kong:"default='info',enum='error,warn,info,debug',help='Log Level [error|warn|info|debug]'"`
+	Lines      bool   `kong:"help='Include line numbers in logs'"`
+	LogFile    string `kong:"help='Output log file (default: stderr)',default='stderr'"`
+	Config     string `kong:"help='Override path to config file'"`
+	SeenFile   string `kong:"help='Override path to SeenFile file'"`
+	AIProvider string `kong:"default='',enum=',anthropic,gemini',help='Force AI provider (anthropic|gemini); default auto-detects from env/config'"`
 
 	// comamnds
 	Version  VersionCmd  `kong:"cmd,help='Print version and exit'"`
@@ -164,11 +165,7 @@ func main() {
 		}
 	}
 
-	// Wire up AI normalizer if API key is available (config or env)
-	if rc.Config.Anthropic.APIKey != "" || os.Getenv("ANTHROPIC_API_KEY") != "" {
-		inner := NewAnthropicNormalizer(rc.Config.Anthropic.APIKey, rc.Config.Anthropic.Model)
-		rc.Normalizer = NewCachingNormalizer(inner, rc.Cache)
-	}
+	rc.setupNormalizer(cli.AIProvider)
 
 	if rc.Konf.Int("Transmission.Port") < 0 || rc.Konf.Int("Transmission.Port") > 65535 {
 		log.Fatalf("Invalid port number: %d", rc.Konf.Int("Transmission.Port"))
@@ -211,6 +208,37 @@ func (cmd *VersionCmd) Run(ctx *RunContext) error {
 // Returns the config file path.
 func GetPath(path string) string {
 	return strings.Replace(path, "~", os.Getenv("HOME"), 1)
+}
+
+// setupNormalizer wires the AI normalizer based on the --ai-provider flag or
+// auto-detection from environment variables and config.
+func (rc *RunContext) setupNormalizer(provider string) {
+	switch provider {
+	case "gemini":
+		inner, err := NewGeminiNormalizer(rc.Config.Gemini.APIKey, rc.Config.Gemini.Model)
+		if err != nil {
+			log.WithError(err).Fatalf("Unable to create Gemini normalizer")
+		}
+		rc.Normalizer = NewCachingNormalizer(inner, rc.Cache)
+	case "anthropic":
+		rc.Normalizer = NewCachingNormalizer(
+			NewAnthropicNormalizer(rc.Config.Anthropic.APIKey, rc.Config.Anthropic.Model),
+			rc.Cache,
+		)
+	default: // auto-detect: Anthropic wins if key present, else try Gemini
+		if rc.Config.Anthropic.APIKey != "" || os.Getenv("ANTHROPIC_API_KEY") != "" {
+			rc.Normalizer = NewCachingNormalizer(
+				NewAnthropicNormalizer(rc.Config.Anthropic.APIKey, rc.Config.Anthropic.Model),
+				rc.Cache,
+			)
+		} else if rc.Config.Gemini.APIKey != "" || os.Getenv("GEMINI_API_KEY") != "" {
+			inner, err := NewGeminiNormalizer(rc.Config.Gemini.APIKey, rc.Config.Gemini.Model)
+			if err != nil {
+				log.WithError(err).Fatalf("Unable to create Gemini normalizer")
+			}
+			rc.Normalizer = NewCachingNormalizer(inner, rc.Cache)
+		}
+	}
 }
 
 func (rc *RunContext) loadConfig(configFile string) (*koanf.Koanf, error) {

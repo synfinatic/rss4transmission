@@ -283,3 +283,19 @@ func TestCache_PersistAndReload(t *testing.T) {
 		t.Errorf("reloaded Series = %q, want MotoGP", reloaded.NormalizeCache[title].Series)
 	}
 }
+
+func TestNewGeminiNormalizer_EnvFallback(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "test-key")
+	_, err := NewGeminiNormalizer("", "gemini-2.5-flash")
+	if err != nil {
+		t.Fatalf("NewGeminiNormalizer with env key: %v", err)
+	}
+}
+
+func TestNewGeminiNormalizer_ExplicitKey(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "") // ensure env var doesn't interfere; t.Setenv restores original value
+	_, err := NewGeminiNormalizer("explicit-key", "gemini-2.5-flash")
+	if err != nil {
+		t.Fatalf("NewGeminiNormalizer with explicit key: %v", err)
+	}
+}

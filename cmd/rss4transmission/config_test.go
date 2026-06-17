@@ -113,3 +113,23 @@ func TestFeedHasCategory_Empty(t *testing.T) {
 		t.Error("HasCategory should return false when Categories is empty")
 	}
 }
+
+func TestConfig_GeminiDefaultModel(t *testing.T) {
+	v, ok := ConfigDefaults["Gemini.Model"]
+	if !ok {
+		t.Fatal("ConfigDefaults missing Gemini.Model")
+	}
+	if v != "gemini-2.5-flash" {
+		t.Errorf("Gemini.Model default = %q, want %q", v, "gemini-2.5-flash")
+	}
+}
+
+func TestConfig_AnthropicDefaultModel(t *testing.T) {
+	v, ok := ConfigDefaults["Anthropic.Model"]
+	if !ok {
+		t.Fatal("ConfigDefaults missing Anthropic.Model")
+	}
+	if v != "claude-haiku-4-5-20251001" {
+		t.Errorf("Anthropic.Model default = %q, want %q", v, "claude-haiku-4-5-20251001")
+	}
+}

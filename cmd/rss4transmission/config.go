@@ -34,6 +34,7 @@ var ConfigDefaults = map[string]interface{}{
 	"Transmission.Password": "admin",
 	"SeenCacheDays":         30,
 	"Anthropic.Model":       "claude-haiku-4-5-20251001",
+	"Gemini.Model":          "gemini-2.5-flash",
 }
 
 type Config struct {
@@ -41,12 +42,19 @@ type Config struct {
 	Transmission  Transmission    `koanf:"Transmission"`
 	Gluetun       GluetunConfig   `koanf:"Gluetun"`
 	Anthropic     AnthropicConfig `koanf:"Anthropic"`
+	Gemini        GeminiConfig    `koanf:"Gemini"`
 	SeenFile      string          `koanf:"SeenFile"`
 	SeenCacheDays int             `koanf:"SeenCacheDays"`
 }
 
 // AnthropicConfig holds API credentials for the Anthropic normalizer.
 type AnthropicConfig struct {
+	APIKey string `koanf:"APIKey"` //nolint:gosec
+	Model  string `koanf:"Model"`
+}
+
+// GeminiConfig holds API credentials for the Gemini normalizer.
+type GeminiConfig struct {
 	APIKey string `koanf:"APIKey"` //nolint:gosec
 	Model  string `koanf:"Model"`
 }
