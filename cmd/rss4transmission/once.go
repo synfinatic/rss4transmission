@@ -89,6 +89,11 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 			}
 		}
 
+		// Pre-compile regexp patterns once per feed rather than per item.
+		for i := range grp.feeds {
+			grp.feeds[i].compile()
+		}
+
 		// Item-first loop: normalize each item exactly once, then evaluate all feeds.
 		for _, rawItem := range parsed.Items {
 			if quit {
@@ -110,7 +115,6 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 					break
 				}
 				feed := grp.feeds[i]
-				feedCopy := feed
 				item := &FeedItem{Feed: name, Item: rawItem}
 
 				if ctx.Cache.Exists(name, item) {
@@ -122,11 +126,11 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 				if feed.AISelection != nil && ctx.Normalizer != nil {
 					if norm == nil {
 						// normalization failed; fall back to regexp
-						if !feedCopy.Check(rawItem) {
+						if !feed.Check(rawItem) {
 							continue
 						}
 					} else {
-						ok, reason := AISelect(norm, feed.AISelection, ctx.Cache, rawItem.Title, &feedCopy)
+						ok, reason := AISelect(norm, feed.AISelection, ctx.Cache, rawItem.Title, &feed)
 						if !ok {
 							log.Debugf("AI rejected %q for %s: %s", rawItem.Title, name, reason)
 							continue
@@ -134,13 +138,13 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 						selectedNorm = norm
 					}
 				} else {
-					if !feedCopy.Check(rawItem) {
+					if !feed.Check(rawItem) {
 						continue
 					}
 				}
 
 				var stopLoop bool
-				if stopLoop, err = cmd.dispatchItem(ctx, name, &feedCopy, item, selectedNorm); err != nil {
+				if stopLoop, err = cmd.dispatchItem(ctx, name, &feed, item, selectedNorm); err != nil {
 					log.WithError(err).Errorf("Unable to dispatch: %s", rawItem.Title)
 					continue
 				}

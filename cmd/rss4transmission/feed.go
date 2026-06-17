@@ -82,7 +82,6 @@ func (fi *FeedItem) Download(ctx *RunContext, dir string) (string, error) {
 	}
 
 	log.Infof("Downloading: %s", filePath)
-	ctx.Cache.AddItem(fi)
 
 	return filePath, nil
 }
@@ -103,14 +102,12 @@ func (fi *FeedItem) Torrent(ctx *RunContext, dir string) error {
 	if _, err = ctx.Transmission.TorrentAdd(context.TODO(), addPayload); err != nil {
 		if strings.Contains(err.Error(), "duplicate torrent") {
 			log.Warnf("Skipping duplicate torrent: %s", fi.Item.Title)
-			ctx.Cache.AddItem(fi)
 			return nil
 		}
 		return err
 	}
 
 	log.Infof("Torrenting: %s", fi.Item.Title)
-	ctx.Cache.AddItem(fi)
 
 	return nil
 }

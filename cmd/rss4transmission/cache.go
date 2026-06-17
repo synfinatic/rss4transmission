@@ -39,6 +39,20 @@ type NormalizedKey struct {
 	SourceFeed string `json:"SourceFeed,omitempty"`
 }
 
+// seenIndexKey is the composite key used by the in-memory seen index.
+type seenIndexKey struct {
+	feed string
+	guid string
+}
+
+// normIndexKey is the composite key used by the normalized-session index.
+type normIndexKey struct {
+	series  string
+	year    int
+	round   int
+	session string
+}
+
 type CacheFile struct {
 	Version        int                          `json:"Version"`
 	Errors         map[string]int64             `json:"Errors"`
@@ -46,6 +60,8 @@ type CacheFile struct {
 	NormalizeCache map[string]NormalizedTorrent `json:"NormalizeCache,omitempty"`
 	filename       string
 	needSave       bool
+	seenIndex      map[seenIndexKey]struct{}  // feed+GUID → present
+	normIndex      map[normIndexKey]*NormalizedKey // series/year/round/session → key
 }
 
 type CacheRecord struct {
@@ -74,7 +90,25 @@ func OpenCache(path string) (*CacheFile, error) {
 		}
 	}
 	cache.filename = cacheFile
+	cache.buildIndexes()
 	return &cache, nil
+}
+
+// buildIndexes rebuilds the in-memory seenIndex and normIndex from c.Seen.
+// Called after loading from disk and after pruning in SaveCache.
+func (c *CacheFile) buildIndexes() {
+	c.seenIndex = make(map[seenIndexKey]struct{}, len(c.Seen))
+	c.normIndex = make(map[normIndexKey]*NormalizedKey)
+	for i := range c.Seen {
+		s := &c.Seen[i]
+		c.seenIndex[seenIndexKey{s.Feed, s.GUID}] = struct{}{}
+		if nk := s.Normalized; nk != nil && nk.Session != "" {
+			k := normIndexKey{nk.Series, nk.Year, nk.Round, nk.Session}
+			if _, exists := c.normIndex[k]; !exists {
+				c.normIndex[k] = nk
+			}
+		}
+	}
 }
 
 // SaveCache updates the cache and removes any entries older than the specified
@@ -84,7 +118,7 @@ func (c *CacheFile) SaveCache(d time.Duration) error {
 	NewSeen := []CacheRecord{}
 
 	for _, s := range c.Seen {
-		if time.Since(s.Published).Hours() < d.Hours() {
+		if !s.Published.IsZero() && time.Since(s.Published).Hours() < d.Hours() {
 			NewSeen = append(NewSeen, s)
 		} else {
 			deletedRecord = true
@@ -99,6 +133,9 @@ func (c *CacheFile) SaveCache(d time.Duration) error {
 
 	// move seen records over
 	c.Seen = NewSeen
+	if deletedRecord {
+		c.buildIndexes()
+	}
 
 	log.Infof("saving cache with %d entries less than %d days old", len(c.Seen), int(d.Hours()/24))
 	cacheBytes, _ := json.MarshalIndent(*c, "", "  ")
@@ -125,6 +162,9 @@ func (c *CacheFile) AddItem(item *FeedItem) {
 		cr.Published = *item.Item.PublishedParsed
 	}
 	c.Seen = append(c.Seen, cr)
+	if c.seenIndex != nil {
+		c.seenIndex[seenIndexKey{item.Feed, item.Item.GUID}] = struct{}{}
+	}
 	c.needSave = true
 }
 
@@ -141,12 +181,11 @@ func (c *CacheFile) MarkComplete(item *FeedItem) {
 
 // Exists checks to see if the given FeedItem already exists in the Seen cache
 func (c *CacheFile) Exists(feedName string, item *FeedItem) bool {
-	for _, s := range c.Seen {
-		if s.GUID == item.Item.GUID && s.Feed == feedName {
-			return true
-		}
+	if c.seenIndex == nil {
+		c.buildIndexes()
 	}
-	return false
+	_, ok := c.seenIndex[seenIndexKey{feedName, item.Item.GUID}]
+	return ok
 }
 
 // CheckError determines if the given error entry is new or not
@@ -188,6 +227,15 @@ func (c *CacheFile) AddNormalizedItem(item *FeedItem, norm *NormalizedTorrent) {
 		cr.Published = *item.Item.PublishedParsed
 	}
 	c.Seen = append(c.Seen, cr)
+	if c.seenIndex != nil {
+		c.seenIndex[seenIndexKey{item.Feed, item.Item.GUID}] = struct{}{}
+		if norm.Session != "" {
+			k := normIndexKey{norm.Series, norm.Year, norm.Round, norm.Session}
+			if _, exists := c.normIndex[k]; !exists {
+				c.normIndex[k] = cr.Normalized
+			}
+		}
+	}
 	c.needSave = true
 }
 
@@ -200,14 +248,8 @@ func (c *CacheFile) ExistsByKey(series string, year, round int, session string) 
 // FindByKey returns the NormalizedKey of the first seen record matching
 // (series, year, round, session), or nil if no match exists.
 func (c *CacheFile) FindByKey(series string, year, round int, session string) *NormalizedKey {
-	for i := range c.Seen {
-		nk := c.Seen[i].Normalized
-		if nk == nil {
-			continue
-		}
-		if nk.Series == series && nk.Year == year && nk.Round == round && nk.Session == session {
-			return nk
-		}
+	if c.normIndex == nil {
+		c.buildIndexes()
 	}
-	return nil
+	return c.normIndex[normIndexKey{series, year, round, session}]
 }

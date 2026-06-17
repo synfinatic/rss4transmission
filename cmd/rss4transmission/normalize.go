@@ -129,8 +129,6 @@ func (c *CachingNormalizer) Normalize(ctx context.Context, title string) (*Norma
 
 // --- AnthropicNormalizer ---
 
-const normalizerModel = "claude-haiku-4-5-20251001"
-
 const normalizerSystemPrompt = `You extract structured metadata from motorsport torrent release titles.
 Return a JSON object only — no markdown code fences, no explanation, no preamble.
 
@@ -215,9 +213,6 @@ func NewAnthropicNormalizer(apiKey, model string) *AnthropicNormalizer {
 	if apiKey == "" {
 		apiKey = os.Getenv("ANTHROPIC_API_KEY")
 	}
-	if model == "" {
-		model = normalizerModel
-	}
 	return &AnthropicNormalizer{
 		client: anthropic.NewClient(option.WithAPIKey(apiKey)),
 		model:  model,
@@ -264,9 +259,12 @@ func (a *AnthropicNormalizer) Normalize(ctx context.Context, title string) (*Nor
 func stripMarkdownFences(s string) string {
 	s = strings.TrimSpace(s)
 	if strings.HasPrefix(s, "```") {
-		// drop the opening fence line
+		// Drop the opening fence line. When no newline exists (single-line
+		// response), skip past "```" plus any language tag (e.g. "json").
 		if i := strings.IndexByte(s, '\n'); i >= 0 {
 			s = s[i+1:]
+		} else {
+			s = strings.TrimLeft(s[3:], "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 		}
 		// drop the closing fence
 		if i := strings.LastIndex(s, "```"); i >= 0 {

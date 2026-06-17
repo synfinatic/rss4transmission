@@ -94,6 +94,7 @@ func (cmd *SimulateCmd) Run(ctx *RunContext) error {
 					continue
 				}
 
+				var selectedNorm *NormalizedTorrent
 				if feed.AISelection != nil && ctx.Normalizer != nil {
 					if norm == nil {
 						// normalization failed; fall back to regexp
@@ -106,6 +107,7 @@ func (cmd *SimulateCmd) Run(ctx *RunContext) error {
 							log.Debugf("AI rejected %q for %s: %s", rawItem.Title, name, reason)
 							continue
 						}
+						selectedNorm = norm
 					}
 				} else {
 					if !feedCopy.Check(rawItem) {
@@ -117,8 +119,8 @@ func (cmd *SimulateCmd) Run(ctx *RunContext) error {
 
 				// Update in-memory cache so later batches and bundle gating work correctly.
 				// Do NOT call SaveCache — simulate is read-only on disk.
-				if norm != nil {
-					ctx.Cache.AddNormalizedItem(item, norm)
+				if selectedNorm != nil {
+					ctx.Cache.AddNormalizedItem(item, selectedNorm)
 				} else {
 					ctx.Cache.AddItem(item)
 				}
