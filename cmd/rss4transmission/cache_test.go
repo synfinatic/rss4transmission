@@ -84,13 +84,16 @@ func TestOpenCacheInvalidJSON(t *testing.T) {
 
 func TestAddItem(t *testing.T) {
 	c := &CacheFile{
-		Version:  CACHE_VERSION,
-		Errors:   map[string]int64{},
-		Seen:     []CacheRecord{},
-		needSave: false,
+		Version:       CACHE_VERSION,
+		Errors:        map[string]int64{},
+		Seen:          []CacheRecord{},
+		needSave:      false,
+		identityIndex: map[string][]map[string]string{},
 	}
 	fi := makeFeedItem("guid-add")
-	c.AddItem(fi)
+	labels := map[string]string{"series": "MotoGP", "resolution": "1080p"}
+	keys := []string{"series=MotoGP|round=RD01|session=Race"}
+	c.AddItem(fi, labels, keys)
 
 	if len(c.Seen) != 1 {
 		t.Fatalf("expected 1 Seen entry, got %d", len(c.Seen))
@@ -100,6 +103,91 @@ func TestAddItem(t *testing.T) {
 	}
 	if !c.needSave {
 		t.Error("needSave should be true after AddItem")
+	}
+	// Labels and identity keys should be recorded.
+	if c.Seen[0].Labels["series"] != "MotoGP" {
+		t.Errorf("Labels[series] = %q, want MotoGP", c.Seen[0].Labels["series"])
+	}
+	if len(c.Seen[0].IdentityKeys) != 1 {
+		t.Errorf("expected 1 IdentityKey, got %d", len(c.Seen[0].IdentityKeys))
+	}
+	// Identity index should be updated immediately.
+	if _, ok := c.identityIndex[keys[0]]; !ok {
+		t.Error("identityIndex should be updated after AddItem")
+	}
+}
+
+func TestBestRankForKey_Miss(t *testing.T) {
+	c := &CacheFile{identityIndex: map[string][]map[string]string{}}
+	prefer := []PreferDimension{{Label: "resolution", Order: []string{"1080p", "720p"}}}
+	_, ok := c.BestRankForKey("series=MotoGP|round=RD01|session=Race", prefer)
+	if ok {
+		t.Error("expected ok=false for key not in index")
+	}
+}
+
+func TestBestRankForKey_Single(t *testing.T) {
+	prefer := []PreferDimension{{Label: "resolution", Order: []string{"1080p", "720p"}}}
+	key := "series=MotoGP|round=RD01|session=Race"
+	labels := map[string]string{"resolution": "720p"}
+	c := &CacheFile{
+		identityIndex: map[string][]map[string]string{
+			key: {labels},
+		},
+	}
+	rank, ok := c.BestRankForKey(key, prefer)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if rank[0] != 1 { // 720p is index 1
+		t.Errorf("rank[0] = %d, want 1 (720p)", rank[0])
+	}
+}
+
+func TestBestRankForKey_PicksBest(t *testing.T) {
+	prefer := []PreferDimension{{Label: "resolution", Order: []string{"1080p", "720p"}}}
+	key := "series=MotoGP|round=RD01|session=Race"
+	c := &CacheFile{
+		identityIndex: map[string][]map[string]string{
+			key: {
+				{"resolution": "720p"},
+				{"resolution": "1080p"},
+			},
+		},
+	}
+	rank, ok := c.BestRankForKey(key, prefer)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if rank[0] != 0 { // 1080p is index 0 (best)
+		t.Errorf("rank[0] = %d, want 0 (1080p)", rank[0])
+	}
+}
+
+func TestRebuildIdentityIndex(t *testing.T) {
+	key := "series=MotoGP|round=RD01|session=Race"
+	labels := map[string]string{"resolution": "1080p"}
+	c := &CacheFile{
+		Seen: []CacheRecord{
+			{GUID: "g1", Labels: labels, IdentityKeys: []string{key}},
+		},
+	}
+	c.rebuildIdentityIndex()
+	sets, ok := c.identityIndex[key]
+	if !ok || len(sets) != 1 {
+		t.Errorf("expected 1 label set in index, got %v", c.identityIndex)
+	}
+}
+
+func TestRebuildIdentityIndex_SkipsEmptyLabels(t *testing.T) {
+	c := &CacheFile{
+		Seen: []CacheRecord{
+			{GUID: "g1"}, // no Labels, no IdentityKeys
+		},
+	}
+	c.rebuildIdentityIndex()
+	if len(c.identityIndex) != 0 {
+		t.Errorf("expected empty index for records with no labels, got %v", c.identityIndex)
 	}
 }
 

@@ -16,100 +16,112 @@ func makeItem(title string, enclosureLength string) *gofeed.Item {
 	return item
 }
 
-func TestFeedCheckMatch(t *testing.T) {
-	f := &Feed{Regexp: []string{`(?i)^MyShow.*`}}
-	if !f.Check(makeItem("MyShow S01E01", "")) {
-		t.Error("expected match for 'MyShow S01E01'")
+func TestFeedCheck_NotExcluded(t *testing.T) {
+	f := &Feed{Exclude: []string{`(?i).*720p.*`}}
+	if !f.Check(makeItem("MyShow.1080p.S01E01", "")) {
+		t.Error("non-excluded item should return true")
 	}
 }
 
-func TestFeedCheckNoMatch(t *testing.T) {
-	f := &Feed{Regexp: []string{`(?i)^MyShow.*`}}
-	if f.Check(makeItem("OtherShow S01E01", "")) {
-		t.Error("expected no match for 'OtherShow S01E01'")
+func TestFeedCheck_Excluded(t *testing.T) {
+	f := &Feed{Exclude: []string{`(?i).*720p.*`}}
+	if f.Check(makeItem("MyShow.720p.S01E01", "")) {
+		t.Error("excluded item should return false")
 	}
 }
 
-func TestFeedCheckExcludeWins(t *testing.T) {
-	f := &Feed{
-		Regexp:  []string{`(?i)^MyShow.*`},
-		Exclude: []string{`(?i).*720p.*`},
-	}
-	if f.Check(makeItem("MyShow S01E01 720p", "")) {
-		t.Error("exclude pattern should take priority over match")
+func TestFeedCheck_NoFilters(t *testing.T) {
+	f := &Feed{}
+	if !f.Check(makeItem("AnythingAtAll", "")) {
+		t.Error("item should pass with no filters configured")
 	}
 }
 
-func TestFeedCheckMinSize(t *testing.T) {
-	f := &Feed{
-		Regexp:  []string{`.*`},
-		MinSize: "1GB",
-	}
+func TestFeedCheck_MinSize(t *testing.T) {
+	f := &Feed{MinSize: "1GB"}
 	// 100MB enclosure — below 1GB minimum
 	if f.Check(makeItem("Anything", "104857600")) {
-		t.Error("item below MinSize should not match")
+		t.Error("item below MinSize should return false")
 	}
 }
 
-func TestFeedCheckMaxSize(t *testing.T) {
-	f := &Feed{
-		Regexp:  []string{`.*`},
-		MaxSize: "100MB",
-	}
+func TestFeedCheck_MaxSize(t *testing.T) {
+	f := &Feed{MaxSize: "100MB"}
 	// 2GB enclosure — above 100MB maximum
 	if f.Check(makeItem("Anything", "2147483648")) {
-		t.Error("item above MaxSize should not match")
+		t.Error("item above MaxSize should return false")
 	}
 }
 
-func TestFeedCheckSizeRange(t *testing.T) {
-	f := &Feed{
-		Regexp:  []string{`.*`},
-		MinSize: "100MB",
-		MaxSize: "10GB",
-	}
+func TestFeedCheck_SizeRange(t *testing.T) {
+	f := &Feed{MinSize: "100MB", MaxSize: "10GB"}
 	// 1GB — within range
 	if !f.Check(makeItem("Anything", "1073741824")) {
-		t.Error("item within [MinSize, MaxSize] should match")
+		t.Error("item within [MinSize, MaxSize] should return true")
 	}
 }
 
-func TestFeedCheckNoEnclosure(t *testing.T) {
-	f := &Feed{Regexp: []string{`(?i)^MyShow.*`}}
-	// No enclosures, no MinSize — size checks skipped; regexp match wins
-	if !f.Check(makeItem("MyShow S01E01", "")) {
-		t.Error("item with no enclosures and no MinSize should match on regexp alone")
-	}
-}
-
-func TestFeedCheckNoEnclosureWithMinSize(t *testing.T) {
-	f := &Feed{
-		Regexp:  []string{`.*`},
-		MinSize: "100MB",
-	}
-	// totalSize == 0 which is below 100MB minimum
+func TestFeedCheck_NoEnclosureWithMinSize(t *testing.T) {
+	f := &Feed{MinSize: "100MB"}
+	// totalSize == 0, below 100MB minimum
 	if f.Check(makeItem("Anything", "")) {
 		t.Error("item with no enclosures should fail MinSize check")
 	}
 }
 
-func TestFeedHasCategory_Found(t *testing.T) {
-	f := &Feed{Categories: []string{"movies", "tv"}}
-	if !f.HasCategory("tv") {
-		t.Error("HasCategory should return true for 'tv'")
+func TestFeedValidate_NoExtractor(t *testing.T) {
+	f := &Feed{URL: "https://example.com/rss"}
+	if err := f.Validate("myfeed", nil); err != nil {
+		t.Errorf("feed with no Extractor should always validate: %v", err)
 	}
 }
 
-func TestFeedHasCategory_NotFound(t *testing.T) {
-	f := &Feed{Categories: []string{"movies", "tv"}}
-	if f.HasCategory("books") {
-		t.Error("HasCategory should return false for 'books'")
+func TestFeedValidate_MissingExtractorDef(t *testing.T) {
+	f := &Feed{
+		Extractor: "nonexistent",
+		Identity:  []string{"series"},
+		Groups:    []Group{{Require: map[string][]string{"series": {"MotoGP"}}}},
+	}
+	err := f.Validate("myfeed", map[string]*ExtractorSet{})
+	if err == nil {
+		t.Error("expected error when Extractor name not in Extractors map")
 	}
 }
 
-func TestFeedHasCategory_Empty(t *testing.T) {
-	f := &Feed{}
-	if f.HasCategory("anything") {
-		t.Error("HasCategory should return false when Categories is empty")
+func TestFeedValidate_MissingIdentity(t *testing.T) {
+	es := &ExtractorSet{Labels: map[string]LabelDef{}}
+	f := &Feed{
+		Extractor: "racing",
+		// Identity missing
+		Groups: []Group{{Require: map[string][]string{}}},
+	}
+	err := f.Validate("myfeed", map[string]*ExtractorSet{"racing": es})
+	if err == nil {
+		t.Error("expected error when Identity is empty")
+	}
+}
+
+func TestFeedValidate_MissingGroups(t *testing.T) {
+	es := &ExtractorSet{Labels: map[string]LabelDef{}}
+	f := &Feed{
+		Extractor: "racing",
+		Identity:  []string{"series"},
+		// Groups missing
+	}
+	err := f.Validate("myfeed", map[string]*ExtractorSet{"racing": es})
+	if err == nil {
+		t.Error("expected error when Groups is empty")
+	}
+}
+
+func TestFeedValidate_Valid(t *testing.T) {
+	es := &ExtractorSet{Labels: map[string]LabelDef{}}
+	f := &Feed{
+		Extractor: "racing",
+		Identity:  []string{"series", "round", "session"},
+		Groups:    []Group{{Require: map[string][]string{"series": {"MotoGP"}}}},
+	}
+	if err := f.Validate("myfeed", map[string]*ExtractorSet{"racing": es}); err != nil {
+		t.Errorf("expected valid feed to pass validation: %v", err)
 	}
 }

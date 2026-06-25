@@ -70,9 +70,10 @@ type CLI struct {
 	SeenFile string `kong:"help='Override path to SeenFile file'"`
 
 	// comamnds
-	Version VersionCmd `kong:"cmd,help='Print version and exit'"`
-	Watch   WatchCmd   `kong:"cmd,help='Scrape RSS feeds in a loop'"`
-	Once    OnceCmd    `kong:"cmd,help='Scrape RSS feeds once'"`
+	Version  VersionCmd  `kong:"cmd,help='Print version and exit'"`
+	Watch    WatchCmd    `kong:"cmd,help='Scrape RSS feeds in a loop'"`
+	Once     OnceCmd     `kong:"cmd,help='Scrape RSS feeds once'"`
+	Simulate SimulateCmd `kong:"cmd,help='Replay a local RSS feed file for testing'"`
 }
 
 func main() {
@@ -143,6 +144,12 @@ func main() {
 	var err error
 	if rc.Konf, err = rc.loadConfig(rc.configFile); err != nil {
 		log.WithError(err).Fatalf("Unable to load %s", rc.configFile)
+	}
+
+	for name, feedCfg := range rc.Config.Feeds {
+		if err = feedCfg.Validate(name, rc.Config.Extractors); err != nil {
+			log.WithError(err).Fatalf("Invalid feed config")
+		}
 	}
 
 	// use our SeenFile
