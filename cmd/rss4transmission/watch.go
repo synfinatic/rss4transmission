@@ -10,6 +10,7 @@ type WatchCmd struct {
 	Download     bool     `kong:"short='d',help='Download torrent file instead of torrenting',xor='action'"`
 	DownloadPath string   `kong:"short='p',help='Path to download torrent files to ($PWD)'"`
 	Sleep        int      `kong:"short='s',default='300',help='Seconds to sleep between scraping'"`
+	HistoryPort  int      `kong:"help='Port to serve torrent history on 127.0.0.1 (0=disabled)'"`
 }
 
 func (cmd *WatchCmd) Run(ctx *RunContext) error {
@@ -42,6 +43,13 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		Feed:         ctx.Cli.Watch.Feed,
 		Download:     ctx.Cli.Watch.Download,
 		DownloadPath: ctx.Cli.Watch.DownloadPath,
+	}
+
+	if cmd.HistoryPort > 0 {
+		if ctx.History == nil {
+			log.Fatalf("--history-port requires HistoryFile to be configured")
+		}
+		go startHistoryServer(ctx.History, cmd.HistoryPort)
 	}
 
 	var g *Gluetun

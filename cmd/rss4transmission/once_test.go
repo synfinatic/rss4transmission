@@ -108,7 +108,7 @@ func TestSelectWinners_SingleCandidate(t *testing.T) {
 		},
 		[]Group{{Require: map[string][]string{"series": {"MotoGP"}}}},
 	)
-	winners := selectWinners([]*candidate{c}, feed, emptyCache())
+	winners, _ := selectWinners([]*candidate{c}, feed, emptyCache())
 	if len(winners) != 1 {
 		t.Errorf("expected 1 winner, got %d", len(winners))
 	}
@@ -130,7 +130,7 @@ func TestSelectWinners_CacheHit_Equal(t *testing.T) {
 			key: {{"resolution": "1080p"}},
 		},
 	}
-	winners := selectWinners([]*candidate{c}, feed, cache)
+	winners, _ := selectWinners([]*candidate{c}, feed, cache)
 	if len(winners) != 0 {
 		t.Errorf("expected 0 winners (cache at equal preference), got %d", len(winners))
 	}
@@ -152,7 +152,7 @@ func TestSelectWinners_CacheHit_BetterAvailable(t *testing.T) {
 			key: {{"resolution": "720p"}}, // worse than new candidate
 		},
 	}
-	winners := selectWinners([]*candidate{c}, feed, cache)
+	winners, _ := selectWinners([]*candidate{c}, feed, cache)
 	if len(winners) != 1 {
 		t.Errorf("expected 1 winner (beats cached 720p), got %d", len(winners))
 	}
@@ -175,7 +175,7 @@ func TestSelectWinners_PicksHighestPreference(t *testing.T) {
 		},
 		[]Group{{Require: map[string][]string{"series": {"MotoGP"}}}},
 	)
-	winners := selectWinners([]*candidate{c1, c2}, feed, emptyCache())
+	winners, _ := selectWinners([]*candidate{c1, c2}, feed, emptyCache())
 	if len(winners) != 1 {
 		t.Fatalf("expected 1 winner, got %d", len(winners))
 	}
@@ -194,7 +194,7 @@ func TestSelectWinners_GroupFilter(t *testing.T) {
 		[]PreferDimension{{Label: "resolution", Order: []string{"1080p", "720p"}}},
 		[]Group{{Require: map[string][]string{"series": {"MotoGP", "Moto2", "Moto3"}}}},
 	)
-	winners := selectWinners([]*candidate{c}, feed, emptyCache())
+	winners, _ := selectWinners([]*candidate{c}, feed, emptyCache())
 	if len(winners) != 0 {
 		t.Errorf("expected 0 winners (series not in group), got %d", len(winners))
 	}
@@ -214,7 +214,7 @@ func TestSelectWinners_MultiClassBundle_CountsOnce(t *testing.T) {
 		[]PreferDimension{{Label: "resolution", Order: []string{"1080p", "720p"}}},
 		[]Group{{Require: map[string][]string{"series": {"MotoGP", "Moto2", "Moto3"}}}},
 	)
-	winners := selectWinners([]*candidate{c}, feed, emptyCache())
+	winners, _ := selectWinners([]*candidate{c}, feed, emptyCache())
 	// Bundle satisfies 3 identity keys but is one torrent — appears once.
 	if len(winners) != 1 {
 		t.Errorf("expected 1 winner (bundle counts once), got %d", len(winners))
@@ -242,7 +242,7 @@ func TestSelectWinners_MultiClassBundle_SuppressesDedicated(t *testing.T) {
 		[]Group{{Require: map[string][]string{"series": {"MotoGP", "Moto2", "Moto3"}}}},
 	)
 	// Process bundle first so it claims MotoGP identity key.
-	winners := selectWinners([]*candidate{bundle, dedicated}, feed, emptyCache())
+	winners, _ := selectWinners([]*candidate{bundle, dedicated}, feed, emptyCache())
 	// Only one torrent should be selected (either bundle or dedicated, not both).
 	if len(winners) != 1 {
 		t.Errorf("expected 1 winner (no duplicate downloads), got %d", len(winners))

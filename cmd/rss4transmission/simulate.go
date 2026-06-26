@@ -52,7 +52,7 @@ func (cmd *SimulateCmd) Run(ctx *RunContext) error {
 		var candidates []*candidate
 		for _, item := range batch {
 			fi := &FeedItem{Feed: cmd.Feed, Item: item}
-			if !feedCfg.Check(item) {
+			if ok, _ := feedCfg.Check(item); !ok {
 				continue
 			}
 			candidates = append(candidates, &candidate{
@@ -93,7 +93,7 @@ func (cmd *SimulateCmd) Run(ctx *RunContext) error {
 // .torrent file to cmd.Dir (if bytes are available and the file doesn't
 // already exist), and caches winners. Returns the number of winners.
 func (cmd *SimulateCmd) dispatchBatch(ctx *RunContext, feedCfg Feed, candidates []*candidate) int {
-	winners := selectWinners(candidates, feedCfg, ctx.Cache)
+	winners, _ := selectWinners(candidates, feedCfg, ctx.Cache)
 	winnerSet := make(map[*candidate]bool, len(winners))
 	for _, w := range winners {
 		winnerSet[w] = true

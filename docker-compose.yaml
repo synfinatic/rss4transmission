@@ -11,8 +11,11 @@ services:
     environment:
       - POLL_SECONDS=120
       - LOG_LEVEL=info
+      - HISTORY_PORT=0  # set to a port number to enable the history web UI
     volumes:
       - /volume1/docker/transmission/rss4transmission:/config
+    # Uncomment and set to match HISTORY_PORT when history web UI is enabled.
+    # network_mode: host already exposes all ports, so no explicit mapping is needed.
 
   transmission:
     container_name: transmission

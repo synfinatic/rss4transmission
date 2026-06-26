@@ -2,3 +2,6 @@ dist
 *.yaml
 *.json
 *.torrent
+coverage.*
+*.rss
+plan.md

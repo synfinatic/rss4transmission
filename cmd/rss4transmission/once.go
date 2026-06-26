@@ -116,7 +116,14 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 				Item:     item,
 				Complete: false,
 			}
-			if !feedCfg.Check(item) {
+			if ctx.Cache.Exists(feedName, fi) {
+				continue // already dispatched; skip history recording
+			}
+			ok, reason := feedCfg.Check(item)
+			if !ok {
+				if ctx.History != nil {
+					ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, item, "excluded", reason, nil))
+				}
 				continue
 			}
 			titleLabels := extractor.ExtractLabels(item.Title)
@@ -143,7 +150,12 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 		}
 
 		// Phase 3: For each group, select the highest-preference winner per identity key.
-		winners := selectWinners(candidates, feedCfg, ctx.Cache)
+		winners, skipped := selectWinners(candidates, feedCfg, ctx.Cache)
+		if ctx.History != nil {
+			for _, s := range skipped {
+				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, s.cand.item.Item, "skipped", s.reason, s.cand.titleLabels))
+			}
+		}
 
 		// Phase 4: Dispatch winners.
 		quit := false
@@ -167,6 +179,11 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 	if err = ctx.Cache.SaveCache(cacheTime); err != nil {
 		return fmt.Errorf("unable to save seen cache: %s", err.Error())
 	}
+	if ctx.History != nil {
+		if err = ctx.History.SaveHistory(cacheTime); err != nil {
+			log.WithError(err).Warn("Unable to save history file")
+		}
+	}
 	return nil
 }
 
@@ -177,10 +194,16 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 
 	if ctx.Cli.Once.NoAction {
 		log.Infof("%s match: %s", feedName, w.item.Item.Title)
+		if ctx.History != nil {
+			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "skipped", "no-action mode", w.titleLabels))
+		}
 		return false
 	}
 	if ctx.Cli.Once.Skip {
 		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
+		if ctx.History != nil {
+			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "skipped", "user skip", w.titleLabels))
+		}
 		return false
 	}
 	if ctx.Cli.Once.Interactive {
@@ -190,12 +213,24 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 	if ctx.Cli.Once.Download {
 		if _, err = w.item.Download(ctx, ctx.Cli.Once.DownloadPath); err != nil {
 			log.WithError(err).Errorf("Unable to download: %s", w.item.Item.Title)
+			if ctx.History != nil {
+				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
+			}
 			return false
+		}
+		if ctx.History != nil {
+			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "downloaded", "", w.titleLabels))
 		}
 	} else {
 		if err = w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, w.torrentBytes); err != nil {
 			log.WithError(err).Errorf("Unable to torrent: %s", feedName)
+			if ctx.History != nil {
+				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
+			}
 			return false
+		}
+		if ctx.History != nil {
+			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "dispatched", "", w.titleLabels))
 		}
 	}
 	ctx.Cache.AddItem(w.item, w.titleLabels, keys)
@@ -211,17 +246,32 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 	case Download:
 		if _, err = w.item.Download(ctx, ctx.Cli.Once.DownloadPath); err != nil {
 			log.WithError(err).Errorf("Unable to download: %s", w.item.Item.Title)
+			if ctx.History != nil {
+				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
+			}
 			return false
 		}
 		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
+		if ctx.History != nil {
+			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "downloaded", "", w.titleLabels))
+		}
 	case Torrent:
 		if err = w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, w.torrentBytes); err != nil {
 			log.WithError(err).Errorf("Unable to torrent: %s", feedName)
+			if ctx.History != nil {
+				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
+			}
 			return false
 		}
 		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
+		if ctx.History != nil {
+			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "dispatched", "", w.titleLabels))
+		}
 	case Skip:
 		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
+		if ctx.History != nil {
+			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "skipped", "user skip", w.titleLabels))
+		}
 	case SkipOnce:
 		// don't add to cache
 	case Quit:
@@ -232,16 +282,21 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 	return false
 }
 
-// selectWinners returns the unique set of candidates to download: for each
-// identity key covered by any candidate, the highest-preference candidate that
-// beats what's already in the cache. A candidate winning on multiple keys
-// appears once.
-func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) []*candidate {
+type skippedCandidate struct {
+	cand   *candidate
+	reason string
+}
+
+// selectWinners returns winners and skipped candidates with reasons. For each
+// identity key, the highest-preference candidate that beats the cache wins.
+// A candidate winning on multiple keys appears once in winners.
+func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) ([]*candidate, []skippedCandidate) {
 	type entry struct {
 		cand *candidate
 		rank []int
 	}
 	best := map[string]*entry{}
+	matchedCands := map[*candidate]bool{}
 
 	for _, c := range candidates {
 		for _, g := range feedCfg.Groups {
@@ -249,11 +304,26 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) []*c
 				if !g.Matches(cov.labels) {
 					continue
 				}
+				matchedCands[c] = true
 				rank := PreferenceRank(cov.labels, feedCfg.Prefer)
 				if e, ok := best[cov.identityKey]; !ok || IsBetter(rank, e.rank) {
 					best[cov.identityKey] = &entry{cand: c, rank: rank}
 				}
 			}
+		}
+	}
+
+	inBest := map[*candidate]bool{}
+	for _, e := range best {
+		inBest[e.cand] = true
+	}
+
+	skipReasons := map[*candidate]string{}
+	for _, c := range candidates {
+		if !matchedCands[c] {
+			skipReasons[c] = "no group matched labels"
+		} else if !inBest[c] {
+			skipReasons[c] = "outranked by better candidate in this run"
 		}
 	}
 
@@ -263,14 +333,26 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) []*c
 		cachedRank, cached := cache.BestRankForKey(key, feedCfg.Prefer)
 		if cached && !IsBetter(e.rank, cachedRank) {
 			log.Debugf("Skipping %s for key %s: cache has equal or better preference", e.cand.item.Item.Title, key)
+			if !seen[e.cand] {
+				skipReasons[e.cand] = "better version already in cache"
+			}
 			continue
 		}
 		if !seen[e.cand] {
 			winners = append(winners, e.cand)
 			seen[e.cand] = true
+			delete(skipReasons, e.cand)
 		}
 	}
-	return winners
+
+	var skipped []skippedCandidate
+	for _, c := range candidates {
+		if reason, ok := skipReasons[c]; ok {
+			skipped = append(skipped, skippedCandidate{cand: c, reason: reason})
+		}
+	}
+
+	return winners, skipped
 }
 
 type selectOptions struct {

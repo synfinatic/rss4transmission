@@ -41,6 +41,7 @@ type Config struct {
 	Transmission  Transmission             `koanf:"Transmission"`
 	Gluetun       GluetunConfig            `koanf:"Gluetun"`
 	SeenFile      string                   `koanf:"SeenFile"`
+	HistoryFile   string                   `koanf:"HistoryFile"`
 	SeenCacheDays int                      `koanf:"SeenCacheDays"`
 }
 
@@ -104,15 +105,15 @@ func (f *Feed) Validate(name string, extractors map[string]*ExtractorSet) error 
 	return nil
 }
 
-// Check is the pre-filter applied before label extraction. It returns false if
-// the item matches any Exclude pattern or falls outside the MinSize/MaxSize
-// bounds. All other items return true.
-func (f *Feed) Check(item *gofeed.Item) bool {
+// Check is the pre-filter applied before label extraction. It returns false and
+// a human-readable reason if the item matches any Exclude pattern or falls
+// outside the MinSize/MaxSize bounds. All other items return (true, "").
+func (f *Feed) Check(item *gofeed.Item) (bool, string) {
 	f.compile()
 
 	for _, r := range f.exclude {
 		if r.Find([]byte(item.Title)) != nil {
-			return false
+			return false, "matched exclude filter"
 		}
 	}
 
@@ -128,13 +129,13 @@ func (f *Feed) Check(item *gofeed.Item) bool {
 
 	if f.minSize > 0 && totalSize < f.minSize {
 		log.Debugf("Too small: %s [%d]", item.Title, totalSize)
-		return false
+		return false, "below minimum size"
 	}
 
 	if f.maxSize > 0 && totalSize > f.maxSize {
 		log.Debugf("Too large: %s [%d]", item.Title, totalSize)
-		return false
+		return false, "above maximum size"
 	}
 
-	return true
+	return true, ""
 }

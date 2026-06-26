@@ -15,6 +15,10 @@ services:
     environment:
       - POLL_SECONDS=120
       - LOG_LEVEL=info
+      - HISTORY_PORT=0  # set to a port number to enable the history web UI
+    # Uncomment and adjust the port when HISTORY_PORT is enabled.
+    # ports:
+    #   - "8080:8080"  # replace both values with your chosen HISTORY_PORT
     volumes:
       - /volume1/docker/transmission/rss4transmission:/config
 

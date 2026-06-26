@@ -18,21 +18,21 @@ func makeItem(title string, enclosureLength string) *gofeed.Item {
 
 func TestFeedCheck_NotExcluded(t *testing.T) {
 	f := &Feed{Exclude: []string{`(?i).*720p.*`}}
-	if !f.Check(makeItem("MyShow.1080p.S01E01", "")) {
+	if ok, _ := f.Check(makeItem("MyShow.1080p.S01E01", "")); !ok {
 		t.Error("non-excluded item should return true")
 	}
 }
 
 func TestFeedCheck_Excluded(t *testing.T) {
 	f := &Feed{Exclude: []string{`(?i).*720p.*`}}
-	if f.Check(makeItem("MyShow.720p.S01E01", "")) {
+	if ok, _ := f.Check(makeItem("MyShow.720p.S01E01", "")); ok {
 		t.Error("excluded item should return false")
 	}
 }
 
 func TestFeedCheck_NoFilters(t *testing.T) {
 	f := &Feed{}
-	if !f.Check(makeItem("AnythingAtAll", "")) {
+	if ok, _ := f.Check(makeItem("AnythingAtAll", "")); !ok {
 		t.Error("item should pass with no filters configured")
 	}
 }
@@ -40,7 +40,7 @@ func TestFeedCheck_NoFilters(t *testing.T) {
 func TestFeedCheck_MinSize(t *testing.T) {
 	f := &Feed{MinSize: "1GB"}
 	// 100MB enclosure — below 1GB minimum
-	if f.Check(makeItem("Anything", "104857600")) {
+	if ok, _ := f.Check(makeItem("Anything", "104857600")); ok {
 		t.Error("item below MinSize should return false")
 	}
 }
@@ -48,7 +48,7 @@ func TestFeedCheck_MinSize(t *testing.T) {
 func TestFeedCheck_MaxSize(t *testing.T) {
 	f := &Feed{MaxSize: "100MB"}
 	// 2GB enclosure — above 100MB maximum
-	if f.Check(makeItem("Anything", "2147483648")) {
+	if ok, _ := f.Check(makeItem("Anything", "2147483648")); ok {
 		t.Error("item above MaxSize should return false")
 	}
 }
@@ -56,7 +56,7 @@ func TestFeedCheck_MaxSize(t *testing.T) {
 func TestFeedCheck_SizeRange(t *testing.T) {
 	f := &Feed{MinSize: "100MB", MaxSize: "10GB"}
 	// 1GB — within range
-	if !f.Check(makeItem("Anything", "1073741824")) {
+	if ok, _ := f.Check(makeItem("Anything", "1073741824")); !ok {
 		t.Error("item within [MinSize, MaxSize] should return true")
 	}
 }
@@ -64,7 +64,7 @@ func TestFeedCheck_SizeRange(t *testing.T) {
 func TestFeedCheck_NoEnclosureWithMinSize(t *testing.T) {
 	f := &Feed{MinSize: "100MB"}
 	// totalSize == 0, below 100MB minimum
-	if f.Check(makeItem("Anything", "")) {
+	if ok, _ := f.Check(makeItem("Anything", "")); ok {
 		t.Error("item with no enclosures should fail MinSize check")
 	}
 }

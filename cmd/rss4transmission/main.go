@@ -58,6 +58,7 @@ type RunContext struct {
 	configFile   string
 	Config       Config
 	Cache        *CacheFile
+	History      *HistoryFile
 	Transmission *transmissionrpc.Client
 	Provider     *file.File
 }
@@ -160,6 +161,14 @@ func main() {
 
 	if rc.Cache, err = OpenCache(seenFileName); err != nil {
 		log.WithError(err).Fatalf("Unable to open cache file: %s", seenFileName)
+	}
+
+	historyFileName := rc.Konf.String("HistoryFile")
+	if historyFileName != "" {
+		if rc.History, err = OpenHistory(historyFileName); err != nil {
+			log.WithError(err).Warnf("Unable to open history file: %s", historyFileName)
+			rc.History = nil
+		}
 	}
 
 	if rc.Konf.Int("Transmission.Port") < 0 || rc.Konf.Int("Transmission.Port") > 65535 {
