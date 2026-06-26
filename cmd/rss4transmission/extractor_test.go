@@ -170,3 +170,64 @@ func TestExtractFromFiles_Empty(t *testing.T) {
 		t.Errorf("expected 0 label sets for empty file list, got %d", len(got))
 	}
 }
+
+func TestExtractLabels_DefaultUsedWhenNoMatch(t *testing.T) {
+	es := &ExtractorSet{
+		Labels: map[string]LabelDef{
+			"language": {Regexp: `(?i)(FRENCH|GERMAN|ENGLISH)`, Default: "English"},
+		},
+	}
+	got := es.ExtractLabels("Show.S01E01.1080p.mkv")
+	if got["language"] != "English" {
+		t.Errorf("language = %q, want English (default)", got["language"])
+	}
+}
+
+func TestExtractLabels_DefaultNotUsedWhenMatched(t *testing.T) {
+	es := &ExtractorSet{
+		Labels: map[string]LabelDef{
+			"language": {
+				Regexp:  `(?i)(FRENCH|GERMAN|ENGLISH)`,
+				Default: "English",
+				Normalize: map[string]string{
+					`(?i)french`:  "French",
+					`(?i)german`:  "German",
+					`(?i)english`: "English",
+				},
+			},
+		},
+	}
+	got := es.ExtractLabels("Show.S01E01.1080p.FRENCH.mkv")
+	if got["language"] != "French" {
+		t.Errorf("language = %q, want French (matched, not default)", got["language"])
+	}
+}
+
+func TestExtractLabels_DefaultEmptyMeansOmit(t *testing.T) {
+	es := &ExtractorSet{
+		Labels: map[string]LabelDef{
+			"language": {Regexp: `(?i)(FRENCH|GERMAN|ENGLISH)`},
+		},
+	}
+	got := es.ExtractLabels("Show.S01E01.1080p.mkv")
+	if _, ok := got["language"]; ok {
+		t.Error("language should be absent when no match and no default set")
+	}
+}
+
+func TestExtractFromFiles_DefaultDoesNotAffectFileSkip(t *testing.T) {
+	es := &ExtractorSet{
+		Labels: map[string]LabelDef{
+			"series":   {Regexp: `(MotoGP|Moto2|Moto3)`},
+			"language": {Regexp: `(?i)(FRENCH|GERMAN|ENGLISH)`, Default: "English"},
+		},
+	}
+	files := []string{
+		"MotoGP.Race.mkv",
+		"subtitles.srt", // no series match → should still be skipped
+	}
+	got := es.ExtractFromFiles(files)
+	if len(got) != 1 {
+		t.Errorf("expected 1 label set (subtitle skipped), got %d", len(got))
+	}
+}

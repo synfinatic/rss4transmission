@@ -8,6 +8,7 @@ import (
 // LabelDef is the config definition for a single label extraction rule.
 type LabelDef struct {
 	Regexp    string            `koanf:"Regexp"`
+	Default   string            `koanf:"Default"`
 	Normalize map[string]string `koanf:"Normalize"`
 }
 
@@ -22,6 +23,7 @@ type ExtractorSet struct {
 type compiledLabel struct {
 	re        *regexp.Regexp
 	normalize []normalizeRule
+	defaultValue string
 }
 
 type normalizeRule struct {
@@ -35,7 +37,7 @@ func (es *ExtractorSet) compile() {
 	}
 	es.compiledLabels = make(map[string]*compiledLabel, len(es.Labels))
 	for name, def := range es.Labels {
-		cl := &compiledLabel{}
+		cl := &compiledLabel{defaultValue: def.Default}
 		var err error
 		if cl.re, err = regexp.Compile(def.Regexp); err != nil {
 			log.WithError(err).Fatalf("label %q: invalid Regexp: %s", name, def.Regexp)
@@ -67,6 +69,9 @@ func (es *ExtractorSet) ExtractLabels(s string) map[string]string {
 	for name, cl := range es.compiledLabels {
 		match := cl.re.FindStringSubmatch(s)
 		if len(match) < 2 {
+			if cl.defaultValue != "" {
+				result[name] = cl.defaultValue
+			}
 			continue
 		}
 		raw := match[1]
@@ -81,15 +86,27 @@ func (es *ExtractorSet) ExtractLabels(s string) map[string]string {
 	return result
 }
 
-// ExtractFromFiles extracts labels from each file name. Files that produce no
-// label matches are omitted from the result.
+// hasAnyRegexMatch reports whether any label's Regexp matches s.
+func (es *ExtractorSet) hasAnyRegexMatch(s string) bool {
+	es.compile()
+	for _, cl := range es.compiledLabels {
+		if len(cl.re.FindStringSubmatch(s)) >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+// ExtractFromFiles extracts labels from each file name. Files where no label
+// Regexp matches are omitted; default values from non-matching labels are still
+// included in the result for files that have at least one regex match.
 func (es *ExtractorSet) ExtractFromFiles(fileNames []string) []map[string]string {
 	result := make([]map[string]string, 0, len(fileNames))
 	for _, fn := range fileNames {
-		labels := es.ExtractLabels(fn)
-		if len(labels) > 0 {
-			result = append(result, labels)
+		if !es.hasAnyRegexMatch(fn) {
+			continue
 		}
+		result = append(result, es.ExtractLabels(fn))
 	}
 	return result
 }

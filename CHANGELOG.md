@@ -25,11 +25,13 @@
 
 **History file and web UI**
 
-- Added `HistoryFile` config key. When set, every feed item outcome (dispatched, downloaded, skipped,
-  excluded, error) is recorded with its feed name, title, labels, and timestamps.
-- Added `--history-port` flag to the `watch` command (env `HISTORY_PORT` in Docker). When non-zero,
-  starts an HTTP server on `127.0.0.1:<port>` serving a browsable, reverse-chronological history
-  page. Records are pruned on the same schedule as the seen cache.
+- Added `--history-file` flag to the `watch` command (env `HISTORY_FILE` in Docker). When set, every
+  feed item outcome (dispatched, downloaded, skipped, excluded, error) is recorded with its feed name,
+  title, labels, and timestamps. `HistoryFile` is no longer a config-file key.
+- Added `--history-listen` flag to the `watch` command (env `HISTORY_LISTEN` in Docker). Accepts a
+  bare port number (binds to `127.0.0.1`) or a full `host:port` / `[ipv6]:port` address. When set,
+  starts an HTTP server serving a browsable, reverse-chronological history page. Records are pruned
+  on the same schedule as the seen cache. Requires `--history-file`.
 
 **`simulate` command**
 
@@ -44,7 +46,7 @@
 ### Other changes
 
 - Seen cache now tracks per-GUID error hold-downs to avoid spamming retries on transient failures.
-- Docker: `HISTORY_PORT` env var (default `0`) added to `Dockerfile` and both compose files.
+- Docker: `HISTORY_LISTEN` env var added to `Dockerfile` and both compose files (empty = disabled).
   The gluetun compose file includes a commented `ports:` block to expose the history UI.
 - Makefile: added `make coverage` (atomic coverage report) and `make vulncheck` (`govulncheck`);
   `vulncheck` is now part of `make precheck`.

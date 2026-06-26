@@ -100,11 +100,11 @@ error hold-downs to avoid spamming retries.
 `once` run, `CheckVpnTunnel()` may restart the VPN (via Gluetun's REST API) and sync the forwarded peer
 port into Transmission's session settings.
 
-**History web UI (`web.go`)**: The `watch` command accepts `--history-port` (env `HISTORY_PORT` in
-Docker). When set to a non-zero port, a small HTTP server is started on `127.0.0.1:<port>` serving a
-browsable history of torrented items. Disabled by default (`HISTORY_PORT=0`). In the gluetun
-docker-compose, expose the port explicitly via the `ports:` block; in the plain docker-compose the
-`network_mode: host` already exposes all ports.
+**History web UI (`web.go`)**: The `watch` command accepts `--history-file` (path to the history JSON,
+env `HISTORY_FILE` in Docker) and `--history-listen` (env `HISTORY_LISTEN`). `--history-file` enables
+recording; `--history-listen` additionally starts an HTTP server (bare port or `host:port`) serving a
+browsable history. In the gluetun docker-compose, expose the port explicitly via the `ports:` block;
+in the plain docker-compose `network_mode: host` already exposes all ports.
 
 **Config defaults** are defined as a `map[string]interface{}` in `config.go` and loaded before the YAML
 file, so koanf's merge semantics provide defaults without nil-checks in code.

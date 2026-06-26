@@ -146,9 +146,6 @@ Transmission:
 SeenFile:      /path/to/seen.json
 SeenCacheDays: 30  # prune records older than this many days
 
-# History file for the web UI (optional)
-HistoryFile: /path/to/history.json
-
 Extractors:
   motogp:
     Labels:
@@ -210,19 +207,25 @@ SeenFile: /path/to/seen.json
 
 ## History Web UI
 
-When `HistoryFile` is set in the config, RSS4Transmission records the outcome of every feed item it
-processes (dispatched, downloaded, skipped, excluded, error). Pass `--history-port <port>` to the
-`watch` command to serve a browsable history page on `http://127.0.0.1:<port>/`.
+Use `--history-file` on the `watch` command to enable history recording. RSS4Transmission will record
+the outcome of every feed item it processes (dispatched, downloaded, skipped, excluded, error).
+
+Optionally pass `--history-listen` to serve a browsable history page. That flag accepts a bare port
+number (binds to `127.0.0.1`) or a full `host:port` address (including IPv6 `[::1]:port`).
 
 ```bash
-rss4transmission watch --config config.yaml --history-port 8080
+rss4transmission watch --config config.yaml --history-file /data/history.json --history-listen 8080
+rss4transmission watch --config config.yaml --history-file /data/history.json \
+    --history-listen 0.0.0.0:8080
 ```
 
-In Docker, set the `HISTORY_PORT` environment variable:
+In Docker, set the `HISTORY_FILE` and `HISTORY_LISTEN` environment variables:
 
 ```yaml
 environment:
-  - HISTORY_PORT=8080
+  - HISTORY_FILE=/config/history.json
+  - HISTORY_LISTEN=8080          # binds to 127.0.0.1:8080
+  # - HISTORY_LISTEN=0.0.0.0:8080  # bind to all interfaces
 ```
 
 When using the plain `docker-compose.yaml` (`network_mode: host`) no additional port mapping is
