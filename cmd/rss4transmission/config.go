@@ -41,7 +41,6 @@ type Config struct {
 	Transmission  Transmission             `koanf:"Transmission"`
 	Gluetun       GluetunConfig            `koanf:"Gluetun"`
 	SeenFile      string                   `koanf:"SeenFile"`
-	HistoryFile   string                   `koanf:"HistoryFile"`
 	SeenCacheDays int                      `koanf:"SeenCacheDays"`
 }
 

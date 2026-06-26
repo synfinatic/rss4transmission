@@ -22,13 +22,37 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
+	"strconv"
 )
 
 //go:embed web/history.html
 var historyTmpl string
 
-func startHistoryServer(history *HistoryFile, port int) {
+// parseHistoryAddr normalises a --history-listen value to a "host:port" address.
+// A bare port number is expanded to "127.0.0.1:<port>". Returns an error for
+// invalid or out-of-range values.
+func parseHistoryAddr(s string) (string, error) {
+	// If it already contains a colon it is a host:port or [ipv6]:port.
+	if _, _, err := net.SplitHostPort(s); err == nil {
+		// Validate the port part.
+		_, portStr, _ := net.SplitHostPort(s)
+		p, err := strconv.Atoi(portStr)
+		if err != nil || p < 1 || p > 65535 {
+			return "", fmt.Errorf("invalid port in %q", s)
+		}
+		return s, nil
+	}
+	// Treat as a bare port number.
+	p, err := strconv.Atoi(s)
+	if err != nil || p < 1 || p > 65535 {
+		return "", fmt.Errorf("invalid listen address %q: must be a port number or host:port", s)
+	}
+	return fmt.Sprintf("127.0.0.1:%d", p), nil
+}
+
+func startHistoryServer(history *HistoryFile, addr string) {
 	funcMap := template.FuncMap{
 		"outcomeClass": func(outcome string) string {
 			switch outcome {
@@ -55,7 +79,6 @@ func startHistoryServer(history *HistoryFile, port int) {
 		}
 	})
 
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	log.Infof("Starting history web server on http://%s", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil { //nolint:gosec
 		log.WithError(err).Error("History web server stopped")

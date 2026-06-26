@@ -6,11 +6,12 @@ import (
 )
 
 type WatchCmd struct {
-	Feed         []string `kong:"help='Limit scraping to the given feed(s)'"`
-	Download     bool     `kong:"short='d',help='Download torrent file instead of torrenting',xor='action'"`
-	DownloadPath string   `kong:"short='p',help='Path to download torrent files to ($PWD)'"`
-	Sleep        int      `kong:"short='s',default='300',help='Seconds to sleep between scraping'"`
-	HistoryPort  int      `kong:"help='Port to serve torrent history on 127.0.0.1 (0=disabled)'"`
+	Feed          []string `kong:"help='Limit scraping to the given feed(s)'"`
+	Download      bool     `kong:"short='d',help='Download torrent file instead of torrenting',xor='action'"`
+	DownloadPath  string   `kong:"short='p',help='Path to download torrent files to ($PWD)'"`
+	Sleep         int      `kong:"short='s',default='300',help='Seconds to sleep between scraping'"`
+	HistoryFile   string   `kong:"help='Path to history JSON file'"`
+	HistoryListen string   `kong:"help='Address to serve torrent history on, as host:port or bare port (disabled if empty)'"`
 }
 
 func (cmd *WatchCmd) Run(ctx *RunContext) error {
@@ -45,11 +46,23 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		DownloadPath: ctx.Cli.Watch.DownloadPath,
 	}
 
-	if cmd.HistoryPort > 0 {
-		if ctx.History == nil {
-			log.Fatalf("--history-port requires HistoryFile to be configured")
+	if cmd.HistoryFile != "" {
+		var err error
+		if ctx.History, err = OpenHistory(cmd.HistoryFile); err != nil {
+			log.WithError(err).Warnf("Unable to open history file: %s", cmd.HistoryFile)
+			ctx.History = nil
 		}
-		go startHistoryServer(ctx.History, cmd.HistoryPort)
+	}
+
+	if cmd.HistoryListen != "" {
+		if ctx.History == nil {
+			log.Fatalf("--history-listen requires --history-file to be set")
+		}
+		addr, err := parseHistoryAddr(cmd.HistoryListen)
+		if err != nil {
+			log.Fatalf("--history-listen: %s", err)
+		}
+		go startHistoryServer(ctx.History, addr)
 	}
 
 	var g *Gluetun

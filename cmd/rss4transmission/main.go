@@ -163,14 +163,6 @@ func main() {
 		log.WithError(err).Fatalf("Unable to open cache file: %s", seenFileName)
 	}
 
-	historyFileName := rc.Konf.String("HistoryFile")
-	if historyFileName != "" {
-		if rc.History, err = OpenHistory(historyFileName); err != nil {
-			log.WithError(err).Warnf("Unable to open history file: %s", historyFileName)
-			rc.History = nil
-		}
-	}
-
 	if rc.Konf.Int("Transmission.Port") < 0 || rc.Konf.Int("Transmission.Port") > 65535 {
 		log.Fatalf("Invalid port number: %d", rc.Konf.Int("Transmission.Port"))
 	}
