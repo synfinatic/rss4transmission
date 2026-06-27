@@ -103,12 +103,18 @@ func (c *CacheFile) BestRankForKey(key string, prefer []PreferDimension) ([]int,
 
 // SaveCache updates the cache and removes any entries older than the specified
 // duration.
-func (c *CacheFile) SaveCache(d time.Duration) error {
+// SaveCache prunes records and writes to disk. A record is kept if it is within
+// the retention window d, or if its GUID is still present in activeGUIDs
+// (feed name → set of GUIDs currently in the feed). Pass nil for activeGUIDs
+// to use time-based pruning only.
+func (c *CacheFile) SaveCache(d time.Duration, activeGUIDs map[string]map[string]bool) error {
 	deletedRecord := false
 	NewSeen := []CacheRecord{}
 
 	for _, s := range c.Seen {
-		if time.Since(s.Published).Hours() < d.Hours() {
+		withinWindow := time.Since(s.AddTime).Hours() < d.Hours()
+		stillInFeed := activeGUIDs[s.Feed] != nil && activeGUIDs[s.Feed][s.GUID]
+		if withinWindow || stillInFeed {
 			NewSeen = append(NewSeen, s)
 		} else {
 			deletedRecord = true

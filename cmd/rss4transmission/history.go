@@ -136,11 +136,7 @@ func (h *HistoryFile) SaveHistory(d time.Duration) error {
 
 	var newRecords []HistoryRecord
 	for _, r := range h.Records {
-		ref := r.Published
-		if ref.IsZero() {
-			ref = r.ProcessedAt
-		}
-		if time.Since(ref) < d {
+		if time.Since(r.ProcessedAt) < d {
 			newRecords = append(newRecords, r)
 		} else {
 			log.Debugf("Removing history record for %s", r.GUID)

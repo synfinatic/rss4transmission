@@ -291,7 +291,7 @@ func TestSaveCache_NoPruning(t *testing.T) {
 		needSave: true,
 	}
 
-	if err := c.SaveCache(30 * 24 * time.Hour); err != nil {
+	if err := c.SaveCache(30 * 24 * time.Hour, nil); err != nil {
 		t.Fatalf("SaveCache returned error: %v", err)
 	}
 
@@ -319,14 +319,14 @@ func TestSaveCache_Pruning(t *testing.T) {
 		Version: CACHE_VERSION,
 		Errors:  map[string]int64{},
 		Seen: []CacheRecord{
-			{Feed: "f", GUID: "old", Published: old},
-			{Feed: "f", GUID: "recent", Published: recent},
+			{Feed: "f", GUID: "old", AddTime: old},
+			{Feed: "f", GUID: "recent", AddTime: recent},
 		},
 		filename: path,
 		needSave: true,
 	}
 
-	if err := c.SaveCache(30 * 24 * time.Hour); err != nil {
+	if err := c.SaveCache(30 * 24 * time.Hour, nil); err != nil {
 		t.Fatalf("SaveCache returned error: %v", err)
 	}
 	if len(c.Seen) != 1 || c.Seen[0].GUID != "recent" {
@@ -347,8 +347,8 @@ func TestSaveCache_PruningRebuildsIdentityIndex(t *testing.T) {
 		Version: CACHE_VERSION,
 		Errors:  map[string]int64{},
 		Seen: []CacheRecord{
-			{Feed: "f", GUID: "old", Published: old, IdentityKeys: []string{oldKey}, Labels: map[string]string{"resolution": "720p"}},
-			{Feed: "f", GUID: "recent", Published: recent, IdentityKeys: []string{recentKey}, Labels: map[string]string{"resolution": "1080p"}},
+			{Feed: "f", GUID: "old", AddTime: old, IdentityKeys: []string{oldKey}, Labels: map[string]string{"resolution": "720p"}},
+			{Feed: "f", GUID: "recent", AddTime: recent, IdentityKeys: []string{recentKey}, Labels: map[string]string{"resolution": "1080p"}},
 		},
 		filename:      path,
 		needSave:      true,
@@ -356,7 +356,7 @@ func TestSaveCache_PruningRebuildsIdentityIndex(t *testing.T) {
 	}
 	c.rebuildIdentityIndex()
 
-	if err := c.SaveCache(30 * 24 * time.Hour); err != nil {
+	if err := c.SaveCache(30 * 24 * time.Hour, nil); err != nil {
 		t.Fatalf("SaveCache returned error: %v", err)
 	}
 	if _, ok := c.identityIndex[oldKey]; ok {
@@ -364,6 +364,106 @@ func TestSaveCache_PruningRebuildsIdentityIndex(t *testing.T) {
 	}
 	if _, ok := c.identityIndex[recentKey]; !ok {
 		t.Error("non-pruned record's identity key should remain in index")
+	}
+}
+
+func TestSaveCache_OldPublishedRecentAddTime_Kept(t *testing.T) {
+	// A record with an old Published date but recent AddTime must NOT be pruned.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	c := &CacheFile{
+		Version: CACHE_VERSION,
+		Errors:  map[string]int64{},
+		Seen: []CacheRecord{
+			{Feed: "f", GUID: "g1",
+				Published: time.Now().Add(-365 * 24 * time.Hour),
+				AddTime:   time.Now()},
+		},
+		filename: path,
+		needSave: true,
+	}
+	if err := c.SaveCache(30 * 24 * time.Hour, nil); err != nil {
+		t.Fatalf("SaveCache returned error: %v", err)
+	}
+	if len(c.Seen) != 1 {
+		t.Errorf("expected record kept (recent AddTime), got %d records", len(c.Seen))
+	}
+}
+
+func TestSaveCache_OldAddTime_Pruned(t *testing.T) {
+	// A record with an old AddTime must be pruned even if Published is recent.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	c := &CacheFile{
+		Version: CACHE_VERSION,
+		Errors:  map[string]int64{},
+		Seen: []CacheRecord{
+			{Feed: "f", GUID: "g1",
+				Published: time.Now(),
+				AddTime:   time.Now().Add(-365 * 24 * time.Hour)},
+		},
+		filename: path,
+		needSave: true,
+	}
+	if err := c.SaveCache(30 * 24 * time.Hour, nil); err != nil {
+		t.Fatalf("SaveCache returned error: %v", err)
+	}
+	if len(c.Seen) != 0 {
+		t.Errorf("expected record pruned (old AddTime), got %d records", len(c.Seen))
+	}
+}
+
+func TestSaveCache_ActiveGUID_PreventsPruning(t *testing.T) {
+	// A record older than SeenCacheDays must be kept if its GUID is still in the feed.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	old := time.Now().Add(-365 * 24 * time.Hour)
+	c := &CacheFile{
+		Version: CACHE_VERSION,
+		Errors:  map[string]int64{},
+		Seen: []CacheRecord{
+			{Feed: "dakar", GUID: "dakar-2025", AddTime: old},
+		},
+		filename: path,
+		needSave: true,
+	}
+	activeGUIDs := map[string]map[string]bool{
+		"dakar": {"dakar-2025": true},
+	}
+	if err := c.SaveCache(30*24*time.Hour, activeGUIDs); err != nil {
+		t.Fatalf("SaveCache returned error: %v", err)
+	}
+	if len(c.Seen) != 1 {
+		t.Errorf("expected record kept (GUID still in feed), got %d records", len(c.Seen))
+	}
+}
+
+func TestSaveCache_OldAndNotInFeed_Pruned(t *testing.T) {
+	// A record older than SeenCacheDays whose GUID is no longer in the feed must be pruned.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	old := time.Now().Add(-365 * 24 * time.Hour)
+	c := &CacheFile{
+		Version: CACHE_VERSION,
+		Errors:  map[string]int64{},
+		Seen: []CacheRecord{
+			{Feed: "dakar", GUID: "dakar-2024", AddTime: old},
+		},
+		filename: path,
+		needSave: true,
+	}
+	activeGUIDs := map[string]map[string]bool{
+		"dakar": {"dakar-2025": true}, // different GUID — old one is gone
+	}
+	if err := c.SaveCache(30*24*time.Hour, activeGUIDs); err != nil {
+		t.Fatalf("SaveCache returned error: %v", err)
+	}
+	if len(c.Seen) != 0 {
+		t.Errorf("expected record pruned (old and not in feed), got %d records", len(c.Seen))
 	}
 }
 
@@ -376,13 +476,13 @@ func TestSaveCache_SkipsWhenUnchanged(t *testing.T) {
 		Version: CACHE_VERSION,
 		Errors:  map[string]int64{},
 		Seen: []CacheRecord{
-			{Feed: "f", GUID: "g1", Published: now},
+			{Feed: "f", GUID: "g1", AddTime: now},
 		},
 		filename: path,
 		needSave: false,
 	}
 
-	if err := c.SaveCache(30 * 24 * time.Hour); err != nil {
+	if err := c.SaveCache(30 * 24 * time.Hour, nil); err != nil {
 		t.Fatalf("SaveCache returned error: %v", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {

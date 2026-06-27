@@ -84,7 +84,7 @@ func (cmd *SimulateCmd) Run(ctx *RunContext) error {
 	}
 
 	cacheTime := time.Duration(ctx.Konf.Int("SeenCacheDays")) * 24 * time.Hour
-	if err = ctx.Cache.SaveCache(cacheTime); err != nil {
+	if err = ctx.Cache.SaveCache(cacheTime, nil); err != nil {
 		return fmt.Errorf("unable to save seen cache: %w", err)
 	}
 	return nil

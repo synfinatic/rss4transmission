@@ -239,8 +239,8 @@ func TestSaveHistory_PrunesOldRecords(t *testing.T) {
 	old := now.Add(-48 * time.Hour)
 
 	oldItem := makeGofeedItem("Old Show", "old-guid")
-	oldItem.PublishedParsed = &old
 	h.AddOrUpdateRecord(NewHistoryRecord("feed", oldItem, "dispatched", "", nil))
+	h.Records[0].ProcessedAt = old // backdate to simulate an old record
 
 	newItem := makeGofeedItem("New Show", "new-guid")
 	newItem.PublishedParsed = &now
@@ -261,6 +261,53 @@ func TestSaveHistory_PrunesOldRecords(t *testing.T) {
 	}
 	if _, ok := h.guidIndex[historyKey("feed", "old-guid")]; ok {
 		t.Error("pruned GUID should be removed from index")
+	}
+}
+
+func TestSaveHistory_OldPublishedRecentProcessedAt_Kept(t *testing.T) {
+	// A record with an old Published date but recent ProcessedAt must NOT be pruned.
+	dir := t.TempDir()
+	h := &HistoryFile{
+		Version:   HISTORY_VERSION,
+		filename:  filepath.Join(dir, "history.json"),
+		guidIndex: map[string]int{},
+	}
+
+	old := time.Now().Add(-365 * 24 * time.Hour)
+	item := makeGofeedItem("Old Show", "old-published-guid")
+	item.PublishedParsed = &old
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", item, "dispatched", "", nil))
+	// ProcessedAt is set to time.Now() by AddOrUpdateRecord.
+
+	if err := h.SaveHistory(30 * 24 * time.Hour); err != nil {
+		t.Fatalf("SaveHistory failed: %v", err)
+	}
+	if len(h.Records) != 1 {
+		t.Errorf("expected record kept (recent ProcessedAt), got %d records", len(h.Records))
+	}
+}
+
+func TestSaveHistory_OldProcessedAt_Pruned(t *testing.T) {
+	// A record with an old ProcessedAt must be pruned even if Published is recent.
+	dir := t.TempDir()
+	h := &HistoryFile{
+		Version:   HISTORY_VERSION,
+		filename:  filepath.Join(dir, "history.json"),
+		guidIndex: map[string]int{},
+	}
+
+	now := time.Now()
+	item := makeGofeedItem("Show", "recent-published-guid")
+	item.PublishedParsed = &now
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", item, "dispatched", "", nil))
+	// Backdate ProcessedAt to simulate an old record.
+	h.Records[0].ProcessedAt = time.Now().Add(-365 * 24 * time.Hour)
+
+	if err := h.SaveHistory(30 * 24 * time.Hour); err != nil {
+		t.Fatalf("SaveHistory failed: %v", err)
+	}
+	if len(h.Records) != 0 {
+		t.Errorf("expected record pruned (old ProcessedAt), got %d records", len(h.Records))
 	}
 }
 

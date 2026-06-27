@@ -198,8 +198,23 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 		}
 	}
 
+	// Collect the GUIDs currently present in each feed so SaveCache can retain
+	// entries whose torrent is still being served, even if older than SeenCacheDays.
+	activeGUIDs := make(map[string]map[string]bool, len(ctx.Config.Feeds))
+	for feedName, feedCfg := range ctx.Config.Feeds {
+		rss := feeds[feedCfg.URL]
+		if rss == nil {
+			continue
+		}
+		m := make(map[string]bool, len(rss.Items))
+		for _, item := range rss.Items {
+			m[item.GUID] = true
+		}
+		activeGUIDs[feedName] = m
+	}
+
 	cacheTime := time.Duration(ctx.Konf.Int("SeenCacheDays")) * time.Duration(24) * time.Hour
-	if err = ctx.Cache.SaveCache(cacheTime); err != nil {
+	if err = ctx.Cache.SaveCache(cacheTime, activeGUIDs); err != nil {
 		return fmt.Errorf("unable to save seen cache: %s", err.Error())
 	}
 	if ctx.History != nil {
