@@ -23,7 +23,6 @@ type ExtractorSet struct {
 type compiledLabel struct {
 	re        *regexp.Regexp
 	normalize []normalizeRule
-	defaultValue string
 }
 
 type normalizeRule struct {
@@ -37,7 +36,7 @@ func (es *ExtractorSet) compile() {
 	}
 	es.compiledLabels = make(map[string]*compiledLabel, len(es.Labels))
 	for name, def := range es.Labels {
-		cl := &compiledLabel{defaultValue: def.Default}
+		cl := &compiledLabel{}
 		var err error
 		if cl.re, err = regexp.Compile(def.Regexp); err != nil {
 			log.WithError(err).Fatalf("label %q: invalid Regexp: %s", name, def.Regexp)
@@ -63,15 +62,14 @@ func (es *ExtractorSet) compile() {
 // ExtractLabels extracts labels from s. Labels whose regex does not match are
 // omitted from the result. After extraction, the first matching Normalize rule
 // (sorted by pattern string) maps the raw match to a canonical value.
+// Defaults are NOT applied here; use Defaults() and apply them at coverage time
+// so that a file's absent label never overrides a title's explicit value.
 func (es *ExtractorSet) ExtractLabels(s string) map[string]string {
 	es.compile()
 	result := make(map[string]string)
 	for name, cl := range es.compiledLabels {
 		match := cl.re.FindStringSubmatch(s)
 		if len(match) < 2 {
-			if cl.defaultValue != "" {
-				result[name] = cl.defaultValue
-			}
 			continue
 		}
 		raw := match[1]
@@ -82,6 +80,17 @@ func (es *ExtractorSet) ExtractLabels(s string) map[string]string {
 			}
 		}
 		result[name] = raw
+	}
+	return result
+}
+
+// Defaults returns label name → default value for all labels with a non-empty Default.
+func (es *ExtractorSet) Defaults() map[string]string {
+	result := make(map[string]string)
+	for name, def := range es.Labels {
+		if def.Default != "" {
+			result[name] = def.Default
+		}
 	}
 	return result
 }
@@ -98,8 +107,9 @@ func (es *ExtractorSet) hasAnyRegexMatch(s string) bool {
 }
 
 // ExtractFromFiles extracts labels from each file name. Files where no label
-// Regexp matches are omitted; default values from non-matching labels are still
-// included in the result for files that have at least one regex match.
+// Regexp matches are omitted. Defaults are not applied here — they are applied
+// at coverage time via Defaults() so a file's absent label never silently
+// overrides an explicit value from the torrent title.
 func (es *ExtractorSet) ExtractFromFiles(fileNames []string) []map[string]string {
 	result := make([]map[string]string, 0, len(fileNames))
 	for _, fn := range fileNames {

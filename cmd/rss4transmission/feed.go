@@ -62,7 +62,7 @@ func (fi *FeedItem) getTorrentContents() ([]byte, error) {
 	if err != nil {
 		return []byte{}, fmt.Errorf("unable to download %s: %s", torrentUrl, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	return io.ReadAll(resp.Body)
 }
 

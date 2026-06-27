@@ -214,8 +214,15 @@ func (rc *RunContext) loadConfig(configFile string) (*koanf.Koanf, error) {
 		log.WithError(err).Fatalf("Unable to load defaults")
 	}
 
-	rc.Provider = file.Provider(configFile)
-	if err := konf.Load(rc.Provider, yaml.Parser()); err != nil {
+	// On the initial load Provider is nil; store it so watch.go can call
+	// Provider.Watch() on it. On reloads we create a fresh reader but keep
+	// the original Provider so its Watch goroutine continues to run.
+	provider := file.Provider(configFile)
+	if rc.Provider == nil {
+		rc.Provider = provider
+	}
+
+	if err := konf.Load(provider, yaml.Parser()); err != nil {
 		return konf, err
 	}
 

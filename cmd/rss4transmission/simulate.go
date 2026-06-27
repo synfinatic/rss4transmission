@@ -34,7 +34,7 @@ func (cmd *SimulateCmd) Run(ctx *RunContext) error {
 	if err != nil {
 		return fmt.Errorf("unable to open feed file: %w", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	p := gofeed.NewParser()
 	rss, err := p.Parse(f)
@@ -58,6 +58,7 @@ func (cmd *SimulateCmd) Run(ctx *RunContext) error {
 			candidates = append(candidates, &candidate{
 				item:        fi,
 				titleLabels: extractor.ExtractLabels(item.Title),
+				defaults:    extractor.Defaults(),
 			})
 		}
 

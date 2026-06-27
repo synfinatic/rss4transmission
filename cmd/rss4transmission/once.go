@@ -26,6 +26,7 @@ type candidate struct {
 	titleLabels  map[string]string
 	fileLabels   []map[string]string // one set per file in the .torrent
 	torrentBytes []byte              // raw .torrent content for MetaInfo upload
+	defaults     map[string]string   // label defaults from the extractor config
 }
 
 // coverages returns the set of {identityKey, mergedLabels} pairs this candidate
@@ -43,6 +44,27 @@ func (c *candidate) coverages(identityLabels []string) []coverage {
 	seen := map[string]bool{}
 	var result []coverage
 	for _, labels := range labelSets {
+		// Apply extractor defaults for labels still absent after merging.
+		// A new map is created only when at least one default is needed, so
+		// the original title/merged maps are never mutated.
+		if len(c.defaults) > 0 {
+			var withDefaults map[string]string
+			for k, v := range c.defaults {
+				if _, ok := labels[k]; !ok {
+					if withDefaults == nil {
+						withDefaults = make(map[string]string, len(labels)+len(c.defaults))
+						for kk, vv := range labels {
+							withDefaults[kk] = vv
+						}
+					}
+					withDefaults[k] = v
+				}
+			}
+			if withDefaults != nil {
+				labels = withDefaults
+			}
+		}
+
 		key, ok := IdentityKey(labels, identityLabels)
 		if !ok || seen[key] {
 			continue
@@ -130,6 +152,7 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 			candidates = append(candidates, &candidate{
 				item:        fi,
 				titleLabels: titleLabels,
+				defaults:    extractor.Defaults(),
 			})
 		}
 

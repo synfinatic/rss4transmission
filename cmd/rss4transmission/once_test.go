@@ -78,6 +78,53 @@ func TestCoverages_MissingIdentityLabel(t *testing.T) {
 	}
 }
 
+func TestCoverages_DefaultFillsMissingLabel(t *testing.T) {
+	c := makeCandidate("t1",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"}, // no language
+		nil,
+	)
+	c.defaults = map[string]string{"language": "English"}
+	covs := c.coverages([]string{"series", "round", "session", "language"})
+	if len(covs) != 1 {
+		t.Fatalf("expected 1 coverage, got %d", len(covs))
+	}
+	if covs[0].labels["language"] != "English" {
+		t.Errorf("language = %q, want English (from default)", covs[0].labels["language"])
+	}
+}
+
+func TestCoverages_DefaultDoesNotOverrideExplicit(t *testing.T) {
+	c := makeCandidate("t1",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race", "language": "German"},
+		nil,
+	)
+	c.defaults = map[string]string{"language": "English"}
+	covs := c.coverages([]string{"series", "round", "session", "language"})
+	if len(covs) != 1 {
+		t.Fatalf("expected 1 coverage, got %d", len(covs))
+	}
+	if covs[0].labels["language"] != "German" {
+		t.Errorf("language = %q, want German (explicit overrides default)", covs[0].labels["language"])
+	}
+}
+
+func TestCoverages_DefaultDoesNotOverrideFileLabel(t *testing.T) {
+	// Title has no language; a file label provides German explicitly.
+	// Default English must not override the file's German.
+	c := makeCandidate("t1",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
+		[]map[string]string{{"language": "German"}},
+	)
+	c.defaults = map[string]string{"language": "English"}
+	covs := c.coverages([]string{"series", "round", "session", "language"})
+	if len(covs) != 1 {
+		t.Fatalf("expected 1 coverage, got %d", len(covs))
+	}
+	if covs[0].labels["language"] != "German" {
+		t.Errorf("language = %q, want German (file label beats default)", covs[0].labels["language"])
+	}
+}
+
 func TestCoverages_DeduplicatesKeys(t *testing.T) {
 	// Two files that produce the same identity key should only appear once.
 	c := makeCandidate("dup",
@@ -218,6 +265,43 @@ func TestSelectWinners_MultiClassBundle_CountsOnce(t *testing.T) {
 	// Bundle satisfies 3 identity keys but is one torrent — appears once.
 	if len(winners) != 1 {
 		t.Errorf("expected 1 winner (bundle counts once), got %d", len(winners))
+	}
+}
+
+func TestSelectWinners_LanguageDefault_AllowsEnglish(t *testing.T) {
+	// Torrent with no language label gets English from the default and matches
+	// an English-only group.
+	c := makeCandidate("no-lang",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
+		nil,
+	)
+	c.defaults = map[string]string{"language": "English"}
+	feed := makeFeed(
+		[]string{"series", "round", "session", "language"},
+		nil,
+		[]Group{{Require: map[string][]string{"series": {"MotoGP"}, "language": {"English"}}}},
+	)
+	winners, _ := selectWinners([]*candidate{c}, feed, emptyCache())
+	if len(winners) != 1 {
+		t.Errorf("expected 1 winner (no-language defaults to English), got %d", len(winners))
+	}
+}
+
+func TestSelectWinners_GermanNotDispatchedWhenEnglishRequired(t *testing.T) {
+	// Explicit language=German must NOT match an English-only group.
+	c := makeCandidate("german",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race", "language": "German"},
+		nil,
+	)
+	c.defaults = map[string]string{"language": "English"}
+	feed := makeFeed(
+		[]string{"series", "round", "session", "language"},
+		nil,
+		[]Group{{Require: map[string][]string{"series": {"MotoGP"}, "language": {"English"}}}},
+	)
+	winners, _ := selectWinners([]*candidate{c}, feed, emptyCache())
+	if len(winners) != 0 {
+		t.Errorf("expected 0 winners (German does not satisfy English-only group), got %d", len(winners))
 	}
 }
 

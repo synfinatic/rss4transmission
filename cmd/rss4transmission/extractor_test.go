@@ -159,6 +159,22 @@ func TestExtractFromFiles_SkipsNoMatch(t *testing.T) {
 	}
 }
 
+func TestExtractorSetDefaults_ReturnsConfiguredDefaults(t *testing.T) {
+	es := &ExtractorSet{
+		Labels: map[string]LabelDef{
+			"language": {Regexp: `(English|German)`, Default: "English"},
+			"series":   {Regexp: `(MotoGP|Moto2)`},
+		},
+	}
+	defaults := es.Defaults()
+	if defaults["language"] != "English" {
+		t.Errorf("language default = %q, want English", defaults["language"])
+	}
+	if _, ok := defaults["series"]; ok {
+		t.Error("series should not appear in defaults (no Default set)")
+	}
+}
+
 func TestExtractFromFiles_Empty(t *testing.T) {
 	es := &ExtractorSet{
 		Labels: map[string]LabelDef{
@@ -171,15 +187,18 @@ func TestExtractFromFiles_Empty(t *testing.T) {
 	}
 }
 
-func TestExtractLabels_DefaultUsedWhenNoMatch(t *testing.T) {
+func TestExtractLabels_DefaultNotApplied_LabelAbsentWhenNoMatch(t *testing.T) {
+	// Defaults are intentionally NOT applied in ExtractLabels; they are applied
+	// at coverage time via Defaults() so a file's absent label never silently
+	// overrides an explicit value from the torrent title.
 	es := &ExtractorSet{
 		Labels: map[string]LabelDef{
 			"language": {Regexp: `(?i)(FRENCH|GERMAN|ENGLISH)`, Default: "English"},
 		},
 	}
 	got := es.ExtractLabels("Show.S01E01.1080p.mkv")
-	if got["language"] != "English" {
-		t.Errorf("language = %q, want English (default)", got["language"])
+	if _, ok := got["language"]; ok {
+		t.Errorf("ExtractLabels should NOT apply defaults; language = %q, want absent", got["language"])
 	}
 }
 
