@@ -104,6 +104,14 @@ func TestTorrentFileNames_InvalidData(t *testing.T) {
 	}
 }
 
+func TestBencodeDecodeString_NegativeLength(t *testing.T) {
+	// Malformed bencode with a negative length must return an error, not panic.
+	_, _, err := bencodeDecodeString([]byte("-1:xx"), 0)
+	if err == nil {
+		t.Error("expected error for negative string length")
+	}
+}
+
 func TestTorrentFileNames_NestedPath(t *testing.T) {
 	data := buildMultiFileTorrent("Bundle", [][]string{
 		{"subdir", "MotoGP.2024.RD01.Qatar.Race.TNT.1080p.mkv"},

@@ -69,7 +69,7 @@ func (fi *FeedItem) getTorrentContents() ([]byte, error) {
 // Download saves the .torrent file to dir and returns its path. The caller is
 // responsible for recording the item in the cache.
 func (fi *FeedItem) Download(ctx *RunContext, dir string) (string, error) {
-	filePath := path.Join(dir, fmt.Sprintf("%s.torrent", fi.Item.Title))
+	filePath := path.Join(dir, fmt.Sprintf("%s.torrent", sanitizeFilename(fi.Item.Title)))
 	log.Debugf("Attempting to download torrent file: %s", filePath)
 
 	contents, err := fi.getTorrentContents()

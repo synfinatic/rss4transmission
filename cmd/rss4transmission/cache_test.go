@@ -334,6 +334,39 @@ func TestSaveCache_Pruning(t *testing.T) {
 	}
 }
 
+func TestSaveCache_PruningRebuildsIdentityIndex(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	recent := time.Now()
+	oldKey := "series=MotoGP|round=RD01|session=Race"
+	recentKey := "series=MotoGP|round=RD02|session=Race"
+
+	c := &CacheFile{
+		Version: CACHE_VERSION,
+		Errors:  map[string]int64{},
+		Seen: []CacheRecord{
+			{Feed: "f", GUID: "old", Published: old, IdentityKeys: []string{oldKey}, Labels: map[string]string{"resolution": "720p"}},
+			{Feed: "f", GUID: "recent", Published: recent, IdentityKeys: []string{recentKey}, Labels: map[string]string{"resolution": "1080p"}},
+		},
+		filename:      path,
+		needSave:      true,
+		identityIndex: map[string][]map[string]string{},
+	}
+	c.rebuildIdentityIndex()
+
+	if err := c.SaveCache(30 * 24 * time.Hour); err != nil {
+		t.Fatalf("SaveCache returned error: %v", err)
+	}
+	if _, ok := c.identityIndex[oldKey]; ok {
+		t.Error("pruned record's identity key should be removed from index")
+	}
+	if _, ok := c.identityIndex[recentKey]; !ok {
+		t.Error("non-pruned record's identity key should remain in index")
+	}
+}
+
 func TestSaveCache_SkipsWhenUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cache.json")

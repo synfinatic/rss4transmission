@@ -322,8 +322,9 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) ([]*
 	matchedCands := map[*candidate]bool{}
 
 	for _, c := range candidates {
+		covs := c.coverages(feedCfg.Identity)
 		for _, g := range feedCfg.Groups {
-			for _, cov := range c.coverages(feedCfg.Identity) {
+			for _, cov := range covs {
 				if !g.Matches(cov.labels) {
 					continue
 				}

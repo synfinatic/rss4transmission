@@ -122,6 +122,9 @@ func (c *CacheFile) SaveCache(d time.Duration) error {
 	}
 
 	c.Seen = NewSeen
+	if deletedRecord {
+		c.rebuildIdentityIndex()
+	}
 
 	log.Infof("saving cache with %d entries less than %d days old", len(c.Seen), int(d.Hours()/24))
 	cacheBytes, _ := json.MarshalIndent(*c, "", "  ")
@@ -152,6 +155,9 @@ func (c *CacheFile) AddItem(item *FeedItem, labels map[string]string, identityKe
 	c.Seen = append(c.Seen, cr)
 
 	// Update in-memory identity index immediately.
+	if c.identityIndex == nil {
+		c.identityIndex = make(map[string][]map[string]string)
+	}
 	for _, key := range identityKeys {
 		c.identityIndex[key] = append(c.identityIndex[key], labels)
 	}

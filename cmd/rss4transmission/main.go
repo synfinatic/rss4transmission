@@ -149,7 +149,7 @@ func main() {
 
 	for name, feedCfg := range rc.Config.Feeds {
 		if err = feedCfg.Validate(name, rc.Config.Extractors); err != nil {
-			log.WithError(err).Fatalf("Invalid feed config")
+			log.WithError(err).Fatalf("Invalid feed %q config", name)
 		}
 	}
 

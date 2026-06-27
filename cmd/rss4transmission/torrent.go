@@ -106,6 +106,9 @@ func bencodeDecodeString(data []byte, pos int) (string, int, error) {
 	if err != nil {
 		return "", pos, fmt.Errorf("invalid string length at position %d: %w", pos, err)
 	}
+	if length < 0 {
+		return "", pos, fmt.Errorf("negative string length at position %d", pos)
+	}
 	start := end + 1
 	if start+length > len(data) {
 		return "", pos, fmt.Errorf("string extends beyond data at position %d", pos)
