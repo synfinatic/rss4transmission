@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="refresh" content="60">
     <title>RSS4Transmission History</title>
     <style>
         body { font-family: monospace; margin: 2em; background: #1a1a1a; color: #e0e0e0; }
@@ -222,6 +221,9 @@
         resetBtn.addEventListener('click', reset);
 
         apply();
+
+        // Reload after 60 s using the current URL so query-param filter state is preserved.
+        setTimeout(function () { location.reload(); }, 60000);
     }());
     </script>
 </body>
