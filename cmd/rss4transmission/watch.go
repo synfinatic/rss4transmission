@@ -1,9 +1,19 @@
 package main
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
+
+var defaultRetryDelays = []time.Duration{
+	100 * time.Millisecond,
+	250 * time.Millisecond,
+	500 * time.Millisecond,
+	time.Second,
+	2 * time.Second,
+	5 * time.Second,
+}
 
 type WatchCmd struct {
 	Feed            []string `kong:"help='Limit scraping to the given feed(s)'"`
@@ -15,12 +25,37 @@ type WatchCmd struct {
 	TorrentCacheDir string   `kong:"help='Directory to cache fetched .torrent files across runs'"`
 }
 
+// retryLoadConfig calls tryLoad repeatedly, waiting d between attempts.
+// Returns the 1-based attempt number on success, or panics if all attempts fail.
+func retryLoadConfig(tryLoad func() error, delays []time.Duration) int {
+	for i, d := range delays {
+		time.Sleep(d)
+		if err := tryLoad(); err == nil {
+			return i + 1
+		} else {
+			log.Debugf("config reload attempt %d/%d failed: %s", i+1, len(delays), err)
+		}
+	}
+	panic("all attempts to load config failed")
+}
+
 func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	mu := sync.Mutex{}
 
-	// watch for config file changes
-	_ = ctx.Provider.Watch(func(event interface{}, err error) {
+	// watchCallback and retryWatch reference each other via closures.
+	var watchCallback func(event interface{}, err error)
+	var retryWatch func()
+
+	watchCallback = func(event interface{}, err error) {
 		if err != nil {
+			// Editors often save by deleting then recreating the file, which
+			// causes fsnotify to fire a remove event and stop watching.
+			// Retry loading and re-register the watcher once the file is back.
+			if strings.Contains(err.Error(), "was removed") {
+				log.Warnf("config file temporarily removed (editor save?), retrying reload...")
+				go retryWatch()
+				return
+			}
 			log.Errorf("watch error: %s", err)
 			return
 		}
@@ -36,7 +71,31 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			return
 		}
 		ctx.Konf = konf
-	})
+	}
+
+	retryWatch = func() {
+		attempt := retryLoadConfig(func() error {
+			mu.Lock()
+			defer mu.Unlock()
+			konf, err := ctx.loadConfig(ctx.configFile)
+			if err != nil {
+				return err
+			}
+			ctx.Konf = konf
+			return nil
+		}, defaultRetryDelays)
+
+		if attempt > 0 {
+			log.Infof("config reloaded after %d attempt(s), re-registering file watcher", attempt)
+			if err := ctx.Provider.Watch(watchCallback); err != nil {
+				log.WithError(err).Errorf("failed to re-register config file watcher")
+			}
+		} else {
+			log.Errorf("failed to reload config after all retries; file watcher disabled")
+		}
+	}
+
+	_ = ctx.Provider.Watch(watchCallback)
 
 	ticker := time.NewTicker(time.Duration(ctx.Cli.Watch.Sleep) * time.Second)
 

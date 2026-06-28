@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestWatchCmd_HasHistoryFileField(t *testing.T) {
@@ -17,4 +19,54 @@ func TestConfig_NoHistoryFileField(t *testing.T) {
 	if ok {
 		t.Error("Config must not have a HistoryFile field; it belongs on WatchCmd")
 	}
+}
+
+func TestRetryLoadConfig_SuccessOnFirstAttempt(t *testing.T) {
+	calls := 0
+	attempt := retryLoadConfig(func() error {
+		calls++
+		return nil
+	}, []time.Duration{0, 0, 0})
+
+	if attempt != 1 {
+		t.Errorf("expected attempt=1, got %d", attempt)
+	}
+	if calls != 1 {
+		t.Errorf("expected 1 call, got %d", calls)
+	}
+}
+
+func TestRetryLoadConfig_SuccessAfterFailures(t *testing.T) {
+	calls := 0
+	attempt := retryLoadConfig(func() error {
+		calls++
+		if calls < 3 {
+			return fmt.Errorf("not ready yet")
+		}
+		return nil
+	}, []time.Duration{0, 0, 0, 0})
+
+	if attempt != 3 {
+		t.Errorf("expected attempt=3, got %d", attempt)
+	}
+	if calls != 3 {
+		t.Errorf("expected 3 calls, got %d", calls)
+	}
+}
+
+func TestRetryLoadConfig_AllAttemptsFailPanics(t *testing.T) {
+	calls := 0
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Error("expected panic when all attempts fail, got none")
+		}
+		if calls != 3 {
+			t.Errorf("expected 3 calls before panic, got %d", calls)
+		}
+	}()
+	retryLoadConfig(func() error {
+		calls++
+		return fmt.Errorf("always fails")
+	}, []time.Duration{0, 0, 0})
 }

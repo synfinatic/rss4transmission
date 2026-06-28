@@ -60,7 +60,7 @@
         a { color: inherit; text-decoration: none; }
         a:hover { text-decoration: underline; }
         .labels { font-size: 0.82em; color: #666; margin-top: 3px; }
-        th:nth-child(1), td:nth-child(1) { width: 10em; white-space: nowrap; }
+        th:nth-child(1), td:nth-child(1) { width: 14em; white-space: nowrap; }
         th:nth-child(2), td:nth-child(2) { width: 9em; }
         th:nth-child(4), td:nth-child(4) { width: 8em; }
         th:nth-child(5), td:nth-child(5) { width: 18em; }
@@ -121,7 +121,7 @@
         <tbody id="rows">
             {{ range . }}
             <tr data-feed="{{ .Feed }}" data-outcome="{{ .Outcome }}" data-labels="{{ range $k, $v := .Labels }}{{ $k }}={{ $v }} {{ end }}">
-                <td>{{ .ProcessedAt.Format "2006-01-02 15:04" }}</td>
+                <td>{{ .ProcessedAt.Format "2006-01-02 15:04:05.000" }}</td>
                 <td>{{ .Feed }}</td>
                 <td>
                     {{ if .GUID }}<a href="{{ .GUID }}" target="_blank" rel="noopener">{{ .Title }}</a>{{ else }}{{ .Title }}{{ end }}

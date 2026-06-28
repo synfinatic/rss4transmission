@@ -336,6 +336,46 @@ func TestSelectWinners_MultiClassBundle_SuppressesDedicated(t *testing.T) {
 	}
 }
 
+func TestSelectWinners_NoGroupMatchGetsWinnerReason(t *testing.T) {
+	// MotoMundo's file labels include release=MotoMundo (matches the group);
+	// VERUM's file labels include release=VERUM (doesn't match).
+	// Both have the same title-only identity key (series+round+session).
+	// VERUM should report "covered by winner: ..." rather than "no group matched labels".
+	sharedTitleLabels := map[string]string{
+		"series": "MotoGP", "round": "RD01", "session": "Race",
+	}
+	motoMundo := makeCandidate("MotoGP.RD01.Race.MotoMundo",
+		sharedTitleLabels,
+		[]map[string]string{{"release": "MotoMundo"}},
+	)
+	verum := makeCandidate("MotoGP.RD01.Race.VERUM",
+		sharedTitleLabels,
+		[]map[string]string{{"release": "VERUM"}},
+	)
+	feed := makeFeed(
+		[]string{"series", "round", "session"},
+		nil,
+		[]Group{{Require: map[string][]string{"series": {"MotoGP"}, "release": {"MotoMundo"}}}},
+	)
+	winners, skipped := selectWinners([]*candidate{motoMundo, verum}, feed, emptyCache())
+	if len(winners) != 1 {
+		t.Fatalf("expected 1 winner, got %d", len(winners))
+	}
+	if winners[0] != motoMundo {
+		t.Errorf("expected MotoMundo to win")
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("expected 1 skipped, got %d", len(skipped))
+	}
+	if skipped[0].cand != verum {
+		t.Errorf("expected VERUM to be skipped")
+	}
+	want := "covered by winner: MotoGP.RD01.Race.MotoMundo"
+	if skipped[0].reason != want {
+		t.Errorf("skip reason = %q, want %q", skipped[0].reason, want)
+	}
+}
+
 // --- pruneTorrentCache ---
 
 func TestPruneTorrentCache(t *testing.T) {

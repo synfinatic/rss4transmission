@@ -400,6 +400,42 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) ([]*
 		}
 	}
 
+	// Refine "no group matched labels": if the candidate's title-only identity key
+	// matches a dispatched winner's, the real reason is that the same content is
+	// already covered by that winner.
+	titleOnlyKey := func(c *candidate) (string, bool) {
+		labels := c.titleLabels
+		if len(c.defaults) > 0 {
+			merged := make(map[string]string, len(labels)+len(c.defaults))
+			for k, v := range labels {
+				merged[k] = v
+			}
+			for k, v := range c.defaults {
+				if _, ok := merged[k]; !ok {
+					merged[k] = v
+				}
+			}
+			labels = merged
+		}
+		return IdentityKey(labels, feedCfg.Identity)
+	}
+	titleKeyWinner := make(map[string]string)
+	for _, w := range winners {
+		if key, ok := titleOnlyKey(w); ok {
+			titleKeyWinner[key] = w.item.Item.Title
+		}
+	}
+	for c, reason := range skipReasons {
+		if reason != "no group matched labels" {
+			continue
+		}
+		if key, ok := titleOnlyKey(c); ok {
+			if winnerTitle, found := titleKeyWinner[key]; found {
+				skipReasons[c] = "covered by winner: " + winnerTitle
+			}
+		}
+	}
+
 	var skipped []skippedCandidate
 	for _, c := range candidates {
 		if reason, ok := skipReasons[c]; ok {
