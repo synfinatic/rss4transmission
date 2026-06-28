@@ -239,6 +239,34 @@ ports:
 The history page shows each item's feed name, title, publication date, outcome, and extracted labels.
 Records are pruned on the same schedule as the seen cache (`SeenCacheDays`).
 
+## Torrent File Cache
+
+In watch mode, RSS4Transmission re-fetches every candidate's `.torrent` file on each run in order to
+extract per-file labels from the torrent's file list. For pack torrents (one torrent containing
+multiple sessions or classes), these downloads happen every few minutes even though the content never
+changes.
+
+Pass `--torrent-cache-dir` to both `once` and `watch` to cache `.torrent` files on disk:
+
+```bash
+rss4transmission watch --config config.yaml --torrent-cache-dir /data/torrent-cache
+rss4transmission once  --config config.yaml --torrent-cache-dir /data/torrent-cache --no-action
+```
+
+On a cache hit the file is read from disk instead of re-fetched; on a miss the file is fetched and
+then written to the cache. Cache files are named after the sanitized torrent title
+(`<title>.torrent`) so the directory is human-inspectable.
+
+Files older than `SeenCacheDays` are pruned automatically at the end of each run, keeping the cache
+directory from growing unbounded.
+
+In Docker, set the `TORRENT_CACHE_DIR` environment variable:
+
+```yaml
+environment:
+  - TORRENT_CACHE_DIR=/config/torrent-cache
+```
+
 ## License
 
 RSS4Transmission is licensed under the [GPLv3](LICENSE).

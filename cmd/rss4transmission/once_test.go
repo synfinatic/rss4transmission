@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mmcdole/gofeed"
 )
@@ -330,5 +333,37 @@ func TestSelectWinners_MultiClassBundle_SuppressesDedicated(t *testing.T) {
 	// Only one torrent should be selected (either bundle or dedicated, not both).
 	if len(winners) != 1 {
 		t.Errorf("expected 1 winner (no duplicate downloads), got %d", len(winners))
+	}
+}
+
+// --- pruneTorrentCache ---
+
+func TestPruneTorrentCache(t *testing.T) {
+	dir := t.TempDir()
+	maxAge := 60 * 24 * time.Hour
+
+	// Fresh file — should survive pruning.
+	freshPath := filepath.Join(dir, "fresh.torrent")
+	if err := os.WriteFile(freshPath, []byte("fresh"), 0644); err != nil {
+		t.Fatalf("setup fresh: %v", err)
+	}
+
+	// Old file — should be deleted.
+	oldPath := filepath.Join(dir, "old.torrent")
+	if err := os.WriteFile(oldPath, []byte("old"), 0644); err != nil {
+		t.Fatalf("setup old: %v", err)
+	}
+	oldMtime := time.Now().Add(-(maxAge + 24*time.Hour))
+	if err := os.Chtimes(oldPath, oldMtime, oldMtime); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	pruneTorrentCache(dir, maxAge)
+
+	if _, err := os.Stat(freshPath); err != nil {
+		t.Errorf("fresh file was wrongly deleted: %v", err)
+	}
+	if _, err := os.Stat(oldPath); err == nil {
+		t.Error("old file should have been deleted but still exists")
 	}
 }

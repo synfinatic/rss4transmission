@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -53,7 +54,26 @@ func (fi *FeedItem) TorrentURL() (string, error) {
 	return "", fmt.Errorf("unable to find Type = application/x-bittorrent for %s", fi.Item.Title)
 }
 
-func (fi *FeedItem) getTorrentContents() ([]byte, error) {
+func (fi *FeedItem) getTorrentContents(cacheDir string) ([]byte, error) {
+	if cacheDir != "" {
+		cachePath := filepath.Join(cacheDir, sanitizeFilename(fi.Item.Title)+".torrent")
+		if data, err := os.ReadFile(cachePath); err == nil {
+			log.Debugf("Torrent cache hit: %s", cachePath)
+			return data, nil
+		}
+		data, err := fi.fetchTorrent()
+		if err != nil {
+			return nil, err
+		}
+		if werr := os.WriteFile(cachePath, data, 0644); werr != nil { //nolint:gosec
+			log.WithError(werr).Warnf("Unable to write torrent cache: %s", cachePath)
+		}
+		return data, nil
+	}
+	return fi.fetchTorrent()
+}
+
+func (fi *FeedItem) fetchTorrent() ([]byte, error) {
 	torrentUrl, err := fi.TorrentURL()
 	if err != nil {
 		return []byte{}, err
@@ -68,11 +88,11 @@ func (fi *FeedItem) getTorrentContents() ([]byte, error) {
 
 // Download saves the .torrent file to dir and returns its path. The caller is
 // responsible for recording the item in the cache.
-func (fi *FeedItem) Download(ctx *RunContext, dir string) (string, error) {
+func (fi *FeedItem) Download(ctx *RunContext, dir string, cacheDir string) (string, error) {
 	filePath := path.Join(dir, fmt.Sprintf("%s.torrent", sanitizeFilename(fi.Item.Title)))
 	log.Debugf("Attempting to download torrent file: %s", filePath)
 
-	contents, err := fi.getTorrentContents()
+	contents, err := fi.getTorrentContents(cacheDir)
 	if err != nil {
 		return "", err
 	}

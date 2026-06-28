@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/manifoldco/promptui"
@@ -12,12 +13,13 @@ import (
 type Feeds map[string]*gofeed.Feed
 
 type OnceCmd struct {
-	Feed         []string `kong:"help='Limit scraping to the given feed(s)'"`
-	Download     bool     `kong:"short='d',help='Download torrent file instead of torrenting',xor='action'"`
-	DownloadPath string   `kong:"short='p',help='Path to download torrent files to ($PWD)'"`
-	Interactive  bool     `kong:"short='i',help='Interactive mode',xor='action'"`
-	NoAction     bool     `kong:"short='n',help='Just print results and take no action',xor='action'"`
-	Skip         bool     `kong:"short='s',help='Just skip any matching torrents',xor='action'"`
+	Feed            []string `kong:"help='Limit scraping to the given feed(s)'"`
+	Download        bool     `kong:"short='d',help='Download torrent file instead of torrenting',xor='action'"`
+	DownloadPath    string   `kong:"short='p',help='Path to download torrent files to ($PWD)'"`
+	Interactive     bool     `kong:"short='i',help='Interactive mode',xor='action'"`
+	NoAction        bool     `kong:"short='n',help='Just print results and take no action',xor='action'"`
+	Skip            bool     `kong:"short='s',help='Just skip any matching torrents',xor='action'"`
+	TorrentCacheDir string   `kong:"help='Directory to cache fetched .torrent files across runs'"`
 }
 
 // candidate is a feed item that has passed pre-filtering, with its extracted labels.
@@ -120,10 +122,12 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 		// Fetch RSS (cached by URL).
 		if _, ok := feeds[feedCfg.URL]; !ok {
 			p := gofeed.NewParser()
+			start := time.Now()
 			if feeds[feedCfg.URL], err = p.ParseURL(feedCfg.URL); err != nil {
 				log.WithError(err).Warnf("Unable to process URL: %s", feedCfg.URL)
 				feeds[feedCfg.URL] = nil
 			}
+			log.Debugf("Fetched RSS %s in %s", feedCfg.URL, time.Since(start))
 		}
 		rss := feeds[feedCfg.URL]
 		if rss == nil {
@@ -158,11 +162,13 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 
 		// Phase 2: Fetch .torrent for each candidate; extract file-level labels.
 		for _, c := range candidates {
-			torrentBytes, err := c.item.getTorrentContents()
+			start := time.Now()
+			torrentBytes, err := c.item.getTorrentContents(ctx.Cli.Once.TorrentCacheDir)
 			if err != nil {
 				log.WithError(err).Debugf("Unable to fetch torrent for %s, using title labels only", c.item.Item.Title)
 				continue
 			}
+			log.Debugf("Fetched torrent for %s in %s", c.item.Item.Title, time.Since(start))
 			c.torrentBytes = torrentBytes
 			fileNames, err := TorrentFileNames(torrentBytes)
 			if err != nil {
@@ -217,6 +223,9 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 	if err = ctx.Cache.SaveCache(cacheTime, activeGUIDs); err != nil {
 		return fmt.Errorf("unable to save seen cache: %s", err.Error())
 	}
+	if ctx.Cli.Once.TorrentCacheDir != "" {
+		pruneTorrentCache(ctx.Cli.Once.TorrentCacheDir, cacheTime)
+	}
 	if ctx.History != nil {
 		if err = ctx.History.SaveHistory(cacheTime); err != nil {
 			log.WithError(err).Warn("Unable to save history file")
@@ -249,7 +258,7 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 	}
 	// Default: torrent or download.
 	if ctx.Cli.Once.Download {
-		if _, err = w.item.Download(ctx, ctx.Cli.Once.DownloadPath); err != nil {
+		if _, err = w.item.Download(ctx, ctx.Cli.Once.DownloadPath, ctx.Cli.Once.TorrentCacheDir); err != nil {
 			log.WithError(err).Errorf("Unable to download: %s", w.item.Item.Title)
 			if ctx.History != nil {
 				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
@@ -282,7 +291,7 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 
 	switch prompt(feedName, w.item.Item.Title) {
 	case Download:
-		if _, err = w.item.Download(ctx, ctx.Cli.Once.DownloadPath); err != nil {
+		if _, err = w.item.Download(ctx, ctx.Cli.Once.DownloadPath, ctx.Cli.Once.TorrentCacheDir); err != nil {
 			log.WithError(err).Errorf("Unable to download: %s", w.item.Item.Title)
 			if ctx.History != nil {
 				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
@@ -466,4 +475,30 @@ func (bs *BellSkipper) Write(b []byte) (int, error) {
 
 func (bs *BellSkipper) Close() error {
 	return os.Stderr.Close()
+}
+
+// pruneTorrentCache removes .torrent files in cacheDir that are older than maxAge.
+func pruneTorrentCache(cacheDir string, maxAge time.Duration) {
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		log.WithError(err).Warnf("Unable to read torrent cache dir: %s", cacheDir)
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".torrent" {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if time.Since(info.ModTime()) > maxAge {
+			path := filepath.Join(cacheDir, entry.Name())
+			if err := os.Remove(path); err != nil {
+				log.WithError(err).Warnf("Unable to remove stale torrent cache file: %s", path)
+			} else {
+				log.Debugf("Pruned stale torrent cache file: %s", path)
+			}
+		}
+	}
 }

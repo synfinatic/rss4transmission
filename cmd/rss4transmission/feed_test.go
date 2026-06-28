@@ -1,6 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/mmcdole/gofeed"
@@ -64,6 +69,94 @@ func TestTorrentURL_NoEnclosures(t *testing.T) {
 	_, err := fi.TorrentURL()
 	if err == nil {
 		t.Error("expected error when enclosures list is empty")
+	}
+}
+
+// --- getTorrentContents ---
+
+var sentinelTorrent = []byte("d8:announce27:http://example.com/announcee")
+
+func makeFeedItemWithURL(title, torrentURL string) *FeedItem {
+	return &FeedItem{
+		Item: &gofeed.Item{
+			Title: title,
+			Enclosures: []*gofeed.Enclosure{
+				{URL: torrentURL, Type: "application/x-bittorrent"},
+			},
+		},
+	}
+}
+
+func TestGetTorrentContents_CacheHit(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, sanitizeFilename("My.Title")+".torrent")
+	if err := os.WriteFile(cachePath, sentinelTorrent, 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// No valid enclosure URL — network would fail if reached.
+	fi := &FeedItem{Item: &gofeed.Item{Title: "My.Title"}}
+	got, err := fi.getTorrentContents(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(got, sentinelTorrent) {
+		t.Errorf("got %q, want sentinel bytes", got)
+	}
+}
+
+func TestGetTorrentContents_CacheMiss(t *testing.T) {
+	dir := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-bittorrent")
+		w.Write(sentinelTorrent) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	fi := makeFeedItemWithURL("My.Title", srv.URL+"/my.torrent")
+	got, err := fi.getTorrentContents(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(got, sentinelTorrent) {
+		t.Errorf("got %q, want sentinel bytes", got)
+	}
+
+	// Verify cache file was written.
+	cachePath := filepath.Join(dir, sanitizeFilename("My.Title")+".torrent")
+	written, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("cache file not written: %v", err)
+	}
+	if !bytes.Equal(written, sentinelTorrent) {
+		t.Errorf("cache file content = %q, want sentinel bytes", written)
+	}
+
+	// Second call with server stopped should hit the cache.
+	srv.Close()
+	got2, err := fi.getTorrentContents(dir)
+	if err != nil {
+		t.Fatalf("second call unexpected error: %v", err)
+	}
+	if !bytes.Equal(got2, sentinelTorrent) {
+		t.Errorf("second call got %q, want sentinel bytes from cache", got2)
+	}
+}
+
+func TestGetTorrentContents_NoCacheDir(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-bittorrent")
+		w.Write(sentinelTorrent) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	fi := makeFeedItemWithURL("My.Title", srv.URL+"/my.torrent")
+	got, err := fi.getTorrentContents("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(got, sentinelTorrent) {
+		t.Errorf("got %q, want sentinel bytes", got)
 	}
 }
 

@@ -64,7 +64,7 @@ func (cmd *SimulateCmd) Run(ctx *RunContext) error {
 
 		// Phase 2: fetch .torrent bytes + file-level labels (best-effort).
 		for _, c := range candidates {
-			torrentBytes, fetchErr := c.item.getTorrentContents()
+			torrentBytes, fetchErr := c.item.getTorrentContents("")
 			if fetchErr != nil {
 				log.WithError(fetchErr).Debugf("Unable to fetch torrent for %s", c.item.Item.Title)
 				continue

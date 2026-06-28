@@ -11,8 +11,9 @@ services:
     environment:
       - POLL_SECONDS=120
       - LOG_LEVEL=info
-      - HISTORY_FILE=    # path to history JSON file (e.g. /config/history.json)
-      - HISTORY_LISTEN=  # set to host:port or bare port to enable the history web UI
+      - HISTORY_FILE=       # path to history JSON file (e.g. /config/history.json)
+      - HISTORY_LISTEN=     # set to host:port or bare port to enable the history web UI
+      - TORRENT_CACHE_DIR=  # directory to cache fetched .torrent files (e.g. /config/torrent-cache)
     volumes:
       - /volume1/docker/transmission/rss4transmission:/config
     # network_mode: host already exposes all ports, so no explicit port mapping is needed.

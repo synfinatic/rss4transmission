@@ -6,12 +6,13 @@ import (
 )
 
 type WatchCmd struct {
-	Feed          []string `kong:"help='Limit scraping to the given feed(s)'"`
-	Download      bool     `kong:"short='d',help='Download torrent file instead of torrenting',xor='action'"`
-	DownloadPath  string   `kong:"short='p',help='Path to download torrent files to ($PWD)'"`
-	Sleep         int      `kong:"short='s',default='300',help='Seconds to sleep between scraping'"`
-	HistoryFile   string   `kong:"help='Path to history JSON file'"`
-	HistoryListen string   `kong:"help='Address to serve torrent history on, as host:port or bare port (disabled if empty)'"`
+	Feed            []string `kong:"help='Limit scraping to the given feed(s)'"`
+	Download        bool     `kong:"short='d',help='Download torrent file instead of torrenting',xor='action'"`
+	DownloadPath    string   `kong:"short='p',help='Path to download torrent files to ($PWD)'"`
+	Sleep           int      `kong:"short='s',default='300',help='Seconds to sleep between scraping'"`
+	HistoryFile     string   `kong:"help='Path to history JSON file'"`
+	HistoryListen   string   `kong:"help='Address to serve torrent history on, as host:port or bare port (disabled if empty)'"`
+	TorrentCacheDir string   `kong:"help='Directory to cache fetched .torrent files across runs'"`
 }
 
 func (cmd *WatchCmd) Run(ctx *RunContext) error {
@@ -41,9 +42,10 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 
 	// watch just calls `once` in a loop
 	once := OnceCmd{
-		Feed:         ctx.Cli.Watch.Feed,
-		Download:     ctx.Cli.Watch.Download,
-		DownloadPath: ctx.Cli.Watch.DownloadPath,
+		Feed:            ctx.Cli.Watch.Feed,
+		Download:        ctx.Cli.Watch.Download,
+		DownloadPath:    ctx.Cli.Watch.DownloadPath,
+		TorrentCacheDir: ctx.Cli.Watch.TorrentCacheDir,
 	}
 
 	if cmd.HistoryFile != "" {
