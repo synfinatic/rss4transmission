@@ -85,9 +85,16 @@ type coverage struct {
 func (cmd *OnceCmd) Run(ctx *RunContext) error {
 	var err error
 
-	log.Debugf("Starting our run...")
-	if ctx.Cli.Once.DownloadPath == "" {
-		ctx.Cli.Once.DownloadPath = os.Getenv("PWD")
+	log.Debugf("Starting.  Download: %v, DownloadPath: %s, Interactive: %v, NoAction: %v, Skip: %v, TorrentCacheDir: %s",
+		cmd.Download,
+		cmd.DownloadPath,
+		cmd.Interactive,
+		cmd.NoAction,
+		cmd.Skip,
+		cmd.TorrentCacheDir,
+	)
+	if cmd.DownloadPath == "" {
+		cmd.DownloadPath = os.Getenv("PWD")
 	}
 
 	// Cache gofeed results per URL so each RSS endpoint is fetched only once.
@@ -95,9 +102,9 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 
 	for feedName, feedCfg := range ctx.Config.Feeds {
 		// Apply --feed filter if specified.
-		if len(ctx.Cli.Once.Feed) > 0 {
+		if len(cmd.Feed) > 0 {
 			found := false
-			for _, f := range ctx.Cli.Once.Feed {
+			for _, f := range cmd.Feed {
 				if f == feedName {
 					found = true
 					break
@@ -163,7 +170,7 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 		// Phase 2: Fetch .torrent for each candidate; extract file-level labels.
 		for _, c := range candidates {
 			start := time.Now()
-			torrentBytes, err := c.item.getTorrentContents(ctx.Cli.Once.TorrentCacheDir)
+			torrentBytes, err := c.item.getTorrentContents(cmd.TorrentCacheDir)
 			if err != nil {
 				log.WithError(err).Debugf("Unable to fetch torrent for %s, using title labels only", c.item.Item.Title)
 				continue
@@ -223,8 +230,8 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 	if err = ctx.Cache.SaveCache(cacheTime, activeGUIDs); err != nil {
 		return fmt.Errorf("unable to save seen cache: %s", err.Error())
 	}
-	if ctx.Cli.Once.TorrentCacheDir != "" {
-		pruneTorrentCache(ctx.Cli.Once.TorrentCacheDir, cacheTime)
+	if cmd.TorrentCacheDir != "" {
+		pruneTorrentCache(cmd.TorrentCacheDir, cacheTime)
 	}
 	if ctx.History != nil {
 		if err = ctx.History.SaveHistory(cacheTime); err != nil {
@@ -239,26 +246,26 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *candidate, keys []string) bool {
 	var err error
 
-	if ctx.Cli.Once.NoAction {
+	if cmd.NoAction {
 		log.Infof("%s match: %s", feedName, w.item.Item.Title)
 		if ctx.History != nil {
 			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "skipped", "no-action mode", w.titleLabels))
 		}
 		return false
 	}
-	if ctx.Cli.Once.Skip {
+	if cmd.Skip {
 		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
 		if ctx.History != nil {
 			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "skipped", "user skip", w.titleLabels))
 		}
 		return false
 	}
-	if ctx.Cli.Once.Interactive {
+	if cmd.Interactive {
 		return cmd.dispatchInteractive(ctx, feedCfg, feedName, w, keys)
 	}
 	// Default: torrent or download.
-	if ctx.Cli.Once.Download {
-		if _, err = w.item.Download(ctx, ctx.Cli.Once.DownloadPath, ctx.Cli.Once.TorrentCacheDir); err != nil {
+	if cmd.Download {
+		if _, err = w.item.Download(ctx, cmd.DownloadPath, cmd.TorrentCacheDir); err != nil {
 			log.WithError(err).Errorf("Unable to download: %s", w.item.Item.Title)
 			if ctx.History != nil {
 				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
@@ -291,7 +298,7 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 
 	switch prompt(feedName, w.item.Item.Title) {
 	case Download:
-		if _, err = w.item.Download(ctx, ctx.Cli.Once.DownloadPath, ctx.Cli.Once.TorrentCacheDir); err != nil {
+		if _, err = w.item.Download(ctx, cmd.DownloadPath, cmd.TorrentCacheDir); err != nil {
 			log.WithError(err).Errorf("Unable to download: %s", w.item.Item.Title)
 			if ctx.History != nil {
 				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))

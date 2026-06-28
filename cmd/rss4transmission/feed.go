@@ -56,6 +56,10 @@ func (fi *FeedItem) TorrentURL() (string, error) {
 
 func (fi *FeedItem) getTorrentContents(cacheDir string) ([]byte, error) {
 	if cacheDir != "" {
+		if err := os.MkdirAll(cacheDir, 0755); err != nil { //nolint:gosec
+			log.WithError(err).Warnf("Unable to create torrent cache dir: %s", cacheDir)
+			return fi.fetchTorrent()
+		}
 		cachePath := filepath.Join(cacheDir, sanitizeFilename(fi.Item.Title)+".torrent")
 		if data, err := os.ReadFile(cachePath); err == nil {
 			log.Tracef("Torrent cache hit: %s", cachePath)
