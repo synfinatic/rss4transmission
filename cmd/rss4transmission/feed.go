@@ -58,8 +58,10 @@ func (fi *FeedItem) getTorrentContents(cacheDir string) ([]byte, error) {
 	if cacheDir != "" {
 		cachePath := filepath.Join(cacheDir, sanitizeFilename(fi.Item.Title)+".torrent")
 		if data, err := os.ReadFile(cachePath); err == nil {
-			log.Debugf("Torrent cache hit: %s", cachePath)
+			log.Tracef("Torrent cache hit: %s", cachePath)
 			return data, nil
+		} else {
+			log.Tracef("Torrent cache miss: %s", cachePath)
 		}
 		data, err := fi.fetchTorrent()
 		if err != nil {

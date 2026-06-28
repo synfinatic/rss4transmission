@@ -64,7 +64,7 @@ type RunContext struct {
 }
 
 type CLI struct {
-	LogLevel string `kong:"default='info',enum='error,warn,info,debug',help='Log Level [error|warn|info|debug]'"`
+	LogLevel string `kong:"default='info',enum='error,warn,info,debug,trace',help='Log Level [error|warn|info|debug|trace]'"`
 	Lines    bool   `kong:"help='Include line numbers in logs'"`
 	LogFile  string `kong:"help='Output log file (default: stderr)',default='stderr'"`
 	Config   string `kong:"help='Override path to config file'"`
@@ -96,6 +96,8 @@ func main() {
 		log.SetLevel(logrus.WarnLevel)
 	case "error":
 		log.SetLevel(logrus.ErrorLevel)
+	case "trace":
+		log.SetLevel(logrus.TraceLevel)
 	}
 	if cli.Lines {
 		log.SetReportCaller(true)

@@ -127,7 +127,7 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 				log.WithError(err).Warnf("Unable to process URL: %s", feedCfg.URL)
 				feeds[feedCfg.URL] = nil
 			}
-			log.Debugf("Fetched RSS %s in %s", feedCfg.URL, time.Since(start))
+			log.Tracef("Fetched RSS %s in %s", feedCfg.URL, time.Since(start))
 		}
 		rss := feeds[feedCfg.URL]
 		if rss == nil {
@@ -168,7 +168,7 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 				log.WithError(err).Debugf("Unable to fetch torrent for %s, using title labels only", c.item.Item.Title)
 				continue
 			}
-			log.Debugf("Fetched torrent for %s in %s", c.item.Item.Title, time.Since(start))
+			log.Tracef("Fetched torrent for %s in %s", c.item.Item.Title, time.Since(start))
 			c.torrentBytes = torrentBytes
 			fileNames, err := TorrentFileNames(torrentBytes)
 			if err != nil {
