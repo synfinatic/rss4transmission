@@ -82,6 +82,48 @@ func TestOpenCacheInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestAddSkippedItem_IsFoundByExists(t *testing.T) {
+	fi := makeFeedItem("guid-skipped")
+	c := &CacheFile{
+		Version:       CACHE_VERSION,
+		Errors:        map[string]int64{},
+		Seen:          []CacheRecord{},
+		identityIndex: map[string][]map[string]string{},
+	}
+	c.AddSkippedItem(fi)
+
+	if len(c.Seen) != 1 {
+		t.Fatalf("expected 1 Seen entry after AddSkippedItem, got %d", len(c.Seen))
+	}
+	if !c.Exists("testfeed", fi) {
+		t.Error("Exists should return true for GUID added via AddSkippedItem")
+	}
+	if !c.needSave {
+		t.Error("needSave should be true after AddSkippedItem")
+	}
+}
+
+func TestAddSkippedItem_DoesNotUpdateIdentityIndex(t *testing.T) {
+	fi := makeFeedItem("guid-skipped2")
+	c := &CacheFile{
+		Version:       CACHE_VERSION,
+		Errors:        map[string]int64{},
+		Seen:          []CacheRecord{},
+		identityIndex: map[string][]map[string]string{},
+	}
+	c.AddSkippedItem(fi)
+
+	if len(c.identityIndex) != 0 {
+		t.Errorf("AddSkippedItem must not update identityIndex, got %v", c.identityIndex)
+	}
+	if len(c.Seen[0].Labels) != 0 {
+		t.Errorf("AddSkippedItem must not store labels, got %v", c.Seen[0].Labels)
+	}
+	if len(c.Seen[0].IdentityKeys) != 0 {
+		t.Errorf("AddSkippedItem must not store identity keys, got %v", c.Seen[0].IdentityKeys)
+	}
+}
+
 func TestAddItem(t *testing.T) {
 	c := &CacheFile{
 		Version:       CACHE_VERSION,

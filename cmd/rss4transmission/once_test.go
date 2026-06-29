@@ -376,6 +376,51 @@ func TestSelectWinners_NoGroupMatchGetsWinnerReason(t *testing.T) {
 	}
 }
 
+// --- markCacheRejectedSeen ---
+
+func TestMarkCacheRejectedSeen_AddsCacheRejected(t *testing.T) {
+	c := makeCandidate("guid-rej",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
+		nil,
+	)
+	cache := &CacheFile{
+		Version:       CACHE_VERSION,
+		Errors:        map[string]int64{},
+		Seen:          []CacheRecord{},
+		identityIndex: map[string][]map[string]string{},
+	}
+	skipped := []skippedCandidate{
+		{cand: c, reason: skipReasonCacheBetter},
+	}
+	markCacheRejectedSeen(skipped, cache)
+
+	if !cache.Exists("testfeed", c.item) {
+		t.Error("expected GUID to be in Seen after markCacheRejectedSeen")
+	}
+}
+
+func TestMarkCacheRejectedSeen_IgnoresOtherReasons(t *testing.T) {
+	c := makeCandidate("guid-other",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
+		nil,
+	)
+	cache := &CacheFile{
+		Version:       CACHE_VERSION,
+		Errors:        map[string]int64{},
+		Seen:          []CacheRecord{},
+		identityIndex: map[string][]map[string]string{},
+	}
+	skipped := []skippedCandidate{
+		{cand: c, reason: "no group matched labels"},
+		{cand: c, reason: "outranked by better candidate in this run"},
+	}
+	markCacheRejectedSeen(skipped, cache)
+
+	if len(cache.Seen) != 0 {
+		t.Errorf("expected no Seen entries for non-cache-rejection reasons, got %d", len(cache.Seen))
+	}
+}
+
 // --- pruneTorrentCache ---
 
 func TestPruneTorrentCache(t *testing.T) {

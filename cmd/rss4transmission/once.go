@@ -187,6 +187,7 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 
 		// Phase 3: For each group, select the highest-preference winner per identity key.
 		winners, skipped := selectWinners(candidates, feedCfg, ctx.Cache)
+		markCacheRejectedSeen(skipped, ctx.Cache)
 		if ctx.History != nil {
 			for _, s := range skipped {
 				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, s.cand.item.Item, "skipped", s.reason, s.cand.titleLabels))
@@ -336,6 +337,23 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 	return false
 }
 
+// skipReasonCacheBetter is the reason string used when a candidate is rejected
+// because the cache already has an equal or better version for all its identity
+// keys. Referenced in markCacheRejectedSeen to avoid string duplication.
+const skipReasonCacheBetter = "better version already in cache"
+
+// markCacheRejectedSeen adds the GUID of each cache-rejected candidate to the
+// seen cache. On the next run, Exists() catches these GUIDs in Phase 1, before
+// the torrent disk read, eliminating redundant I/O for items that will never
+// be dispatched again.
+func markCacheRejectedSeen(skipped []skippedCandidate, cache *CacheFile) {
+	for _, s := range skipped {
+		if s.reason == skipReasonCacheBetter {
+			cache.AddSkippedItem(s.cand.item)
+		}
+	}
+}
+
 type skippedCandidate struct {
 	cand   *candidate
 	reason string
@@ -389,7 +407,7 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) ([]*
 		if cached && !IsBetter(e.rank, cachedRank) {
 			log.Debugf("Skipping %s for key %s: cache has equal or better preference", e.cand.item.Item.Title, key)
 			if !seen[e.cand] {
-				skipReasons[e.cand] = "better version already in cache"
+				skipReasons[e.cand] = skipReasonCacheBetter
 			}
 			continue
 		}

@@ -143,6 +143,24 @@ func (c *CacheFile) SaveCache(d time.Duration, activeGUIDs map[string]map[string
 	return nil
 }
 
+// AddSkippedItem records a feed item's GUID in the seen cache without labels or
+// identity keys. This prevents re-evaluating items that were rejected because
+// the cache already has equal or better preference for all their identity keys
+// (i.e., a different torrent covered the same content). The identity index is
+// not updated — the original dispatched record still governs preference ranking.
+func (c *CacheFile) AddSkippedItem(item *FeedItem) {
+	cr := CacheRecord{
+		Feed:    item.Feed,
+		AddTime: time.Now(),
+		GUID:    item.Item.GUID,
+	}
+	if item.Item.PublishedParsed != nil {
+		cr.Published = *item.Item.PublishedParsed
+	}
+	c.Seen = append(c.Seen, cr)
+	c.needSave = true
+}
+
 // AddItem records a dispatched torrent in the seen cache, along with its
 // extracted labels and the identity keys it covers.
 func (c *CacheFile) AddItem(item *FeedItem, labels map[string]string, identityKeys []string) {
