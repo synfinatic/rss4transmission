@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -373,6 +375,44 @@ func TestSelectWinners_NoGroupMatchGetsWinnerReason(t *testing.T) {
 	want := "covered by winner: MotoGP.RD01.Race.MotoMundo"
 	if skipped[0].reason != want {
 		t.Errorf("skip reason = %q, want %q", skipped[0].reason, want)
+	}
+}
+
+// --- ensureTorrentBytes ---
+
+func TestEnsureTorrentBytes_UsesExisting(t *testing.T) {
+	fi := &FeedItem{Item: &gofeed.Item{Title: "no-network"}}
+	existing := []byte("existing bytes")
+	got, err := ensureTorrentBytes(fi, "", existing)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != "existing bytes" {
+		t.Errorf("got %q, want existing bytes", got)
+	}
+}
+
+func TestEnsureTorrentBytes_FetchesWhenEmpty(t *testing.T) {
+	want := []byte("fetched torrent content")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(want) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	fi := &FeedItem{
+		Item: &gofeed.Item{
+			Title: "fetched",
+			Enclosures: []*gofeed.Enclosure{
+				{URL: srv.URL + "/my.torrent", Type: "application/x-bittorrent"},
+			},
+		},
+	}
+	got, err := ensureTorrentBytes(fi, "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 

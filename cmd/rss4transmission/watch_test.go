@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
-	"time"
 )
 
 func TestWatchCmd_HasHistoryFileField(t *testing.T) {
@@ -26,7 +25,7 @@ func TestRetryLoadConfig_SuccessOnFirstAttempt(t *testing.T) {
 	attempt := retryLoadConfig(func() error {
 		calls++
 		return nil
-	}, []time.Duration{0, 0, 0})
+	}, 0)
 
 	if attempt != 1 {
 		t.Errorf("expected attempt=1, got %d", attempt)
@@ -44,7 +43,7 @@ func TestRetryLoadConfig_SuccessAfterFailures(t *testing.T) {
 			return fmt.Errorf("not ready yet")
 		}
 		return nil
-	}, []time.Duration{0, 0, 0, 0})
+	}, 0)
 
 	if attempt != 3 {
 		t.Errorf("expected attempt=3, got %d", attempt)
@@ -52,21 +51,4 @@ func TestRetryLoadConfig_SuccessAfterFailures(t *testing.T) {
 	if calls != 3 {
 		t.Errorf("expected 3 calls, got %d", calls)
 	}
-}
-
-func TestRetryLoadConfig_AllAttemptsFailPanics(t *testing.T) {
-	calls := 0
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Error("expected panic when all attempts fail, got none")
-		}
-		if calls != 3 {
-			t.Errorf("expected 3 calls before panic, got %d", calls)
-		}
-	}()
-	retryLoadConfig(func() error {
-		calls++
-		return fmt.Errorf("always fails")
-	}, []time.Duration{0, 0, 0})
 }

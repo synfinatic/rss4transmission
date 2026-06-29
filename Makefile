@@ -46,8 +46,8 @@ ALL: $(OUTPUT_NAME) ## Build binary.  Needs to be a supported plaform as defined
 
 include help.mk  # place after ALL target and before all other targets
 
-.PHONY: .build_files
 .build_files: $(wildcard */*.go */*/*.go */*/*/*.go) go.mod go.sum .prepare
+	touch $@
 
 release: build-release
 	cd dist && shasum -a 256 * | gpg --clear-sign >release.sig

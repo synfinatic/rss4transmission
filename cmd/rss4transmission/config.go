@@ -90,7 +90,7 @@ type Feed struct {
 // Validate checks that the feed config is self-consistent.
 func (f *Feed) Validate(name string, extractors map[string]*ExtractorSet) error {
 	if f.Extractor == "" {
-		return nil // no label-mode fields required
+		return fmt.Errorf("feed %q: Extractor is required", name)
 	}
 	if _, ok := extractors[f.Extractor]; !ok {
 		return fmt.Errorf("feed %q: Extractor %q not defined", name, f.Extractor)

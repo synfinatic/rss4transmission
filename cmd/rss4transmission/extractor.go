@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 )
@@ -30,6 +31,14 @@ type normalizeRule struct {
 	value string
 }
 
+// validateLabelRegexp checks that re has exactly one capture group.
+func validateLabelRegexp(name, pattern string, re *regexp.Regexp) error {
+	if n := re.NumSubexp(); n != 1 {
+		return fmt.Errorf("label %q: Regexp must have exactly one capture group, got %d: %s", name, n, pattern)
+	}
+	return nil
+}
+
 func (es *ExtractorSet) compile() {
 	if es.isCompiled {
 		return
@@ -40,6 +49,9 @@ func (es *ExtractorSet) compile() {
 		var err error
 		if cl.re, err = regexp.Compile(def.Regexp); err != nil {
 			log.WithError(err).Fatalf("label %q: invalid Regexp: %s", name, def.Regexp)
+		}
+		if err = validateLabelRegexp(name, def.Regexp, cl.re); err != nil {
+			log.WithError(err).Fatalf("invalid extractor label config")
 		}
 		// Sort normalize patterns for deterministic order.
 		patterns := make([]string, 0, len(def.Normalize))

@@ -375,6 +375,16 @@ func TestSaveHistory_WritesValidJSON(t *testing.T) {
 	}
 }
 
+func TestOpenHistory_NonNotExistError(t *testing.T) {
+	// Passing a directory as the path gives "is a directory" — not os.IsNotExist.
+	// OpenHistory must propagate that error rather than silently creating a new file.
+	dir := t.TempDir()
+	_, err := OpenHistory(dir)
+	if err == nil {
+		t.Error("OpenHistory should return error for non-file path (e.g. a directory)")
+	}
+}
+
 func TestOpenHistory_NewFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "history.json")

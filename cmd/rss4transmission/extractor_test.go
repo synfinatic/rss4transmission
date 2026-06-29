@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"testing"
 )
 
@@ -231,6 +232,29 @@ func TestExtractLabels_DefaultEmptyMeansOmit(t *testing.T) {
 	got := es.ExtractLabels("Show.S01E01.1080p.mkv")
 	if _, ok := got["language"]; ok {
 		t.Error("language should be absent when no match and no default set")
+	}
+}
+
+// --- validateLabelRegexp ---
+
+func TestValidateLabelRegexp_OneGroup(t *testing.T) {
+	re := regexp.MustCompile(`(MotoGP|Moto2)`)
+	if err := validateLabelRegexp("series", `(MotoGP|Moto2)`, re); err != nil {
+		t.Errorf("expected nil error for exactly one capture group, got %v", err)
+	}
+}
+
+func TestValidateLabelRegexp_ZeroGroups(t *testing.T) {
+	re := regexp.MustCompile(`MotoGP|Moto2`)
+	if err := validateLabelRegexp("series", `MotoGP|Moto2`, re); err == nil {
+		t.Error("expected error for zero capture groups, got nil")
+	}
+}
+
+func TestValidateLabelRegexp_TwoGroups(t *testing.T) {
+	re := regexp.MustCompile(`(MotoGP).(Moto2)`)
+	if err := validateLabelRegexp("series", `(MotoGP).(Moto2)`, re); err == nil {
+		t.Error("expected error for two capture groups, got nil")
 	}
 }
 

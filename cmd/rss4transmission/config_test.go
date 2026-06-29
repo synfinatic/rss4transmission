@@ -71,8 +71,8 @@ func TestFeedCheck_NoEnclosureWithMinSize(t *testing.T) {
 
 func TestFeedValidate_NoExtractor(t *testing.T) {
 	f := &Feed{URL: "https://example.com/rss"}
-	if err := f.Validate("myfeed", nil); err != nil {
-		t.Errorf("feed with no Extractor should always validate: %v", err)
+	if err := f.Validate("myfeed", nil); err == nil {
+		t.Error("feed with no Extractor should fail validation in v2")
 	}
 }
 

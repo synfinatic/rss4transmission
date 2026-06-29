@@ -29,6 +29,9 @@ cover that change.
 Whenever modifying the config file data structure definition, be sure to update 
 the README.md to cover that change.
 
+Never run `go build ...` directly to build the rss4transmission binary.  Use `make`
+instead which places it in the `dist` directory.
+
 ## Commands
 
 ```bash

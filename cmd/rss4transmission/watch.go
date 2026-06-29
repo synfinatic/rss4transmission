@@ -6,14 +6,7 @@ import (
 	"time"
 )
 
-var defaultRetryDelays = []time.Duration{
-	100 * time.Millisecond,
-	250 * time.Millisecond,
-	500 * time.Millisecond,
-	time.Second,
-	2 * time.Second,
-	5 * time.Second,
-}
+const defaultRetryInterval = 60 * time.Second
 
 type WatchCmd struct {
 	Feed            []string `kong:"help='Limit scraping to the given feed(s)'"`
@@ -25,18 +18,17 @@ type WatchCmd struct {
 	TorrentCacheDir string   `kong:"help='Directory to cache fetched .torrent files across runs'"`
 }
 
-// retryLoadConfig calls tryLoad repeatedly, waiting d between attempts.
-// Returns the 1-based attempt number on success, or panics if all attempts fail.
-func retryLoadConfig(tryLoad func() error, delays []time.Duration) int {
-	for i, d := range delays {
-		time.Sleep(d)
+// retryLoadConfig calls tryLoad repeatedly, sleeping interval between attempts.
+// It retries forever until tryLoad succeeds and returns the 1-based attempt number.
+func retryLoadConfig(tryLoad func() error, interval time.Duration) int {
+	for i := 1; ; i++ {
 		if err := tryLoad(); err == nil {
-			return i + 1
+			return i
 		} else {
-			log.Debugf("config reload attempt %d/%d failed: %s", i+1, len(delays), err)
+			log.Errorf("config reload attempt %d failed: %s; retrying in %s", i, err, interval)
 		}
+		time.Sleep(interval)
 	}
-	panic("all attempts to load config failed")
 }
 
 func (cmd *WatchCmd) Run(ctx *RunContext) error {
@@ -83,15 +75,11 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			}
 			ctx.Konf = konf
 			return nil
-		}, defaultRetryDelays)
+		}, defaultRetryInterval)
 
-		if attempt > 0 {
-			log.Infof("config reloaded after %d attempt(s), re-registering file watcher", attempt)
-			if err := ctx.Provider.Watch(watchCallback); err != nil {
-				log.WithError(err).Errorf("failed to re-register config file watcher")
-			}
-		} else {
-			log.Errorf("failed to reload config after all retries; file watcher disabled")
+		log.Infof("config reloaded after %d attempt(s), re-registering file watcher", attempt)
+		if err := ctx.Provider.Watch(watchCallback); err != nil {
+			log.WithError(err).Errorf("failed to re-register config file watcher")
 		}
 	}
 

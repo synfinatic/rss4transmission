@@ -91,8 +91,10 @@ func OpenHistory(path string) (*HistoryFile, error) {
 	}
 	histFile := GetPath(path)
 	data, err := os.ReadFile(histFile)
-	if err != nil {
-		log.Warnf("Creating new history file: %s", histFile)
+	if os.IsNotExist(err) {
+		log.Infof("Creating new history file: %s", histFile)
+	} else if err != nil {
+		return h, err
 	} else {
 		if err = json.Unmarshal(data, h); err != nil {
 			return h, err

@@ -277,7 +277,15 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "downloaded", "", w.titleLabels))
 		}
 	} else {
-		if err = w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, w.torrentBytes); err != nil {
+		torrentBytes, err := ensureTorrentBytes(w.item, cmd.TorrentCacheDir, w.torrentBytes)
+		if err != nil {
+			log.WithError(err).Errorf("Unable to fetch torrent data for %s", w.item.Item.Title)
+			if ctx.History != nil {
+				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
+			}
+			return false
+		}
+		if err = w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, torrentBytes); err != nil {
 			log.WithError(err).Errorf("Unable to torrent: %s", feedName)
 			if ctx.History != nil {
 				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
@@ -335,6 +343,15 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 		log.Errorf("Unknown reply")
 	}
 	return false
+}
+
+// ensureTorrentBytes returns existing if non-empty; otherwise fetches via getTorrentContents.
+// This prevents dispatch failures when Phase 2 couldn't fetch the torrent at selection time.
+func ensureTorrentBytes(item *FeedItem, cacheDir string, existing []byte) ([]byte, error) {
+	if len(existing) > 0 {
+		return existing, nil
+	}
+	return item.getTorrentContents(cacheDir)
 }
 
 // skipReasonCacheBetter is the reason string used when a candidate is rejected

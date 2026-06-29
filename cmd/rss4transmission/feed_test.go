@@ -160,6 +160,26 @@ func TestGetTorrentContents_NoCacheDir(t *testing.T) {
 	}
 }
 
+func TestGetTorrentContents_HTTPError(t *testing.T) {
+	dir := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	fi := makeFeedItemWithURL("Error.Title", srv.URL+"/my.torrent")
+	_, err := fi.getTorrentContents(dir)
+	if err == nil {
+		t.Error("expected error for non-2xx HTTP response, got nil")
+	}
+
+	// Verify no bad bytes were written to the cache.
+	cachePath := filepath.Join(dir, sanitizeFilename("Error.Title")+".torrent")
+	if _, statErr := os.Stat(cachePath); statErr == nil {
+		t.Error("cache file should not be written on HTTP error")
+	}
+}
+
 func TestIsComplete_False(t *testing.T) {
 	fi := &FeedItem{Complete: false}
 	if fi.IsComplete() {

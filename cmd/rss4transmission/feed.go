@@ -89,6 +89,9 @@ func (fi *FeedItem) fetchTorrent() ([]byte, error) {
 		return []byte{}, fmt.Errorf("unable to download %s: %s", torrentUrl, err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return []byte{}, fmt.Errorf("unexpected HTTP status %d fetching %s", resp.StatusCode, torrentUrl)
+	}
 	return io.ReadAll(resp.Body)
 }
 
