@@ -1,4 +1,4 @@
-PROJECT_VERSION := 1.0.11
+PROJECT_VERSION := 2.0.0
 
 DIST_DIR ?= dist/
 GOOS ?= $(shell uname -s | tr "[:upper:]" "[:lower:]")
@@ -46,11 +46,15 @@ ALL: $(OUTPUT_NAME) ## Build binary.  Needs to be a supported plaform as defined
 
 include help.mk  # place after ALL target and before all other targets
 
+.build_files: $(wildcard */*.go */*/*.go */*/*/*.go) go.mod go.sum .prepare
+	touch $@
+
 release: build-release
 	cd dist && shasum -a 256 * | gpg --clear-sign >release.sig
 
 # windows & windows32 not supported currently
 build-release: clean linux linux-arm32 linux-arm64 darwin ## Build all our release binaries
+
 
 .PHONY: run
 run: ./cmd/$(PROJECT_NAME)/*.go  ## build and run cria using $PROGRAM_ARGS
@@ -115,7 +119,16 @@ test-tidy:  ## Test to make sure go.mod is tidy
 	    exit -1 ; \
 	fi
 
-precheck: test test-fmt test-tidy lint ## Run all tests that happen in a PR 
+coverage: coverage.out
+coverage.out: .build_files
+	go test -ldflags='$(LDFLAGS)' -covermode=atomic -coverprofile=coverage.out ./...
+	@echo "total coverage (all files): $$(go tool cover -func=coverage.out | grep ^total | sed -Ee 's/.*[^0-9]([0-9]+\.[0-9]%$$)/\1/')"
+
+.PHONY: vulncheck
+vulncheck: ## Run govulncheck to detect known vulnerabilities
+	govulncheck ./...
+
+precheck: test test-fmt test-tidy lint vulncheck ## Run all tests that happen in a PR
 
 lint: .lint-check  ## Run golangci-lint
 	golangci-lint run
@@ -139,41 +152,41 @@ lint-install:  ## Install golangci-lint
 # Build targets for our supported plaforms
 windows: $(WINDOWS_BIN)  ## Build 64bit Windows binary
 
-$(WINDOWS_BIN): $(wildcard */*.go) .prepare
+$(WINDOWS_BIN): .build_files
 	GOARCH=amd64 GOOS=windows go build -ldflags='$(LDFLAGS)' -o $(WINDOWS_BIN) ./cmd/$(PROJECT_NAME)/...
 	@echo "Created: $(WINDOWS_BIN)"
 
 windows32: $(WINDOWS32_BIN)  ## Build 32bit Windows binary
 
-$(WINDOWS32_BIN): $(wildcard */*.go) .prepare
+$(WINDOWS32_BIN): .build_files
 	GOARCH=386 GOOS=windows go build -ldflags='$(LDFLAGS)' -o $(WINDOWS32_BIN) ./cmd/$(PROJECT_NAME)/...
 	@echo "Created: $(WINDOWS32_BIN)"
 
 linux: $(LINUX_BIN)  ## Build Linux/x86_64 binary
 
-$(LINUX_BIN): $(wildcard */*.go) .prepare
+$(LINUX_BIN): .build_files
 	GOARCH=amd64 GOOS=linux go build -ldflags='$(LDFLAGS)' -o $(LINUX_BIN) ./cmd/$(PROJECT_NAME)/...
 	@echo "Created: $(LINUX_BIN)"
 
 linux-arm64: $(LINUXARM64_BIN)  ## Build Linux/arm64 binary
 
-$(LINUXARM64_BIN): $(wildcard */*.go) .prepare
+$(LINUXARM64_BIN): .build_files
 	GOARCH=arm64 GOOS=linux go build -ldflags='$(LDFLAGS)' -o $(LINUXARM64_BIN) ./cmd/$(PROJECT_NAME)/...
 	@echo "Created: $(LINUXARM64_BIN)"
 
 linux-arm32: $(LINUXARM32_BIN)  ## Build Linux/arm64 binary
 
-$(LINUXARM32_BIN): $(wildcard */*.go) .prepare
+$(LINUXARM32_BIN): .build_files
 	GOARCH=arm GOOS=linux go build -ldflags='$(LDFLAGS)' -o $(LINUXARM32_BIN) ./cmd/$(PROJECT_NAME)/...
 	@echo "Created: $(LINUXARM32_BIN)"
 
 darwin: $(DARWIN_BIN)  ## Build MacOS/x86_64 binary
 
-$(DARWIN_BIN): $(wildcard */*.go) .prepare
+$(DARWIN_BIN): .build_files
 	GOARCH=amd64 GOOS=darwin go build -ldflags='$(LDFLAGS)' -o $(DARWIN_BIN) ./cmd/$(PROJECT_NAME)/...
 	@echo "Created: $(DARWIN_BIN)"
 
-$(OUTPUT_NAME): $(wildcard */*.go) .prepare
+$(OUTPUT_NAME): .build_files
 	go build -ldflags='$(LDFLAGS)' -o $(OUTPUT_NAME) ./cmd/$(PROJECT_NAME)/...
 	@echo "Created: $(OUTPUT_NAME)"
 

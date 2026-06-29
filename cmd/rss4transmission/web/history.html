@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>RSS4Transmission History</title>
+    <style>
+        body { font-family: monospace; margin: 2em; background: #1a1a1a; color: #e0e0e0; }
+        h1 { color: #ccc; margin-bottom: 0.25em; }
+        p { color: #888; margin-top: 0; }
+
+        #filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.2em;
+            align-items: center;
+            background: #2a2a2a;
+            padding: 0.6em 1em;
+            margin-bottom: 1em;
+        }
+        #filters > span { display: flex; align-items: center; gap: 0.4em; color: #aaa; }
+
+        #filters select, #filters input[type="text"] {
+            background: #1a1a1a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            padding: 2px 6px;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+        #filters input[type="text"] { width: 22em; }
+
+        .outcome-pills { display: flex; gap: 0.35em; }
+        .outcome-pill input[type="checkbox"] { display: none; }
+        .outcome-pill label {
+            display: inline-block;
+            padding: 1px 7px;
+            border: 1px solid #555;
+            border-radius: 3px;
+            cursor: pointer;
+            color: #666;
+            font-size: 0.88em;
+            user-select: none;
+        }
+        .outcome-pill input:checked + label { color: #e0e0e0; }
+        .outcome-pill input:checked + label.dispatched { color: #6f6; border-color: #6f6; }
+        .outcome-pill input:checked + label.skipped    { color: #fa0; border-color: #fa0; }
+        .outcome-pill input:checked + label.excluded   { color: #fa0; border-color: #fa0; }
+        .outcome-pill input:checked + label.error      { color: #f66; border-color: #f66; }
+
+        #reset { color: #555; font-size: 0.85em; cursor: pointer; text-decoration: underline; }
+        #reset:hover { color: #888; }
+
+        table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+        th { background: #2a2a2a; padding: 8px 12px; text-align: left; white-space: nowrap; }
+        td { padding: 6px 12px; border-bottom: 1px solid #2a2a2a; vertical-align: top; word-break: break-word; }
+        tr:hover td { background: #222; }
+        .dispatched { color: #6f6; }
+        .error { color: #f66; }
+        .skipped { color: #fa0; }
+        a { color: inherit; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .labels { font-size: 0.82em; color: #666; margin-top: 3px; }
+        th:nth-child(1), td:nth-child(1) { width: 14em; white-space: nowrap; }
+        th:nth-child(2), td:nth-child(2) { width: 9em; }
+        th:nth-child(4), td:nth-child(4) { width: 8em; }
+        th:nth-child(5), td:nth-child(5) { width: 18em; }
+    </style>
+</head>
+<body>
+    <h1>RSS4Transmission History</h1>
+    <p id="count">{{ len . }} record(s) &mdash; auto-refreshes every 60 seconds.</p>
+
+    <div id="filters">
+        <span>
+            <label for="f-feed">Feed:</label>
+            <select id="f-feed">
+                <option value="">all</option>
+            </select>
+        </span>
+
+        <span>
+            Outcome:
+            <span class="outcome-pills">
+                <span class="outcome-pill">
+                    <input type="checkbox" id="o-dispatched" value="dispatched" checked>
+                    <label class="dispatched" for="o-dispatched">dispatched</label>
+                </span>
+                <span class="outcome-pill">
+                    <input type="checkbox" id="o-skipped" value="skipped" checked>
+                    <label class="skipped" for="o-skipped">skipped</label>
+                </span>
+                <span class="outcome-pill">
+                    <input type="checkbox" id="o-excluded" value="excluded" checked>
+                    <label class="excluded" for="o-excluded">excluded</label>
+                </span>
+                <span class="outcome-pill">
+                    <input type="checkbox" id="o-error" value="error" checked>
+                    <label class="error" for="o-error">error</label>
+                </span>
+            </span>
+        </span>
+
+        <span>
+            <label for="f-label">Label:</label>
+            <input type="text" id="f-label" placeholder="key=value (space-separated)">
+        </span>
+
+        <span><a id="reset">reset</a></span>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Feed</th>
+                <th>Title</th>
+                <th>Outcome</th>
+                <th>Reason</th>
+            </tr>
+        </thead>
+        <tbody id="rows">
+            {{ range . }}
+            <tr data-feed="{{ .Feed }}" data-outcome="{{ .Outcome }}" data-labels="{{ range $k, $v := .Labels }}{{ $k }}={{ $v }} {{ end }}">
+                <td>{{ .ProcessedAt.Format "2006-01-02 15:04:05.000" }}</td>
+                <td>{{ .Feed }}</td>
+                <td>
+                    {{ if .GUID }}<a href="{{ .GUID }}" target="_blank" rel="noopener">{{ .Title }}</a>{{ else }}{{ .Title }}{{ end }}
+                    {{ if .Labels }}<div class="labels">{{ range $k, $v := .Labels }}{{ $k }}={{ $v }} {{ end }}</div>{{ end }}
+                </td>
+                <td class="{{ outcomeClass .Outcome }}">{{ .Outcome }}</td>
+                <td>{{ .Reason }}</td>
+            </tr>
+            {{ end }}
+        </tbody>
+    </table>
+
+    <script>
+    (function () {
+        var TOTAL = {{ len . }};
+        var ALL_OUTCOMES = ['dispatched', 'skipped', 'excluded', 'error'];
+
+        var countEl  = document.getElementById('count');
+        var feedSel  = document.getElementById('f-feed');
+        var labelIn  = document.getElementById('f-label');
+        var resetBtn = document.getElementById('reset');
+        var rows     = Array.from(document.querySelectorAll('#rows tr'));
+
+        // Populate feed dropdown from rendered data.
+        var feeds = Array.from(new Set(rows.map(function (r) { return r.dataset.feed; }).filter(Boolean))).sort();
+        feeds.forEach(function (f) {
+            var opt = document.createElement('option');
+            opt.value = opt.textContent = f;
+            feedSel.appendChild(opt);
+        });
+
+        function outcomeCheckboxes() {
+            return Array.from(document.querySelectorAll('.outcome-pill input[type="checkbox"]'));
+        }
+
+        // Restore filter state from URL query params.
+        var params = new URLSearchParams(location.search);
+        if (params.get('feed'))    feedSel.value = params.get('feed');
+        if (params.get('label'))   labelIn.value = params.get('label');
+        var outcomeParam = params.get('outcome');
+        if (outcomeParam) {
+            var enabled = new Set(outcomeParam.split(','));
+            outcomeCheckboxes().forEach(function (cb) { cb.checked = enabled.has(cb.value); });
+        }
+
+        function apply() {
+            var feed       = feedSel.value;
+            var labelText  = labelIn.value.trim();
+            var labelPairs = labelText ? labelText.split(/\s+/) : [];
+            var checked    = new Set();
+            outcomeCheckboxes().forEach(function (cb) { if (cb.checked) checked.add(cb.value); });
+
+            var visible = 0;
+            rows.forEach(function (row) {
+                var show = true;
+
+                if (feed && row.dataset.feed !== feed) show = false;
+
+                if (show && !checked.has(row.dataset.outcome)) show = false;
+
+                if (show && labelPairs.length > 0) {
+                    var rl = row.dataset.labels || '';
+                    for (var i = 0; i < labelPairs.length; i++) {
+                        if (rl.indexOf(labelPairs[i]) === -1) { show = false; break; }
+                    }
+                }
+
+                row.style.display = show ? '' : 'none';
+                if (show) visible++;
+            });
+
+            // Update URL params so the 60-second meta-refresh preserves state.
+            var p = new URLSearchParams();
+            if (feed) p.set('feed', feed);
+            var outcomes = Array.from(checked).sort();
+            if (outcomes.length !== ALL_OUTCOMES.length || outcomes.some(function (o, i) { return o !== ALL_OUTCOMES.slice().sort()[i]; })) {
+                p.set('outcome', outcomes.join(','));
+            }
+            if (labelText) p.set('label', labelText);
+            var qs = p.toString();
+            history.replaceState(null, '', qs ? '?' + qs : location.pathname);
+
+            var msg = (visible === TOTAL ? TOTAL : visible + ' of ' + TOTAL) + ' record(s) — auto-refreshes every 60 seconds.';
+            countEl.textContent = msg;
+        }
+
+        function reset() {
+            feedSel.value = '';
+            labelIn.value = '';
+            outcomeCheckboxes().forEach(function (cb) { cb.checked = true; });
+            apply();
+        }
+
+        feedSel.addEventListener('change', apply);
+        labelIn.addEventListener('input', apply);
+        outcomeCheckboxes().forEach(function (cb) { cb.addEventListener('change', apply); });
+        resetBtn.addEventListener('click', reset);
+
+        apply();
+
+        // Reload after 60 s using the current URL so query-param filter state is preserved.
+        setTimeout(function () { location.reload(); }, 60000);
+    }());
+    </script>
+</body>
+</html>

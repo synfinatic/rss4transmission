@@ -18,6 +18,7 @@ package main
  */
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 
@@ -35,11 +36,12 @@ var ConfigDefaults = map[string]interface{}{
 }
 
 type Config struct {
-	Feeds         map[string]Feed `koanf:"Feeds"`
-	Transmission  Transmission    `koanf:"Transmission"`
-	Gluetun       GluetunConfig   `koanf:"Gluetun"`
-	SeenFile      string          `koanf:"SeenFile"`
-	SeenCacheDays int             `koanf:"SeenCacheDays"`
+	Feeds         map[string]Feed          `koanf:"Feeds"`
+	Extractors    map[string]*ExtractorSet `koanf:"Extractors"`
+	Transmission  Transmission             `koanf:"Transmission"`
+	Gluetun       GluetunConfig            `koanf:"Gluetun"`
+	SeenFile      string                   `koanf:"SeenFile"`
+	SeenCacheDays int                      `koanf:"SeenCacheDays"`
 }
 
 type Transmission struct {
@@ -64,9 +66,7 @@ type GluetunConfig struct {
 
 type Feed struct {
 	URL            string   `koanf:"URL"`
-	Regexp         []string `koanf:"Regexp"`
 	Exclude        []string `koanf:"Exclude"`
-	Categories     []string `koanf:"Categories"`
 	DownloadPath   string   `koanf:"DownloadPath"`
 	NoValidateCert bool     `koanf:"NoValidateCert"`
 	NoSubmit       bool     `koanf:"NoSubmit"`
@@ -74,25 +74,45 @@ type Feed struct {
 	MaxSize        string   `koanf:"MaxSize"`
 	MinSize        string   `koanf:"MinSize"`
 
+	// Label-mode fields
+	Extractor string            `koanf:"Extractor"`
+	Identity  []string          `koanf:"Identity"`
+	Prefer    []PreferDimension `koanf:"Prefer"`
+	Groups    []Group           `koanf:"Groups"`
+
 	// internal
 	compiled bool
-	regexp   []*regexp.Regexp
 	exclude  []*regexp.Regexp
 	minSize  uint64
 	maxSize  uint64
 }
 
-// Check if a given item should be processed
-func (m *Feed) Check(item *gofeed.Item) bool {
-	m.compile()
+// Validate checks that the feed config is self-consistent.
+func (f *Feed) Validate(name string, extractors map[string]*ExtractorSet) error {
+	if f.Extractor == "" {
+		return fmt.Errorf("feed %q: Extractor is required", name)
+	}
+	if _, ok := extractors[f.Extractor]; !ok {
+		return fmt.Errorf("feed %q: Extractor %q not defined", name, f.Extractor)
+	}
+	if len(f.Identity) == 0 {
+		return fmt.Errorf("feed %q: Identity must list at least one label", name)
+	}
+	if len(f.Groups) == 0 {
+		return fmt.Errorf("feed %q: Groups must contain at least one entry", name)
+	}
+	return nil
+}
 
-	// first see if we exclude it
-	for _, r := range m.exclude {
-		// use compiled
-		match := r.Find([]byte(item.Title))
-		if match != nil {
-			// log.Debugf("Exclude %s => %s", item.Title, m.Exclude[i])
-			return false
+// Check is the pre-filter applied before label extraction. It returns false and
+// a human-readable reason if the item matches any Exclude pattern or falls
+// outside the MinSize/MaxSize bounds. All other items return (true, "").
+func (f *Feed) Check(item *gofeed.Item) (bool, string) {
+	f.compile()
+
+	for _, r := range f.exclude {
+		if r.Find([]byte(item.Title)) != nil {
+			return false, "matched exclude filter"
 		}
 	}
 
@@ -106,36 +126,15 @@ func (m *Feed) Check(item *gofeed.Item) bool {
 		totalSize += size
 	}
 
-	// Check Min/MaxSize
-	if m.minSize > 0 && totalSize < m.minSize {
+	if f.minSize > 0 && totalSize < f.minSize {
 		log.Debugf("Too small: %s [%d]", item.Title, totalSize)
-		return false
+		return false, "below minimum size"
 	}
 
-	if m.maxSize > 0 && totalSize > m.maxSize {
+	if f.maxSize > 0 && totalSize > f.maxSize {
 		log.Debugf("Too large: %s [%d]", item.Title, totalSize)
-		return false
+		return false, "above maximum size"
 	}
 
-	// then see if we match
-	for _, r := range m.regexp {
-		// use compiled
-		match := r.Find([]byte(item.Title))
-		if match != nil {
-			return true
-		}
-	}
-
-	// no match
-	return false
-}
-
-// Does the RssFilter have the given category?
-func (m *Feed) HasCategory(category string) bool {
-	for _, c := range m.Categories {
-		if c == category {
-			return true
-		}
-	}
-	return false
+	return true, ""
 }

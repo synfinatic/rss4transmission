@@ -19,11 +19,13 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -49,31 +51,58 @@ func (fi *FeedItem) TorrentURL() (string, error) {
 			return enclosure.URL, nil
 		}
 	}
-
 	return "", fmt.Errorf("unable to find Type = application/x-bittorrent for %s", fi.Item.Title)
 }
 
-func (fi *FeedItem) getTorrentContents() ([]byte, error) {
+func (fi *FeedItem) getTorrentContents(cacheDir string) ([]byte, error) {
+	if cacheDir != "" {
+		if err := os.MkdirAll(cacheDir, 0755); err != nil { //nolint:gosec
+			log.WithError(err).Warnf("Unable to create torrent cache dir: %s", cacheDir)
+			return fi.fetchTorrent()
+		}
+		cachePath := filepath.Join(cacheDir, sanitizeFilename(fi.Item.Title)+".torrent")
+		if data, err := os.ReadFile(cachePath); err == nil {
+			log.Tracef("Torrent cache hit: %s", cachePath)
+			return data, nil
+		} else {
+			log.Tracef("Torrent cache miss: %s", cachePath)
+		}
+		data, err := fi.fetchTorrent()
+		if err != nil {
+			return nil, err
+		}
+		if werr := os.WriteFile(cachePath, data, 0644); werr != nil { //nolint:gosec
+			log.WithError(werr).Warnf("Unable to write torrent cache: %s", cachePath)
+		}
+		return data, nil
+	}
+	return fi.fetchTorrent()
+}
+
+func (fi *FeedItem) fetchTorrent() ([]byte, error) {
 	torrentUrl, err := fi.TorrentURL()
 	if err != nil {
 		return []byte{}, err
 	}
-
 	resp, err := http.Get(torrentUrl) //nolint:gosec
 	if err != nil {
 		return []byte{}, fmt.Errorf("unable to download %s: %s", torrentUrl, err)
 	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return []byte{}, fmt.Errorf("unexpected HTTP status %d fetching %s", resp.StatusCode, torrentUrl)
+	}
 	return io.ReadAll(resp.Body)
 }
 
-func (fi *FeedItem) Download(ctx *RunContext, dir string) (string, error) {
-	var contents []byte
-	var err error
-
-	filePath := path.Join(dir, fmt.Sprintf("%s.torrent", fi.Item.Title))
+// Download saves the .torrent file to dir and returns its path. The caller is
+// responsible for recording the item in the cache.
+func (fi *FeedItem) Download(ctx *RunContext, dir string, cacheDir string) (string, error) {
+	filePath := path.Join(dir, fmt.Sprintf("%s.torrent", sanitizeFilename(fi.Item.Title)))
 	log.Debugf("Attempting to download torrent file: %s", filePath)
 
-	if contents, err = fi.getTorrentContents(); err != nil {
+	contents, err := fi.getTorrentContents(cacheDir)
+	if err != nil {
 		return "", err
 	}
 
@@ -82,61 +111,38 @@ func (fi *FeedItem) Download(ctx *RunContext, dir string) (string, error) {
 	}
 
 	log.Infof("Downloading: %s", filePath)
-	ctx.Cache.AddItem(fi)
-
 	return filePath, nil
 }
 
-func (fi *FeedItem) Torrent(ctx *RunContext, dir string) error {
-	var err error
-	var torrentURL string
-
+// TorrentWithBytes submits a torrent to Transmission using pre-fetched bytes
+// (MetaInfo upload). The caller is responsible for recording the item in the
+// cache.
+func (fi *FeedItem) TorrentWithBytes(ctx *RunContext, dir string, data []byte) error {
 	log.Debugf("Attempting to torrent: %s", fi.Item.Title)
-	if torrentURL, err = fi.TorrentURL(); err != nil {
-		return err
+
+	if len(data) == 0 {
+		return fmt.Errorf("no torrent data available for %s", fi.Item.Title)
 	}
 
+	encoded := base64.StdEncoding.EncodeToString(data)
 	addPayload := transmissionrpc.TorrentAddPayload{
 		DownloadDir: &dir,
-		Filename:    &torrentURL,
+		MetaInfo:    &encoded,
 	}
-	if _, err = ctx.Transmission.TorrentAdd(context.TODO(), addPayload); err != nil {
+	if _, err := ctx.Transmission.TorrentAdd(context.TODO(), addPayload); err != nil {
 		if strings.Contains(err.Error(), "duplicate torrent") {
 			log.Warnf("Skipping duplicate torrent: %s", fi.Item.Title)
-			ctx.Cache.AddItem(fi)
 			return nil
 		}
 		return err
 	}
 
 	log.Infof("Torrenting: %s", fi.Item.Title)
-	ctx.Cache.AddItem(fi)
-
 	return nil
 }
 
 func (fi *FeedItem) IsComplete() bool {
 	return fi.Complete
-
-	// XXX: ask transmission for an update if we are not complete
-}
-
-func (f *Feed) NewItems(feedName string, feed *gofeed.Feed) []*FeedItem {
-	items := []*FeedItem{}
-
-	for _, item := range feed.Items {
-		if f.Check(item) {
-			fi := FeedItem{
-				Feed:     feedName,
-				Item:     item,
-				Complete: false,
-				Location: path.Join(f.DownloadPath, item.Title),
-			}
-			items = append(items, &fi)
-		}
-	}
-
-	return items
 }
 
 func (m *Feed) compile() {
@@ -146,13 +152,6 @@ func (m *Feed) compile() {
 
 	var err error
 	var r *regexp.Regexp
-
-	for _, match := range m.Regexp {
-		if r, err = regexp.Compile(match); err != nil {
-			log.WithError(err).Fatalf("Unable to compile Regexp: %s", match)
-		}
-		m.regexp = append(m.regexp, r)
-	}
 
 	for _, exclude := range m.Exclude {
 		if r, err = regexp.Compile(exclude); err != nil {

@@ -58,21 +58,23 @@ type RunContext struct {
 	configFile   string
 	Config       Config
 	Cache        *CacheFile
+	History      *HistoryFile
 	Transmission *transmissionrpc.Client
 	Provider     *file.File
 }
 
 type CLI struct {
-	LogLevel string `kong:"default='info',enum='error,warn,info,debug',help='Log Level [error|warn|info|debug]'"`
+	LogLevel string `kong:"default='info',enum='error,warn,info,debug,trace',help='Log Level [error|warn|info|debug|trace]'"`
 	Lines    bool   `kong:"help='Include line numbers in logs'"`
 	LogFile  string `kong:"help='Output log file (default: stderr)',default='stderr'"`
 	Config   string `kong:"help='Override path to config file'"`
 	SeenFile string `kong:"help='Override path to SeenFile file'"`
 
 	// comamnds
-	Version VersionCmd `kong:"cmd,help='Print version and exit'"`
-	Watch   WatchCmd   `kong:"cmd,help='Scrape RSS feeds in a loop'"`
-	Once    OnceCmd    `kong:"cmd,help='Scrape RSS feeds once'"`
+	Version  VersionCmd  `kong:"cmd,help='Print version and exit'"`
+	Watch    WatchCmd    `kong:"cmd,help='Scrape RSS feeds in a loop'"`
+	Once     OnceCmd     `kong:"cmd,help='Scrape RSS feeds once'"`
+	Simulate SimulateCmd `kong:"cmd,help='Replay a local RSS feed file for testing'"`
 }
 
 func main() {
@@ -94,6 +96,8 @@ func main() {
 		log.SetLevel(logrus.WarnLevel)
 	case "error":
 		log.SetLevel(logrus.ErrorLevel)
+	case "trace":
+		log.SetLevel(logrus.TraceLevel)
 	}
 	if cli.Lines {
 		log.SetReportCaller(true)
@@ -143,6 +147,12 @@ func main() {
 	var err error
 	if rc.Konf, err = rc.loadConfig(rc.configFile); err != nil {
 		log.WithError(err).Fatalf("Unable to load %s", rc.configFile)
+	}
+
+	for name, feedCfg := range rc.Config.Feeds {
+		if err = feedCfg.Validate(name, rc.Config.Extractors); err != nil {
+			log.WithError(err).Fatalf("Invalid feed %q config", name)
+		}
 	}
 
 	// use our SeenFile
@@ -206,8 +216,15 @@ func (rc *RunContext) loadConfig(configFile string) (*koanf.Koanf, error) {
 		log.WithError(err).Fatalf("Unable to load defaults")
 	}
 
-	rc.Provider = file.Provider(configFile)
-	if err := konf.Load(rc.Provider, yaml.Parser()); err != nil {
+	// On the initial load Provider is nil; store it so watch.go can call
+	// Provider.Watch() on it. On reloads we create a fresh reader but keep
+	// the original Provider so its Watch goroutine continues to run.
+	provider := file.Provider(configFile)
+	if rc.Provider == nil {
+		rc.Provider = provider
+	}
+
+	if err := konf.Load(provider, yaml.Parser()); err != nil {
 		return konf, err
 	}
 

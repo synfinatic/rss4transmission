@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -68,6 +72,114 @@ func TestTorrentURL_NoEnclosures(t *testing.T) {
 	}
 }
 
+// --- getTorrentContents ---
+
+var sentinelTorrent = []byte("d8:announce27:http://example.com/announcee")
+
+func makeFeedItemWithURL(title, torrentURL string) *FeedItem {
+	return &FeedItem{
+		Item: &gofeed.Item{
+			Title: title,
+			Enclosures: []*gofeed.Enclosure{
+				{URL: torrentURL, Type: "application/x-bittorrent"},
+			},
+		},
+	}
+}
+
+func TestGetTorrentContents_CacheHit(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, sanitizeFilename("My.Title")+".torrent")
+	if err := os.WriteFile(cachePath, sentinelTorrent, 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// No valid enclosure URL — network would fail if reached.
+	fi := &FeedItem{Item: &gofeed.Item{Title: "My.Title"}}
+	got, err := fi.getTorrentContents(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(got, sentinelTorrent) {
+		t.Errorf("got %q, want sentinel bytes", got)
+	}
+}
+
+func TestGetTorrentContents_CacheMiss(t *testing.T) {
+	dir := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-bittorrent")
+		w.Write(sentinelTorrent) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	fi := makeFeedItemWithURL("My.Title", srv.URL+"/my.torrent")
+	got, err := fi.getTorrentContents(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(got, sentinelTorrent) {
+		t.Errorf("got %q, want sentinel bytes", got)
+	}
+
+	// Verify cache file was written.
+	cachePath := filepath.Join(dir, sanitizeFilename("My.Title")+".torrent")
+	written, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("cache file not written: %v", err)
+	}
+	if !bytes.Equal(written, sentinelTorrent) {
+		t.Errorf("cache file content = %q, want sentinel bytes", written)
+	}
+
+	// Second call with server stopped should hit the cache.
+	srv.Close()
+	got2, err := fi.getTorrentContents(dir)
+	if err != nil {
+		t.Fatalf("second call unexpected error: %v", err)
+	}
+	if !bytes.Equal(got2, sentinelTorrent) {
+		t.Errorf("second call got %q, want sentinel bytes from cache", got2)
+	}
+}
+
+func TestGetTorrentContents_NoCacheDir(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-bittorrent")
+		w.Write(sentinelTorrent) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	fi := makeFeedItemWithURL("My.Title", srv.URL+"/my.torrent")
+	got, err := fi.getTorrentContents("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(got, sentinelTorrent) {
+		t.Errorf("got %q, want sentinel bytes", got)
+	}
+}
+
+func TestGetTorrentContents_HTTPError(t *testing.T) {
+	dir := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	fi := makeFeedItemWithURL("Error.Title", srv.URL+"/my.torrent")
+	_, err := fi.getTorrentContents(dir)
+	if err == nil {
+		t.Error("expected error for non-2xx HTTP response, got nil")
+	}
+
+	// Verify no bad bytes were written to the cache.
+	cachePath := filepath.Join(dir, sanitizeFilename("Error.Title")+".torrent")
+	if _, statErr := os.Stat(cachePath); statErr == nil {
+		t.Error("cache file should not be written on HTTP error")
+	}
+}
+
 func TestIsComplete_False(t *testing.T) {
 	fi := &FeedItem{Complete: false}
 	if fi.IsComplete() {
@@ -79,75 +191,5 @@ func TestIsComplete_True(t *testing.T) {
 	fi := &FeedItem{Complete: true}
 	if !fi.IsComplete() {
 		t.Error("IsComplete should return true")
-	}
-}
-
-func TestFeedNewItems_Match(t *testing.T) {
-	f := &Feed{
-		Regexp:       []string{`(?i)^MyShow.*`},
-		DownloadPath: "/downloads",
-	}
-	feed := &gofeed.Feed{
-		Items: []*gofeed.Item{
-			{Title: "MyShow S01E01", GUID: "g1"},
-			{Title: "OtherShow S01E01", GUID: "g2"},
-		},
-	}
-	items := f.NewItems("feed1", feed)
-	if len(items) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(items))
-	}
-	if items[0].Item.GUID != "g1" {
-		t.Errorf("GUID = %q, want g1", items[0].Item.GUID)
-	}
-	if items[0].Feed != "feed1" {
-		t.Errorf("Feed = %q, want feed1", items[0].Feed)
-	}
-}
-
-func TestFeedNewItems_NoMatch(t *testing.T) {
-	f := &Feed{Regexp: []string{`(?i)^MyShow.*`}}
-	feed := &gofeed.Feed{
-		Items: []*gofeed.Item{
-			{Title: "SomethingElse", GUID: "g1"},
-		},
-	}
-	items := f.NewItems("feed1", feed)
-	if len(items) != 0 {
-		t.Errorf("expected 0 items, got %d", len(items))
-	}
-}
-
-func TestFeedNewItems_Location(t *testing.T) {
-	f := &Feed{
-		Regexp:       []string{`.*`},
-		DownloadPath: "/downloads/tv",
-	}
-	feed := &gofeed.Feed{
-		Items: []*gofeed.Item{
-			{Title: "MyShow S01E01", GUID: "g1"},
-		},
-	}
-	items := f.NewItems("feed1", feed)
-	if len(items) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(items))
-	}
-	want := filepath.Join("/downloads/tv", "MyShow S01E01")
-	if items[0].Location != want {
-		t.Errorf("Location = %q, want %q", items[0].Location, want)
-	}
-}
-
-func TestFeedNewItems_Complete(t *testing.T) {
-	f := &Feed{Regexp: []string{`.*`}}
-	feed := &gofeed.Feed{
-		Items: []*gofeed.Item{{Title: "Any", GUID: "g1"}},
-	}
-	items := f.NewItems("feed1", feed)
-	if len(items) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(items))
-	}
-	if items[0].Complete {
-		t.Error("new FeedItem should have Complete=false")
 	}
 }
