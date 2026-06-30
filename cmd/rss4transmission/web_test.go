@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +24,7 @@ func TestHealthzHandler(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
-// --- /cancel ---
+// --- /cancel helpers ---
 
 func makeCancelCfg(secret, baseURL string) CancelConfig {
 	return CancelConfig{HMACSecret: secret, BaseURL: baseURL, TokenTTLH: 24}
@@ -35,9 +37,136 @@ func makeRemoveFunc(called *bool) removeFunc {
 	}
 }
 
-func TestCancelHandler_Valid(t *testing.T) {
+func makeCancelFormBody(id string, expires int64, sig string) *strings.Reader {
+	v := url.Values{}
+	v.Set("id", id)
+	v.Set("expires", fmt.Sprintf("%d", expires))
+	v.Set("sig", sig)
+	return strings.NewReader(v.Encode())
+}
+
+// --- GET /cancel ---
+
+func TestGetCancelHandler_RendersForm(t *testing.T) {
 	store := NewStore(time.Hour)
-	store.Register("test-id", 42)
+	meta := CancelMetadata{
+		Title:    "My Show S01E01",
+		FeedName: "shows",
+		Labels:   map[string]string{"show": "My Show"},
+		Files:    []string{"My.Show.S01E01.mkv"},
+	}
+	store.Register("test-id", 42, meta)
+
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	mux := newWebMux(nil)
+	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)))
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/cancel?id=test-id&expires=%d&sig=%s", expires, sig), nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, "My Show S01E01", "title should appear in form")
+	assert.Contains(t, body, "shows", "feed name should appear in form")
+	assert.Contains(t, body, "My.Show.S01E01.mkv", "file name should appear in form")
+}
+
+func TestGetCancelHandler_MissingParams(t *testing.T) {
+	store := NewStore(time.Hour)
+	cfg := makeCancelCfg("secret", "https://example.com")
+	mux := newWebMux(nil)
+	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)))
+
+	req := httptest.NewRequest("GET", "/cancel?id=test-id", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestGetCancelHandler_BadSignature(t *testing.T) {
+	store := NewStore(time.Hour)
+	store.Register("test-id", 42, CancelMetadata{})
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, _ := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	mux := newWebMux(nil)
+	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)))
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/cancel?id=test-id&expires=%d&sig=badsig", expires), nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestGetCancelHandler_Expired(t *testing.T) {
+	store := NewStore(time.Hour)
+	store.Register("test-id", 42, CancelMetadata{})
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", -time.Second)
+
+	mux := newWebMux(nil)
+	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)))
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/cancel?id=test-id&expires=%d&sig=%s", expires, sig), nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusGone, rr.Code)
+}
+
+func TestGetCancelHandler_NotFound(t *testing.T) {
+	store := NewStore(time.Hour)
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "ghost-id", time.Hour)
+
+	mux := newWebMux(nil)
+	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)))
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/cancel?id=ghost-id&expires=%d&sig=%s", expires, sig), nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestGetCancelHandler_DoesNotConsumeEntry(t *testing.T) {
+	store := NewStore(time.Hour)
+	store.Register("test-id", 42, CancelMetadata{Title: "Keep Me"})
+
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	mux := newWebMux(nil)
+	removed := false
+	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(&removed))
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/cancel?id=test-id&expires=%d&sig=%s", expires, sig), nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.False(t, removed, "GET should not remove the torrent")
+
+	// Entry must still be in the store for the POST to work.
+	_, ok := store.Take("test-id")
+	assert.True(t, ok, "entry must still be present after GET")
+}
+
+// --- POST /cancel ---
+
+func TestPostCancelHandler_Valid(t *testing.T) {
+	store := NewStore(time.Hour)
+	store.Register("test-id", 42, CancelMetadata{})
 
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
@@ -46,8 +175,9 @@ func TestCancelHandler_Valid(t *testing.T) {
 	mux := newWebMux(nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(&removed))
 
-	req := httptest.NewRequest("DELETE",
-		fmt.Sprintf("/cancel?id=test-id&expires=%d&sig=%s", expires, sig), nil)
+	body := makeCancelFormBody("test-id", expires, sig)
+	req := httptest.NewRequest("POST", "/cancel", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
@@ -55,64 +185,68 @@ func TestCancelHandler_Valid(t *testing.T) {
 	assert.True(t, removed, "Transmission remove should have been called")
 }
 
-func TestCancelHandler_MissingParams(t *testing.T) {
+func TestPostCancelHandler_MissingParams(t *testing.T) {
 	store := NewStore(time.Hour)
 	cfg := makeCancelCfg("secret", "https://example.com")
 	mux := newWebMux(nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)))
 
-	req := httptest.NewRequest("DELETE", "/cancel?id=test-id", nil) // missing expires and sig
+	body := strings.NewReader("id=test-id") // missing expires and sig
+	req := httptest.NewRequest("POST", "/cancel", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
-func TestCancelHandler_BadSignature(t *testing.T) {
+func TestPostCancelHandler_BadSignature(t *testing.T) {
 	store := NewStore(time.Hour)
-	store.Register("test-id", 42)
+	store.Register("test-id", 42, CancelMetadata{})
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, _ := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
 	mux := newWebMux(nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)))
 
-	req := httptest.NewRequest("DELETE",
-		fmt.Sprintf("/cancel?id=test-id&expires=%d&sig=badsig", expires), nil)
+	body := makeCancelFormBody("test-id", expires, "badsig")
+	req := httptest.NewRequest("POST", "/cancel", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
-func TestCancelHandler_Expired(t *testing.T) {
+func TestPostCancelHandler_Expired(t *testing.T) {
 	store := NewStore(time.Hour)
-	store.Register("test-id", 42)
+	store.Register("test-id", 42, CancelMetadata{})
 	cfg := makeCancelCfg("secret", "https://example.com")
-	expires, sig := GenerateToken([]byte("secret"), "test-id", -time.Second) // already expired
+	expires, sig := GenerateToken([]byte("secret"), "test-id", -time.Second)
 
 	mux := newWebMux(nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)))
 
-	req := httptest.NewRequest("DELETE",
-		fmt.Sprintf("/cancel?id=test-id&expires=%d&sig=%s", expires, sig), nil)
+	body := makeCancelFormBody("test-id", expires, sig)
+	req := httptest.NewRequest("POST", "/cancel", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusGone, rr.Code)
 }
 
-func TestCancelHandler_NotFound(t *testing.T) {
+func TestPostCancelHandler_NotFound(t *testing.T) {
 	store := NewStore(time.Hour)
-	// nothing registered
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "ghost-id", time.Hour)
 
 	mux := newWebMux(nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)))
 
-	req := httptest.NewRequest("DELETE",
-		fmt.Sprintf("/cancel?id=ghost-id&expires=%d&sig=%s", expires, sig), nil)
+	body := makeCancelFormBody("ghost-id", expires, sig)
+	req := httptest.NewRequest("POST", "/cancel", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
@@ -137,8 +271,10 @@ func TestNewCancelMux_CancelReachable(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	mux := newCancelMux(store, cfg, makeRemoveFunc(new(bool)))
 
-	// A DELETE with missing params should return 400, not 404 — proving the route exists.
-	req := httptest.NewRequest("DELETE", "/cancel?id=x", nil)
+	// A POST with missing params should return 400, not 404 — proving the route exists.
+	body := strings.NewReader("id=x")
+	req := httptest.NewRequest("POST", "/cancel", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
@@ -169,7 +305,9 @@ func TestNewCancelMux_NilStoreCancelReturns404(t *testing.T) {
 	cfg := makeCancelCfg("", "")
 	mux := newCancelMux(nil, cfg, nil)
 
-	req := httptest.NewRequest("DELETE", "/cancel?id=x&expires=1&sig=y", nil)
+	body := strings.NewReader("id=x&expires=1&sig=y")
+	req := httptest.NewRequest("POST", "/cancel", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 	assert.Equal(t, http.StatusNotFound, rr.Code)

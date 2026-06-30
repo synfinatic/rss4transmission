@@ -77,7 +77,7 @@ func TestValidateToken_WrongSecret(t *testing.T) {
 
 func TestStore_RegisterAndTake(t *testing.T) {
 	s := NewStore(time.Hour)
-	s.Register("id-1", 42)
+	s.Register("id-1", 42, CancelMetadata{})
 
 	torrentID, ok := s.Take("id-1")
 	assert.True(t, ok)
@@ -93,7 +93,7 @@ func TestStore_Take_MissingKey(t *testing.T) {
 
 func TestStore_Take_RemovesEntry(t *testing.T) {
 	s := NewStore(time.Hour)
-	s.Register("id-1", 42)
+	s.Register("id-1", 42, CancelMetadata{})
 	s.Take("id-1")
 
 	_, ok := s.Take("id-1")
@@ -102,7 +102,7 @@ func TestStore_Take_RemovesEntry(t *testing.T) {
 
 func TestStore_Delete(t *testing.T) {
 	s := NewStore(time.Hour)
-	s.Register("id-1", 42)
+	s.Register("id-1", 42, CancelMetadata{})
 	s.Delete("id-1")
 
 	_, ok := s.Take("id-1")
@@ -111,7 +111,7 @@ func TestStore_Delete(t *testing.T) {
 
 func TestStore_Reaper_RemovesExpired(t *testing.T) {
 	s := NewStore(50 * time.Millisecond)
-	s.Register("id-expire", 99)
+	s.Register("id-expire", 99, CancelMetadata{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -125,7 +125,7 @@ func TestStore_Reaper_RemovesExpired(t *testing.T) {
 
 func TestStore_Reaper_KeepsFreshEntries(t *testing.T) {
 	s := NewStore(time.Hour)
-	s.Register("id-fresh", 77)
+	s.Register("id-fresh", 77, CancelMetadata{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -135,4 +135,43 @@ func TestStore_Reaper_KeepsFreshEntries(t *testing.T) {
 
 	_, ok := s.Take("id-fresh")
 	assert.True(t, ok, "fresh entry should not be reaped")
+}
+
+// --- Store.Peek ---
+
+func TestStore_Peek_Found(t *testing.T) {
+	s := NewStore(time.Hour)
+	meta := CancelMetadata{
+		Title:    "My Show S01E01",
+		FeedName: "shows",
+		Labels:   map[string]string{"show": "My Show", "episode": "S01E01"},
+		Files:    []string{"My.Show.S01E01.mkv"},
+	}
+	s.Register("id-peek", 55, meta)
+
+	got, ok := s.Peek("id-peek")
+	require.True(t, ok)
+	assert.Equal(t, meta.Title, got.Title)
+	assert.Equal(t, meta.FeedName, got.FeedName)
+	assert.Equal(t, meta.Labels, got.Labels)
+	assert.Equal(t, meta.Files, got.Files)
+}
+
+func TestStore_Peek_Missing(t *testing.T) {
+	s := NewStore(time.Hour)
+	_, ok := s.Peek("does-not-exist")
+	assert.False(t, ok)
+}
+
+func TestStore_Peek_DoesNotConsumeEntry(t *testing.T) {
+	s := NewStore(time.Hour)
+	s.Register("id-2", 88, CancelMetadata{Title: "Keep Me"})
+
+	_, ok := s.Peek("id-2")
+	require.True(t, ok, "Peek should find the entry")
+
+	// Take should still succeed after Peek.
+	torrentID, ok := s.Take("id-2")
+	assert.True(t, ok, "Take after Peek should still find entry")
+	assert.Equal(t, int64(88), torrentID)
 }

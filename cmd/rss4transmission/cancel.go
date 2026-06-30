@@ -14,9 +14,20 @@ import (
 
 var ErrTokenExpired = errors.New("token expired")
 
+// CancelMetadata holds display information about a torrent that is stored
+// alongside the Transmission torrent ID in the cancel Store.
+type CancelMetadata struct {
+	Title     string
+	FeedName  string
+	Files     []string
+	Labels    map[string]string
+	SizeBytes int64
+}
+
 type storeEntry struct {
 	torrentID int64
 	expiresAt time.Time
+	meta      CancelMetadata
 }
 
 // Store maps per-download UUIDs to Transmission torrent IDs.
@@ -29,11 +40,22 @@ func NewStore(ttl time.Duration) *Store {
 	return &Store{ttl: ttl}
 }
 
-func (s *Store) Register(id string, torrentID int64) {
+func (s *Store) Register(id string, torrentID int64, meta CancelMetadata) {
 	s.m.Store(id, &storeEntry{
 		torrentID: torrentID,
 		expiresAt: time.Now().Add(s.ttl),
+		meta:      meta,
 	})
+}
+
+// Peek returns the metadata for the given id without consuming the entry.
+// Returns false if the id is not found.
+func (s *Store) Peek(id string) (CancelMetadata, bool) {
+	val, ok := s.m.Load(id)
+	if !ok {
+		return CancelMetadata{}, false
+	}
+	return val.(*storeEntry).meta, true
 }
 
 // Take removes the entry and returns the Transmission torrent ID. Returns

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Cancel Download — RSS4Transmission</title>
+    <style>
+        body { font-family: monospace; margin: 2em; background: #1a1a1a; color: #e0e0e0; }
+        h1 { color: #f66; margin-bottom: 0.25em; }
+        p.subtitle { color: #888; margin-top: 0; margin-bottom: 1.5em; }
+
+        table { border-collapse: collapse; margin-bottom: 1.5em; }
+        th {
+            background: #2a2a2a;
+            padding: 6px 14px 6px 0;
+            text-align: left;
+            color: #aaa;
+            font-weight: normal;
+            white-space: nowrap;
+            vertical-align: top;
+        }
+        td { padding: 6px 12px; vertical-align: top; word-break: break-word; }
+        tr:hover td { background: #222; }
+
+        .files { font-size: 0.85em; color: #aaa; margin: 0; padding: 0; list-style: none; }
+        .files li { padding: 1px 0; }
+
+        .actions { display: flex; align-items: center; gap: 1.5em; margin-top: 0.5em; }
+        .btn-cancel {
+            background: #b00;
+            color: #fff;
+            border: none;
+            padding: 0.5em 1.6em;
+            font-family: monospace;
+            font-size: 1em;
+            cursor: pointer;
+        }
+        .btn-cancel:hover { background: #d00; }
+        .keep-link { color: #888; font-size: 0.9em; cursor: pointer; text-decoration: underline; }
+        .keep-link:hover { color: #aaa; }
+    </style>
+</head>
+<body>
+    <h1>Cancel Download?</h1>
+    <p class="subtitle">Review the details below and confirm if you want to remove this download from Transmission.</p>
+
+    <table>
+        <tr>
+            <th>Feed</th>
+            <td>{{ .FeedName }}</td>
+        </tr>
+        <tr>
+            <th>Title</th>
+            <td>{{ .Title }}</td>
+        </tr>
+        <tr>
+            <th>Size</th>
+            <td>{{ .SizeFormatted }}</td>
+        </tr>
+        {{ range $k, $v := .Labels }}
+        <tr>
+            <th>{{ $k }}</th>
+            <td>{{ $v }}</td>
+        </tr>
+        {{ end }}
+        {{ if .Files }}
+        <tr>
+            <th>Files</th>
+            <td>
+                <ul class="files">
+                    {{ range .Files }}<li>{{ . }}</li>{{ end }}
+                </ul>
+            </td>
+        </tr>
+        {{ end }}
+    </table>
+
+    <form method="POST" action="/cancel">
+        <input type="hidden" name="id"      value="{{ .ID }}">
+        <input type="hidden" name="expires" value="{{ .Expires }}">
+        <input type="hidden" name="sig"     value="{{ .Sig }}">
+        <div class="actions">
+            <button class="btn-cancel" type="submit">Confirm Cancel</button>
+            <a class="keep-link" onclick="window.close(); return false;" href="javascript:void(0)">Keep Download</a>
+        </div>
+    </form>
+</body>
+</html>

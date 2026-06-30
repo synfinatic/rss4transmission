@@ -4,16 +4,30 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/manifoldco/promptui"
 	"github.com/mmcdole/gofeed"
 )
 
+// extractSize returns the byte length of the bittorrent enclosure, or 0 if
+// no parseable length is found.
+func extractSize(item *gofeed.Item) int64 {
+	for _, enc := range item.Enclosures {
+		if enc.Type == "application/x-bittorrent" && enc.Length != "" {
+			if n, err := strconv.ParseInt(enc.Length, 10, 64); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
 // sendNtfyStarted sends a "torrent started" notification to ntfy. The cancel
 // action button is only included when --cancel-listen is active and all cancel
 // config fields are set; otherwise a plain notification is sent.
-func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, title string) {
+func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, meta CancelMetadata) {
 	if feedCfg.NoNotify {
 		return
 	}
@@ -28,7 +42,7 @@ func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, title strin
 		ctx.CancelStore != nil &&
 		torrentID != 0 {
 		id := newUUID()
-		ctx.CancelStore.Register(id, torrentID)
+		ctx.CancelStore.Register(id, torrentID, meta)
 		ttl := time.Duration(ctx.Config.Cancel.TokenTTLH) * time.Hour
 		expires, sig := GenerateToken([]byte(ctx.Config.Cancel.HMACSecret), id, ttl)
 		cancelURL = fmt.Sprintf("%s/cancel?id=%s&expires=%d&sig=%s",
@@ -36,7 +50,7 @@ func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, title strin
 	}
 
 	client := NewNtfyClient(ctx.Config.Ntfy)
-	if err := client.SendTorrentStarted(title, cancelURL); err != nil {
+	if err := client.SendTorrentStarted(meta.Title, cancelURL); err != nil {
 		log.WithError(err).Warn("Failed to send ntfy notification")
 	}
 }
@@ -58,6 +72,7 @@ type candidate struct {
 	item         *FeedItem
 	titleLabels  map[string]string
 	fileLabels   []map[string]string // one set per file in the .torrent
+	fileNames    []string            // raw file names from the .torrent, for metadata display
 	torrentBytes []byte              // raw .torrent content for MetaInfo upload
 	defaults     map[string]string   // label defaults from the extractor config
 }
@@ -213,6 +228,7 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 				log.WithError(err).Debugf("Unable to parse torrent files for %s", c.item.Item.Title)
 				continue
 			}
+			c.fileNames = fileNames
 			c.fileLabels = extractor.ExtractFromFiles(fileNames)
 		}
 
@@ -324,7 +340,14 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 			}
 			return false
 		}
-		sendNtfyStarted(ctx, feedCfg, torrentID, w.item.Item.Title)
+		meta := CancelMetadata{
+			Title:     w.item.Item.Title,
+			FeedName:  feedName,
+			Labels:    w.titleLabels,
+			Files:     w.fileNames,
+			SizeBytes: extractSize(w.item.Item),
+		}
+		sendNtfyStarted(ctx, feedCfg, torrentID, meta)
 		if ctx.History != nil {
 			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "dispatched", "", w.titleLabels))
 		}
@@ -360,7 +383,14 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 			}
 			return false
 		}
-		sendNtfyStarted(ctx, feedCfg, torrentID, w.item.Item.Title)
+		meta := CancelMetadata{
+			Title:     w.item.Item.Title,
+			FeedName:  feedName,
+			Labels:    w.titleLabels,
+			Files:     w.fileNames,
+			SizeBytes: extractSize(w.item.Item),
+		}
+		sendNtfyStarted(ctx, feedCfg, torrentID, meta)
 		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
 		if ctx.History != nil {
 			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "dispatched", "", w.titleLabels))

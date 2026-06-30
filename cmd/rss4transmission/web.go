@@ -27,13 +27,30 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+
+	bytesize "github.com/inhies/go-bytesize"
 )
 
 //go:embed web/history.html
 var historyTmpl string
 
+//go:embed web/cancel.html
+var cancelTmpl string
+
 // removeFunc is the signature for removing torrents from Transmission.
 type removeFunc func(ctx context.Context, ids []int64) error
+
+// cancelPageData is passed to the cancel confirmation template.
+type cancelPageData struct {
+	Title         string
+	FeedName      string
+	Labels        map[string]string
+	Files         []string
+	SizeFormatted string
+	ID            string
+	Expires       int64
+	Sig           string
+}
 
 // parseHistoryAddr normalises a --history-listen value to a "host:port" address.
 // A bare port number is expanded to "127.0.0.1:<port>". Returns an error for
@@ -96,13 +113,14 @@ func newWebMux(history *HistoryFile) *http.ServeMux {
 	return mux
 }
 
-// newCancelMux builds a public-facing mux serving only DELETE /cancel and GET /healthz.
-// Use this when --cancel-listen is set to expose the cancel endpoint on its own port,
-// keeping the history page on a separate internal listener.
+// newCancelMux builds a public-facing mux serving only GET /cancel, POST /cancel,
+// and GET /healthz. Use this when --cancel-listen is set to expose the cancel
+// endpoint on its own port, keeping the history page on a separate internal listener.
 func newCancelMux(store *Store, cfg CancelConfig, remove removeFunc) *http.ServeMux {
 	mux := http.NewServeMux()
 	if store != nil {
-		mux.HandleFunc("DELETE /cancel", makeCancelHandler(store, cfg, remove))
+		mux.HandleFunc("GET /cancel", makeGetCancelHandler(store, cfg))
+		mux.HandleFunc("POST /cancel", makePostCancelHandler(store, cfg, remove))
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -110,13 +128,17 @@ func newCancelMux(store *Store, cfg CancelConfig, remove removeFunc) *http.Serve
 	return mux
 }
 
-// registerCancelRoutes adds the DELETE /cancel handler to mux.
+// registerCancelRoutes adds GET /cancel and POST /cancel handlers to mux.
 func registerCancelRoutes(mux *http.ServeMux, store *Store, cfg CancelConfig, remove removeFunc) {
-	mux.HandleFunc("DELETE /cancel", makeCancelHandler(store, cfg, remove))
+	mux.HandleFunc("GET /cancel", makeGetCancelHandler(store, cfg))
+	mux.HandleFunc("POST /cancel", makePostCancelHandler(store, cfg, remove))
 }
 
-func makeCancelHandler(store *Store, cfg CancelConfig, remove removeFunc) http.HandlerFunc {
+// makeGetCancelHandler serves the confirmation form. It validates the token and
+// peeks the store for metadata without consuming the entry.
+func makeGetCancelHandler(store *Store, cfg CancelConfig) http.HandlerFunc {
 	secret := []byte(cfg.HMACSecret)
+	tmpl := template.Must(template.New("cancel").Parse(cancelTmpl))
 	return func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		id := q.Get("id")
@@ -124,6 +146,67 @@ func makeCancelHandler(store *Store, cfg CancelConfig, remove removeFunc) http.H
 		sig := q.Get("sig")
 		if id == "" || expiresStr == "" || sig == "" {
 			http.Error(w, "missing required query parameters", http.StatusBadRequest)
+			return
+		}
+
+		expires, err := strconv.ParseInt(expiresStr, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid expires parameter", http.StatusBadRequest)
+			return
+		}
+
+		if err := ValidateToken(secret, id, expires, sig); err != nil {
+			if errors.Is(err, ErrTokenExpired) {
+				http.Error(w, "cancel link has expired", http.StatusGone)
+			} else {
+				http.Error(w, "invalid token", http.StatusBadRequest)
+			}
+			return
+		}
+
+		meta, ok := store.Peek(id)
+		if !ok {
+			http.Error(w, "download not found or already cancelled", http.StatusNotFound)
+			return
+		}
+
+		sizeFormatted := "Unknown"
+		if meta.SizeBytes > 0 {
+			sizeFormatted = bytesize.ByteSize(meta.SizeBytes).String()
+		}
+
+		data := cancelPageData{
+			Title:         meta.Title,
+			FeedName:      meta.FeedName,
+			Labels:        meta.Labels,
+			Files:         meta.Files,
+			SizeFormatted: sizeFormatted,
+			ID:            id,
+			Expires:       expires,
+			Sig:           sig,
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.Execute(w, data); err != nil {
+			log.WithError(err).Error("Failed to render cancel template")
+		}
+	}
+}
+
+// makePostCancelHandler processes the confirmation form submission. It re-validates
+// the token and removes the torrent from Transmission.
+func makePostCancelHandler(store *Store, cfg CancelConfig, remove removeFunc) http.HandlerFunc {
+	secret := []byte(cfg.HMACSecret)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form body", http.StatusBadRequest)
+			return
+		}
+
+		id := r.FormValue("id")
+		expiresStr := r.FormValue("expires")
+		sig := r.FormValue("sig")
+		if id == "" || expiresStr == "" || sig == "" {
+			http.Error(w, "missing required form parameters", http.StatusBadRequest)
 			return
 		}
 
@@ -154,7 +237,7 @@ func makeCancelHandler(store *Store, cfg CancelConfig, remove removeFunc) http.H
 			return
 		}
 
-		log.Infof("Cancelled download via ntfy action: torrent %d (cancel-id %s)", torrentID, id)
+		log.Infof("Cancelled download via web confirmation: torrent %d (cancel-id %s)", torrentID, id)
 		w.WriteHeader(http.StatusOK)
 	}
 }

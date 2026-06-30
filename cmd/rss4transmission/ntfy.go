@@ -44,7 +44,7 @@ func (c *NtfyClient) post(title, body, actions string) error {
 func (c *NtfyClient) SendTorrentStarted(title, cancelURL string) error {
 	var actions string
 	if cancelURL != "" {
-		actions = fmt.Sprintf("http, Cancel Download, %s, method=DELETE, clear=true", cancelURL)
+		actions = fmt.Sprintf("view, Cancel Download, %s", cancelURL)
 	}
 	return c.post("Torrent Started", title, actions)
 }
