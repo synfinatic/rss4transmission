@@ -8,11 +8,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 )
 
 var ErrTokenExpired = errors.New("token expired")
+
+// ErrMissingCancelParams is returned by parseCancelToken when any required field is absent.
+var ErrMissingCancelParams = errors.New("missing required cancel token parameters")
 
 // formatGB formats a byte count as GB to two decimal places (e.g. "4.32 GB").
 // Returns "Unknown" for non-positive values.
@@ -125,6 +129,21 @@ func GenerateToken(secret []byte, id string, ttl time.Duration) (int64, string) 
 	mac := hmac.New(sha256.New, secret)
 	fmt.Fprintf(mac, "%s:%d", id, expires) //nolint:errcheck,gosec
 	return expires, hex.EncodeToString(mac.Sum(nil))
+}
+
+// parseCancelToken parses and validates the id/expiresStr/sig triple extracted from
+// URL query params or form values. Returns the parsed Unix expiry on success.
+// Returns ErrMissingCancelParams when any field is absent, ErrTokenExpired when
+// the signature is valid but the token has elapsed.
+func parseCancelToken(secret []byte, id, expiresStr, sig string) (int64, error) {
+	if id == "" || expiresStr == "" || sig == "" {
+		return 0, ErrMissingCancelParams
+	}
+	expires, err := strconv.ParseInt(expiresStr, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid expires parameter: %w", err)
+	}
+	return expires, ValidateToken(secret, id, expires, sig)
 }
 
 // ValidateToken verifies the HMAC signature first, then checks expiry.

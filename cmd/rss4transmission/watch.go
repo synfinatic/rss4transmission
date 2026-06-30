@@ -108,10 +108,13 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	}
 
 	// Initialize the cancel store if the HMAC secret is configured.
+	// The reaper context is cancelled when Run returns, preventing a goroutine leak.
+	reaperCtx, reaperCancel := context.WithCancel(context.Background())
+	defer reaperCancel()
 	if ctx.Config.Cancel.HMACSecret != "" {
 		ttl := time.Duration(ctx.Config.Cancel.TokenTTLH) * time.Hour
 		ctx.CancelStore = NewStore(ttl)
-		ctx.CancelStore.StartReaper(context.Background())
+		ctx.CancelStore.StartReaper(reaperCtx)
 	}
 
 	var removeT removeFunc
@@ -148,7 +151,9 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	if cmd.CancelListen != "" {
 		// Split-listener mode: /cancel and /healthz on the public port, history on a
 		// separate internal port. Cancel routes are NOT registered on the history mux.
-		ctx.CancelListenEnabled = true
+		if ctx.CancelStore != nil {
+			ctx.CancelListenEnabled = true
+		}
 		addr, err := parseHistoryAddr(cmd.CancelListen)
 		if err != nil {
 			log.Fatalf("--cancel-listen: %s", err)
@@ -161,6 +166,9 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			if err != nil {
 				log.Fatalf("--history-listen: %s", err)
 			}
+			if ctx.History == nil {
+				log.Warnf("--history-listen is set but --history-file was not provided; history page will return 404")
+			}
 			go startWebServer(newWebMux(ctx.History), histAddr)
 		}
 	} else if cmd.HistoryListen != "" {
@@ -168,6 +176,9 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		addr, err := parseHistoryAddr(cmd.HistoryListen)
 		if err != nil {
 			log.Fatalf("--history-listen: %s", err)
+		}
+		if ctx.History == nil {
+			log.Warnf("--history-listen is set but --history-file was not provided; history page will return 404")
 		}
 		mux := newWebMux(ctx.History)
 		if ctx.CancelStore != nil {

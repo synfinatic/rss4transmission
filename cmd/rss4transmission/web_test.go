@@ -372,6 +372,67 @@ func TestNewCancelMux_NilStoreCancelReturns404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
+func TestPostCancelHandler_RemoveErrorPreservesStoreEntry(t *testing.T) {
+	store := NewStore(time.Hour)
+	store.Register("test-id", 77, CancelMetadata{Title: "Keep Me"})
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	failRemove := func(_ context.Context, _ []int64) error {
+		return fmt.Errorf("transmission unreachable")
+	}
+	mux := newWebMux(nil)
+	registerCancelRoutes(mux, store, cfg, failRemove, noProgressFunc())
+
+	body := makeCancelFormBody("test-id", expires, sig)
+	req := httptest.NewRequest("POST", "/cancel", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	_, _, ok := store.Peek("test-id")
+	assert.True(t, ok, "store entry must survive a failed remove so the user can retry")
+}
+
+func TestGetCancelHandler_ZeroBytesProgressBothUnknown(t *testing.T) {
+	store := NewStore(time.Hour)
+	store.Register("test-id", 42, CancelMetadata{Title: "Show"})
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	// brand-new torrent: 0 bytes downloaded, 0% done
+	mux := newWebMux(nil)
+	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), makeProgressFunc(0, 0.0))
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/cancel?id=test-id&expires=%d&sig=%s", expires, sig), nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.NotContains(t, rr.Body.String(), "0.0%",
+		"zero bytes downloaded must not show a contradictory 0.0% alongside Unknown bytes")
+}
+
+func TestNewCancelMux_NilRemovePostReturns404(t *testing.T) {
+	store := NewStore(time.Hour)
+	store.Register("test-id", 42, CancelMetadata{})
+	cfg := makeCancelCfg("secret", "https://example.com")
+	// non-nil store, nil remove → POST /cancel must not be registered (no panic)
+	mux := newCancelMux(store, cfg, nil, nil)
+
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+	body := makeCancelFormBody("test-id", expires, sig)
+	req := httptest.NewRequest("POST", "/cancel", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	// Go's mux returns 405 when GET /cancel is registered but POST is not — safe, not a panic.
+	assert.Equal(t, http.StatusMethodNotAllowed, rr.Code,
+		"POST /cancel must not be registered when remove is nil")
+}
+
 func TestParseHistoryAddr(t *testing.T) {
 	cases := []struct {
 		input   string

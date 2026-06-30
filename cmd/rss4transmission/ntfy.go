@@ -4,19 +4,23 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
+
+const ntfyTimeout = 30 * time.Second
 
 // NtfyClient sends notifications to an ntfy server.
 type NtfyClient struct {
-	cfg NtfyConfig
+	cfg    NtfyConfig
+	client *http.Client
 }
 
 func NewNtfyClient(cfg NtfyConfig) *NtfyClient {
-	return &NtfyClient{cfg: cfg}
+	return &NtfyClient{cfg: cfg, client: &http.Client{Timeout: ntfyTimeout}}
 }
 
 func (c *NtfyClient) post(title, body, actions string) error {
-	url := fmt.Sprintf("%s/%s", c.cfg.BaseURL, c.cfg.Topic)
+	url := fmt.Sprintf("%s/%s", strings.TrimRight(c.cfg.BaseURL, "/"), c.cfg.Topic)
 	req, err := http.NewRequest("POST", url, strings.NewReader(body))
 	if err != nil {
 		return err
@@ -30,7 +34,7 @@ func (c *NtfyClient) post(title, body, actions string) error {
 		req.Header.Set("Actions", actions)
 	}
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec
+	resp, err := c.client.Do(req) //nolint:gosec
 	if err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -106,6 +107,36 @@ func TestSendTorrentStarted_NoCancelURL(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, captured)
 	assert.Empty(t, captured.Header.Get("Actions"), "empty cancelURL must produce no Actions header")
+}
+
+func TestNtfyClient_TrailingSlashNormalized(t *testing.T) {
+	var requestPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewNtfyClient(NtfyConfig{BaseURL: srv.URL + "/", Topic: "mytopic"})
+	require.NoError(t, c.SendTorrentStarted("title", "", ""))
+	assert.Equal(t, "/mytopic", requestPath,
+		"trailing slash on BaseURL must not produce double-slash path")
+}
+
+func TestNtfyClient_Timeout(t *testing.T) {
+	blocked := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-blocked
+	}))
+	defer func() {
+		close(blocked)
+		slow.Close()
+	}()
+
+	c := NewNtfyClient(NtfyConfig{BaseURL: slow.URL, Topic: "t"})
+	c.client.Timeout = 100 * time.Millisecond
+	err := c.SendTorrentStarted("title", "", "")
+	require.Error(t, err, "a hung server should trigger the client timeout")
 }
 
 func TestSendTorrentStarted_HTTPError(t *testing.T) {

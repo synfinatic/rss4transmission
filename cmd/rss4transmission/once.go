@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/manifoldco/promptui"
@@ -35,23 +36,28 @@ func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, meta Cancel
 		return
 	}
 
-	var cancelURL string
+	var cancelURL, cancelID string
 	if ctx.CancelListenEnabled &&
 		ctx.Config.Cancel.HMACSecret != "" &&
 		ctx.Config.Cancel.BaseURL != "" &&
 		ctx.CancelStore != nil &&
 		torrentID != 0 {
-		id := newUUID()
-		ctx.CancelStore.Register(id, torrentID, meta)
+		cancelID = newUUID()
 		ttl := time.Duration(ctx.Config.Cancel.TokenTTLH) * time.Hour
-		expires, sig := GenerateToken([]byte(ctx.Config.Cancel.HMACSecret), id, ttl)
+		expires, sig := GenerateToken([]byte(ctx.Config.Cancel.HMACSecret), cancelID, ttl)
 		cancelURL = fmt.Sprintf("%s/cancel?id=%s&expires=%d&sig=%s",
-			ctx.Config.Cancel.BaseURL, id, expires, sig)
+			strings.TrimRight(ctx.Config.Cancel.BaseURL, "/"), cancelID, expires, sig)
 	}
 
 	client := NewNtfyClient(ctx.Config.Ntfy)
 	if err := client.SendTorrentStarted(meta.Title, formatGB(meta.SizeBytes), cancelURL); err != nil {
 		log.WithError(err).Warn("Failed to send ntfy notification")
+		return
+	}
+	// Register only after the notification was delivered; if Send failed the user
+	// never saw the cancel link and the store entry would be unreachable.
+	if cancelID != "" {
+		ctx.CancelStore.Register(cancelID, torrentID, meta)
 	}
 }
 

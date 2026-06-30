@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"testing"
 	"time"
@@ -85,6 +86,43 @@ func TestFormatGB_Positive(t *testing.T) {
 func TestFormatGB_ZeroOrNegative(t *testing.T) {
 	assert.Equal(t, "Unknown", formatGB(0))
 	assert.Equal(t, "Unknown", formatGB(-1))
+}
+
+// --- parseCancelToken ---
+
+func TestParseCancelToken_Valid(t *testing.T) {
+	secret := []byte("secret")
+	id := "test-id"
+	expires, sig := GenerateToken(secret, id, time.Hour)
+	got, err := parseCancelToken(secret, id, fmt.Sprintf("%d", expires), sig)
+	require.NoError(t, err)
+	assert.Equal(t, expires, got)
+}
+
+func TestParseCancelToken_MissingParams(t *testing.T) {
+	secret := []byte("secret")
+	_, err := parseCancelToken(secret, "", "123", "sig")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrMissingCancelParams))
+}
+
+func TestParseCancelToken_Expired(t *testing.T) {
+	secret := []byte("secret")
+	id := "test-id"
+	expires, sig := GenerateToken(secret, id, -time.Second)
+	_, err := parseCancelToken(secret, id, fmt.Sprintf("%d", expires), sig)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrTokenExpired))
+}
+
+func TestParseCancelToken_BadSignature(t *testing.T) {
+	secret := []byte("secret")
+	id := "test-id"
+	expires, _ := GenerateToken(secret, id, time.Hour)
+	_, err := parseCancelToken(secret, id, fmt.Sprintf("%d", expires), "badsig")
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrTokenExpired))
+	assert.False(t, errors.Is(err, ErrMissingCancelParams))
 }
 
 // --- Store ---
