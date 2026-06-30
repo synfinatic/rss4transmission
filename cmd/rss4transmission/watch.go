@@ -151,6 +151,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		mux := newWebMux(ctx.History)
 		if ctx.CancelStore != nil {
 			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Cancel, removeT)
+			ctx.CancelListenEnabled = true
 		}
 		go startWebServer(mux, addr)
 	}

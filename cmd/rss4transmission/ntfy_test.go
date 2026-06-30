@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -41,9 +42,8 @@ func TestSendTorrentStarted_Body(t *testing.T) {
 	var body []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var err error
-		body = make([]byte, r.ContentLength)
-		_, err = r.Body.Read(body)
-		_ = err
+		body, err = io.ReadAll(r.Body)
+		require.NoError(t, err)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()

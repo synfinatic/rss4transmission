@@ -31,7 +31,7 @@ func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, meta Cancel
 	if feedCfg.NoNotify {
 		return
 	}
-	if ctx.Config.Ntfy.BaseURL == "" {
+	if ctx.Config.Ntfy.BaseURL == "" || ctx.Config.Ntfy.Topic == "" {
 		return
 	}
 

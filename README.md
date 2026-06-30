@@ -137,8 +137,9 @@ RSS4Transmission can send push notifications via [ntfy](https://ntfy.sh) to an e
 instance (e.g. `https://ntfy.sh`). Two notification types are supported:
 
 - **Torrent started** — sent by rss4transmission immediately after submitting a torrent to
-  Transmission. Includes a **Cancel Download** action button that, when tapped, calls the
-  `/cancel` HTTP endpoint to remove the torrent from Transmission.
+  Transmission. Includes a **Cancel Download** action button that, when tapped, opens a
+  browser confirmation page (`/cancel`) showing torrent details. Confirming on that page
+  removes the torrent from Transmission.
 - **Torrent completed** — sent by a Transmission script hook (`bin/torrent-complete.sh`),
   not by rss4transmission itself.
 
@@ -167,8 +168,10 @@ Cancel:
 | `Cancel.BaseURL` | — | Public base URL of rss4transmission (used in cancel links) |
 | `Cancel.TokenTTLH` | `24` | Hours before a cancel link expires |
 
-Ntfy notifications are skipped for any feed with `NoNotify: true`. They are also skipped if
-`Ntfy.BaseURL` or `Cancel.HMACSecret` is not set — the feature is fully opt-in.
+Ntfy notifications are skipped for any feed with `NoNotify: true` and are also skipped if
+`Ntfy.BaseURL` is not set — the feature is fully opt-in. Cancel links are omitted from
+notifications when `Cancel.HMACSecret` or `Cancel.BaseURL` is not configured; the torrent
+started notification is still sent, just without the cancel action.
 
 #### Cancel Endpoint
 
@@ -181,7 +184,7 @@ Use `--history-listen` to start a single web server and let Traefik route only `
 `/healthz` externally:
 
 ```bash
-rss4transmission watch --config config.yaml --history-listen 8080
+rss4transmission watch --config config.yaml --history-listen :8080
 ```
 
 See [docker-compose.yaml](docker-compose.yaml) for the full Traefik label configuration.

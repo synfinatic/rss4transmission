@@ -73,8 +73,11 @@ func (s *Store) Delete(id string) {
 }
 
 // StartReaper launches a goroutine that removes entries whose token TTL has
-// elapsed. It stops when ctx is cancelled.
+// elapsed. It stops when ctx is cancelled. It is a no-op if the TTL is non-positive.
 func (s *Store) StartReaper(ctx context.Context) {
+	if s.ttl <= 0 {
+		return
+	}
 	go func() {
 		ticker := time.NewTicker(s.ttl)
 		defer ticker.Stop()
@@ -97,7 +100,9 @@ func (s *Store) StartReaper(ctx context.Context) {
 
 func newUUID() string {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		log.WithError(err).Fatal("crypto/rand unavailable; cannot generate cancel ID")
+	}
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])

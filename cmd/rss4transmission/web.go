@@ -238,7 +238,9 @@ func makePostCancelHandler(store *Store, cfg CancelConfig, remove removeFunc) ht
 		}
 
 		log.Infof("Cancelled download via web confirmation: torrent %d (cancel-id %s)", torrentID, id)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "Download cancelled.") //nolint:errcheck
 	}
 }
 
