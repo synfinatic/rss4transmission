@@ -115,13 +115,13 @@ func (fi *FeedItem) Download(ctx *RunContext, dir string, cacheDir string) (stri
 }
 
 // TorrentWithBytes submits a torrent to Transmission using pre-fetched bytes
-// (MetaInfo upload). The caller is responsible for recording the item in the
-// cache.
-func (fi *FeedItem) TorrentWithBytes(ctx *RunContext, dir string, data []byte) error {
+// (MetaInfo upload). Returns the Transmission torrent ID (0 for duplicates).
+// The caller is responsible for recording the item in the cache.
+func (fi *FeedItem) TorrentWithBytes(ctx *RunContext, dir string, data []byte) (int64, error) {
 	log.Debugf("Attempting to torrent: %s", fi.Item.Title)
 
 	if len(data) == 0 {
-		return fmt.Errorf("no torrent data available for %s", fi.Item.Title)
+		return 0, fmt.Errorf("no torrent data available for %s", fi.Item.Title)
 	}
 
 	encoded := base64.StdEncoding.EncodeToString(data)
@@ -129,16 +129,20 @@ func (fi *FeedItem) TorrentWithBytes(ctx *RunContext, dir string, data []byte) e
 		DownloadDir: &dir,
 		MetaInfo:    &encoded,
 	}
-	if _, err := ctx.Transmission.TorrentAdd(context.TODO(), addPayload); err != nil {
+	torrent, err := ctx.Transmission.TorrentAdd(context.TODO(), addPayload)
+	if err != nil {
 		if strings.Contains(err.Error(), "duplicate torrent") {
 			log.Warnf("Skipping duplicate torrent: %s", fi.Item.Title)
-			return nil
+			return 0, nil
 		}
-		return err
+		return 0, err
 	}
 
 	log.Infof("Torrenting: %s", fi.Item.Title)
-	return nil
+	if torrent.ID != nil {
+		return *torrent.ID, nil
+	}
+	return 0, nil
 }
 
 func (fi *FeedItem) IsComplete() bool {

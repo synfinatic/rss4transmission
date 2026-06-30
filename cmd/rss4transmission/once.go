@@ -10,6 +10,37 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
+// sendNtfyStarted sends a "torrent started" notification to ntfy. The cancel
+// action button is only included when --cancel-listen is active and all cancel
+// config fields are set; otherwise a plain notification is sent.
+func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, title string) {
+	if feedCfg.NoNotify {
+		return
+	}
+	if ctx.Config.Ntfy.BaseURL == "" {
+		return
+	}
+
+	var cancelURL string
+	if ctx.CancelListenEnabled &&
+		ctx.Config.Cancel.HMACSecret != "" &&
+		ctx.Config.Cancel.BaseURL != "" &&
+		ctx.CancelStore != nil &&
+		torrentID != 0 {
+		id := newUUID()
+		ctx.CancelStore.Register(id, torrentID)
+		ttl := time.Duration(ctx.Config.Cancel.TokenTTLH) * time.Hour
+		expires, sig := GenerateToken([]byte(ctx.Config.Cancel.HMACSecret), id, ttl)
+		cancelURL = fmt.Sprintf("%s/cancel?id=%s&expires=%d&sig=%s",
+			ctx.Config.Cancel.BaseURL, id, expires, sig)
+	}
+
+	client := NewNtfyClient(ctx.Config.Ntfy)
+	if err := client.SendTorrentStarted(title, cancelURL); err != nil {
+		log.WithError(err).Warn("Failed to send ntfy notification")
+	}
+}
+
 type Feeds map[string]*gofeed.Feed
 
 type OnceCmd struct {
@@ -285,13 +316,15 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 			}
 			return false
 		}
-		if err = w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, torrentBytes); err != nil {
+		torrentID, err := w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, torrentBytes)
+		if err != nil {
 			log.WithError(err).Errorf("Unable to torrent: %s", feedName)
 			if ctx.History != nil {
 				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
 			}
 			return false
 		}
+		sendNtfyStarted(ctx, feedCfg, torrentID, w.item.Item.Title)
 		if ctx.History != nil {
 			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "dispatched", "", w.titleLabels))
 		}
@@ -319,13 +352,15 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "downloaded", "", w.titleLabels))
 		}
 	case Torrent:
-		if err = w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, w.torrentBytes); err != nil {
+		torrentID, err := w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, w.torrentBytes)
+		if err != nil {
 			log.WithError(err).Errorf("Unable to torrent: %s", feedName)
 			if ctx.History != nil {
 				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
 			}
 			return false
 		}
+		sendNtfyStarted(ctx, feedCfg, torrentID, w.item.Item.Title)
 		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
 		if ctx.History != nil {
 			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "dispatched", "", w.titleLabels))

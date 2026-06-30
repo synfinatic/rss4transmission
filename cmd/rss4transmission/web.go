@@ -19,7 +19,9 @@ package main
  */
 
 import (
+	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"net"
@@ -29,6 +31,9 @@ import (
 
 //go:embed web/history.html
 var historyTmpl string
+
+// removeFunc is the signature for removing torrents from Transmission.
+type removeFunc func(ctx context.Context, ids []int64) error
 
 // parseHistoryAddr normalises a --history-listen value to a "host:port" address.
 // A bare port number is expanded to "127.0.0.1:<port>". Returns an error for
@@ -52,7 +57,9 @@ func parseHistoryAddr(s string) (string, error) {
 	return fmt.Sprintf("127.0.0.1:%d", p), nil
 }
 
-func startHistoryServer(history *HistoryFile, addr string) {
+// newWebMux builds the shared HTTP mux. If history is non-nil, the history
+// page is served at "/". The /healthz route is always registered.
+func newWebMux(history *HistoryFile) *http.ServeMux {
 	funcMap := template.FuncMap{
 		"outcomeClass": func(outcome string) string {
 			switch outcome {
@@ -68,19 +75,95 @@ func startHistoryServer(history *HistoryFile, addr string) {
 	tmpl := template.Must(template.New("history").Funcs(funcMap).Parse(historyTmpl))
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		records := history.GetRecords()
-		for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
-			records[i], records[j] = records[j], records[i]
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.Execute(w, records); err != nil {
-			log.WithError(err).Error("Failed to render history template")
-		}
+
+	if history != nil {
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			records := history.GetRecords()
+			for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
+				records[i], records[j] = records[j], records[i]
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := tmpl.Execute(w, records); err != nil {
+				log.WithError(err).Error("Failed to render history template")
+			}
+		})
+	}
+
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
 	})
 
-	log.Infof("Starting history web server on http://%s", addr)
+	return mux
+}
+
+// newCancelMux builds a public-facing mux serving only DELETE /cancel and GET /healthz.
+// Use this when --cancel-listen is set to expose the cancel endpoint on its own port,
+// keeping the history page on a separate internal listener.
+func newCancelMux(store *Store, cfg CancelConfig, remove removeFunc) *http.ServeMux {
+	mux := http.NewServeMux()
+	if store != nil {
+		mux.HandleFunc("DELETE /cancel", makeCancelHandler(store, cfg, remove))
+	}
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	return mux
+}
+
+// registerCancelRoutes adds the DELETE /cancel handler to mux.
+func registerCancelRoutes(mux *http.ServeMux, store *Store, cfg CancelConfig, remove removeFunc) {
+	mux.HandleFunc("DELETE /cancel", makeCancelHandler(store, cfg, remove))
+}
+
+func makeCancelHandler(store *Store, cfg CancelConfig, remove removeFunc) http.HandlerFunc {
+	secret := []byte(cfg.HMACSecret)
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		id := q.Get("id")
+		expiresStr := q.Get("expires")
+		sig := q.Get("sig")
+		if id == "" || expiresStr == "" || sig == "" {
+			http.Error(w, "missing required query parameters", http.StatusBadRequest)
+			return
+		}
+
+		expires, err := strconv.ParseInt(expiresStr, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid expires parameter", http.StatusBadRequest)
+			return
+		}
+
+		if err := ValidateToken(secret, id, expires, sig); err != nil {
+			if errors.Is(err, ErrTokenExpired) {
+				http.Error(w, "cancel link has expired", http.StatusGone)
+			} else {
+				http.Error(w, "invalid token", http.StatusBadRequest)
+			}
+			return
+		}
+
+		torrentID, ok := store.Take(id)
+		if !ok {
+			http.Error(w, "download not found or already cancelled", http.StatusNotFound)
+			return
+		}
+
+		if err := remove(r.Context(), []int64{torrentID}); err != nil {
+			log.WithError(err).Errorf("Failed to remove torrent %d from Transmission", torrentID)
+			http.Error(w, "failed to cancel download", http.StatusInternalServerError)
+			return
+		}
+
+		log.Infof("Cancelled download via ntfy action: torrent %d (cancel-id %s)", torrentID, id)
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// startWebServer starts the HTTP server on addr. Blocks until the server
+// stops; intended to be called in a goroutine.
+func startWebServer(mux *http.ServeMux, addr string) {
+	log.Infof("Starting web server on http://%s", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil { //nolint:gosec
-		log.WithError(err).Error("History web server stopped")
+		log.WithError(err).Error("Web server stopped")
 	}
 }

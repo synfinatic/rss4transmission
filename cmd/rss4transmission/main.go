@@ -57,9 +57,11 @@ type RunContext struct {
 	Konf         *koanf.Koanf
 	configFile   string
 	Config       Config
-	Cache        *CacheFile
-	History      *HistoryFile
-	Transmission *transmissionrpc.Client
+	Cache               *CacheFile
+	History             *HistoryFile
+	CancelStore         *Store
+	CancelListenEnabled bool
+	Transmission        *transmissionrpc.Client
 	Provider     *file.File
 }
 

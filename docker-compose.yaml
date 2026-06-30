@@ -6,29 +6,56 @@ services:
     container_name: rss4transmission
     restart: unless-stopped
     image: synfinatic/rss4transmission:latest
-    network_mode: host
-    user: 1026:100
     environment:
       - POLL_SECONDS=120
       - LOG_LEVEL=info
       - HISTORY_FILE=       # path to history JSON file (e.g. /config/history.json)
-      - HISTORY_LISTEN=     # set to host:port or bare port to enable the history web UI
+      - HISTORY_LISTEN=     # host:port or bare port — enables history UI (internal only when CANCEL_LISTEN is set)
+      - CANCEL_LISTEN=      # host:port or bare port — public-facing /cancel and /healthz only
+                            # Set CANCEL_LISTEN and port-forward from your firewall to expose /cancel
+                            # without exposing the history UI. Example: CANCEL_LISTEN=0.0.0.0:8080
+                            # If only HISTORY_LISTEN is set, /cancel is served there too (Traefik mode).
       - TORRENT_CACHE_DIR=  # directory to cache fetched .torrent files (e.g. /config/torrent-cache)
     volumes:
       - /volume1/docker/transmission/rss4transmission:/config
-    # network_mode: host already exposes all ports, so no explicit port mapping is needed.
+    # Option A — Traefik routes only /cancel and /healthz externally (CANCEL_LISTEN not needed):
+    networks:
+      - internal
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rss4tx.rule=Host(`rss4transmission.yourdomain.com`) && (PathPrefix(`/cancel`) || PathPrefix(`/healthz`))"
+      - "traefik.http.routers.rss4tx.entrypoints=websecure"
+      - "traefik.http.routers.rss4tx.tls.certresolver=letsencrypt"
+      - "traefik.http.services.rss4tx.loadbalancer.server.port=8080"
+    # Option B — no Traefik; firewall port-forwards directly to CANCEL_LISTEN port:
+    # Set CANCEL_LISTEN=0.0.0.0:8080 and add:
+    # ports:
+    #   - "8080:8080"
+    # Remove the networks/labels above and use network_mode: host or a single internal network.
 
   transmission:
     container_name: transmission
     restart: unless-stopped
     image: lscr.io/linuxserver/transmission:latest
-    network_mode: host
     environment:
       - PUID=1026
       - GUID=100
       - TZ=US/Pacific
       - USER=admin
       - PASS=admin
+      # ntfy credentials used by torrent-complete.sh
+      - NTFY_BASE_URL=https://ntfy.sh
+      - NTFY_TOPIC=<your-topic-name>
+      - NTFY_TOKEN=
     volumes:
       - /volume1/docker/transmission/data:/config
       - /volume1/video/torrents:/torrents
+      - ./bin:/scripts   # makes torrent-complete.sh available inside the container
+    networks:
+      - internal
+
+networks:
+  internal:
+  traefik:
+    external: true

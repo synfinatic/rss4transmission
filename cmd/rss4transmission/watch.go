@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hekmon/transmissionrpc/v3"
 )
 
 const defaultRetryInterval = 60 * time.Second
@@ -15,6 +18,7 @@ type WatchCmd struct {
 	Sleep           int      `kong:"short='s',default='300',help='Seconds to sleep between scraping'"`
 	HistoryFile     string   `kong:"help='Path to history JSON file'"`
 	HistoryListen   string   `kong:"help='Address to serve torrent history on, as host:port or bare port (disabled if empty)'"`
+	CancelListen    string   `kong:"help='Address to serve /cancel and /healthz on (host:port or bare port); splits listeners so history stays internal'"`
 	TorrentCacheDir string   `kong:"help='Directory to cache fetched .torrent files across runs'"`
 }
 
@@ -103,15 +107,52 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		}
 	}
 
-	if cmd.HistoryListen != "" {
-		if ctx.History == nil {
-			log.Fatalf("--history-listen requires --history-file to be set")
+	// Initialize the cancel store if the HMAC secret is configured.
+	if ctx.Config.Cancel.HMACSecret != "" {
+		ttl := time.Duration(ctx.Config.Cancel.TokenTTLH) * time.Hour
+		ctx.CancelStore = NewStore(ttl)
+		ctx.CancelStore.StartReaper(context.Background())
+	}
+
+	var removeT removeFunc
+	if ctx.CancelStore != nil {
+		removeT = func(rCtx context.Context, ids []int64) error {
+			return ctx.Transmission.TorrentRemove(rCtx, transmissionrpc.TorrentRemovePayload{
+				IDs:             ids,
+				DeleteLocalData: false,
+			})
 		}
+	}
+
+	if cmd.CancelListen != "" {
+		// Split-listener mode: /cancel and /healthz on the public port, history on a
+		// separate internal port. Cancel routes are NOT registered on the history mux.
+		ctx.CancelListenEnabled = true
+		addr, err := parseHistoryAddr(cmd.CancelListen)
+		if err != nil {
+			log.Fatalf("--cancel-listen: %s", err)
+		}
+		cancelMux := newCancelMux(ctx.CancelStore, ctx.Config.Cancel, removeT)
+		go startWebServer(cancelMux, addr)
+
+		if cmd.HistoryListen != "" {
+			histAddr, err := parseHistoryAddr(cmd.HistoryListen)
+			if err != nil {
+				log.Fatalf("--history-listen: %s", err)
+			}
+			go startWebServer(newWebMux(ctx.History), histAddr)
+		}
+	} else if cmd.HistoryListen != "" {
+		// Single-listener mode (backward compat): history + cancel on the same port.
 		addr, err := parseHistoryAddr(cmd.HistoryListen)
 		if err != nil {
 			log.Fatalf("--history-listen: %s", err)
 		}
-		go startHistoryServer(ctx.History, addr)
+		mux := newWebMux(ctx.History)
+		if ctx.CancelStore != nil {
+			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Cancel, removeT)
+		}
+		go startWebServer(mux, addr)
 	}
 
 	var g *Gluetun

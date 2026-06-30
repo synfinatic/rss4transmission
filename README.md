@@ -53,6 +53,7 @@ All feeds support these optional pre-filters:
 | `MinSize` / `MaxSize` | Accept only items whose enclosure size is within this range (e.g. `100MB`, `10GB`) |
 | `NoValidateCert` | Skip TLS certificate validation for this feed's URL |
 | `NoSubmit` | Dry-run: log matches but do not send to Transmission |
+| `NoNotify` | Skip ntfy notifications for this feed (see [ntfy Notifications](#ntfy-notifications)) |
 
 ### Label-Based Feed Configuration
 
@@ -130,6 +131,107 @@ Feeds:
 5. A multi-class bundle (one torrent covering MotoGP + Moto2 + Moto3 files) is submitted once but
    recorded against all covered identity keys.
 
+### ntfy Notifications
+
+RSS4Transmission can send push notifications via [ntfy](https://ntfy.sh) to an external ntfy
+instance (e.g. `https://ntfy.sh`). Two notification types are supported:
+
+- **Torrent started** — sent by rss4transmission immediately after submitting a torrent to
+  Transmission. Includes a **Cancel Download** action button that, when tapped, calls the
+  `/cancel` HTTP endpoint to remove the torrent from Transmission.
+- **Torrent completed** — sent by a Transmission script hook (`bin/torrent-complete.sh`),
+  not by rss4transmission itself.
+
+#### ntfy Config
+
+Add an `Ntfy` block and a `Cancel` block to your config file:
+
+```yaml
+Ntfy:
+  BaseURL: https://ntfy.sh   # your ntfy server
+  Topic:   <your-topic-name>              # ntfy topic to publish to
+  Token:   tk_<your-access-token>    # ntfy access token
+
+Cancel:
+  HMACSecret: <random-32-byte-hex>   # signs cancel URLs; generate with: openssl rand -hex 32
+  BaseURL:    https://rss4transmission.yourdomain.com  # externally reachable URL of this service
+  TokenTTLH:  24                     # cancel link TTL in hours (default: 24)
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `Ntfy.BaseURL` | — | Base URL of the ntfy server |
+| `Ntfy.Topic` | — | ntfy topic to publish to |
+| `Ntfy.Token` | — | ntfy access token (`Authorization: Bearer`) |
+| `Cancel.HMACSecret` | — | Secret key for signing cancel URLs (HMAC-SHA256) |
+| `Cancel.BaseURL` | — | Public base URL of rss4transmission (used in cancel links) |
+| `Cancel.TokenTTLH` | `24` | Hours before a cancel link expires |
+
+Ntfy notifications are skipped for any feed with `NoNotify: true`. They are also skipped if
+`Ntfy.BaseURL` or `Cancel.HMACSecret` is not set — the feature is fully opt-in.
+
+#### Cancel Endpoint
+
+The `/cancel` endpoint must be reachable from the internet (so ntfy can call it back when the
+user taps Cancel). There are two deployment models:
+
+**Model 1 — Traefik (or other reverse proxy)**
+
+Use `--history-listen` to start a single web server and let Traefik route only `/cancel` and
+`/healthz` externally:
+
+```bash
+rss4transmission watch --config config.yaml --history-listen 8080
+```
+
+See [docker-compose.yaml](docker-compose.yaml) for the full Traefik label configuration.
+
+**Model 2 — Direct port-forward (no reverse proxy)**
+
+Use `--cancel-listen` to start a *separate* public-facing listener that serves only `/cancel`
+and `/healthz`, leaving the history page on `--history-listen` (internal only):
+
+```bash
+rss4transmission watch --config config.yaml \
+  --cancel-listen 0.0.0.0:8080 \
+  --history-listen 127.0.0.1:9090
+```
+
+Port-forward from your firewall directly to the `--cancel-listen` port. The history page is
+never reachable on that port (requests to `/` return 404). `--history-listen` is optional; omit
+it if you don't need the history UI.
+
+In Docker:
+
+```yaml
+environment:
+  - CANCEL_LISTEN=0.0.0.0:8080
+  - HISTORY_LISTEN=127.0.0.1:9090  # optional
+ports:
+  - "8080:8080"
+```
+
+#### Completed Notification (shell script)
+
+Copy `bin/torrent-complete.sh` into your Transmission data volume and configure Transmission to
+run it via its "torrent done" script hook. Set the following environment variables in
+Transmission's container:
+
+```yaml
+environment:
+  - NTFY_BASE_URL=https://ntfy.sh
+  - NTFY_TOPIC=<your-topic-name>
+  - NTFY_TOKEN=tk_<your-access-token>
+```
+
+#### Docker Compose Notes
+
+The `docker-compose.yaml` example defaults to the Traefik model (Model 1). Comments in the
+file show how to switch to the direct port-forward model (Model 2) when Traefik is not
+available.
+
+---
+
 ### Basic Configuration Example
 
 ```yaml
@@ -145,6 +247,17 @@ Transmission:
 # Seen-cache: tracks what has already been downloaded
 SeenFile:      /path/to/seen.json
 SeenCacheDays: 30  # prune records older than this many days
+
+# Optional: ntfy push notifications
+Ntfy:
+  BaseURL: https://ntfy.sh
+  Topic:   <your-topic-name>
+  Token:   tk_<your-access-token>
+
+Cancel:
+  HMACSecret: <random-32-byte-hex>
+  BaseURL:    https://rss4transmission.yourdomain.com
+  TokenTTLH:  24
 
 Extractors:
   motogp:
@@ -210,26 +323,42 @@ SeenFile: /path/to/seen.json
 Use `--history-file` on the `watch` command to enable history recording. RSS4Transmission will record
 the outcome of every feed item it processes (dispatched, downloaded, skipped, excluded, error).
 
-Optionally pass `--history-listen` to serve a browsable history page. That flag accepts a bare port
-number (binds to `127.0.0.1`) or a full `host:port` address (including IPv6 `[::1]:port`).
+Pass `--history-listen` to start the web server. That flag accepts a bare port number (binds to
+`127.0.0.1`) or a full `host:port` address (including IPv6 `[::1]:port`).
+
+When `--cancel-listen` is **not** set, `--history-listen` hosts all three routes:
+
+- `/` — browsable history page (only if `--history-file` is also set)
+- `/cancel` — ntfy cancel-download webhook (requires `Cancel` config block)
+- `/healthz` — health check endpoint
+
+When `--cancel-listen` **is** set, the listeners are split:
+
+- `--cancel-listen` — serves only `/cancel` and `/healthz` (public-facing)
+- `--history-listen` — serves only `/` and `/healthz` (internal)
 
 ```bash
+# Single listener (Traefik routes /cancel externally)
 rss4transmission watch --config config.yaml --history-file /data/history.json --history-listen 8080
-rss4transmission watch --config config.yaml --history-file /data/history.json \
-    --history-listen 0.0.0.0:8080
+
+# Split listeners (firewall port-forwards to --cancel-listen)
+rss4transmission watch --config config.yaml \
+    --history-file /data/history.json \
+    --history-listen 127.0.0.1:9090 \
+    --cancel-listen 0.0.0.0:8080
 ```
 
-In Docker, set the `HISTORY_FILE` and `HISTORY_LISTEN` environment variables:
+In Docker, set the `HISTORY_FILE`, `HISTORY_LISTEN`, and optionally `CANCEL_LISTEN` environment
+variables:
 
 ```yaml
 environment:
   - HISTORY_FILE=/config/history.json
-  - HISTORY_LISTEN=8080          # binds to 127.0.0.1:8080
-  # - HISTORY_LISTEN=0.0.0.0:8080  # bind to all interfaces
+  - HISTORY_LISTEN=8080             # binds to 127.0.0.1:8080
+  - CANCEL_LISTEN=0.0.0.0:8080     # optional; split-listener mode
 ```
 
-When using the plain `docker-compose.yaml` (`network_mode: host`) no additional port mapping is
-needed. When using `docker-compose-gluetun.yaml`, add an explicit port mapping for the chosen port:
+When using `docker-compose-gluetun.yaml`, add an explicit port mapping for the public port:
 
 ```yaml
 ports:
