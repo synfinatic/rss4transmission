@@ -56,6 +56,10 @@
             <th>Size</th>
             <td>{{ .SizeFormatted }}</td>
         </tr>
+        <tr>
+            <th>Downloaded</th>
+            <td>{{ .Downloaded }} ({{ .Percent }})</td>
+        </tr>
         {{ range $k, $v := .Labels }}
         <tr>
             <th>{{ $k }}</th>

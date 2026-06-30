@@ -27,8 +27,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-
-	bytesize "github.com/inhies/go-bytesize"
 )
 
 //go:embed web/history.html
@@ -40,6 +38,11 @@ var cancelTmpl string
 // removeFunc is the signature for removing torrents from Transmission.
 type removeFunc func(ctx context.Context, ids []int64) error
 
+// progressFunc fetches live download progress for a single torrent from Transmission.
+// Returns bytes downloaded so far and percentDone in [0,1]. If unavailable, callers
+// should show "Unknown" rather than failing the request.
+type progressFunc func(ctx context.Context, torrentID int64) (downloadedBytes int64, percentDone float64, err error)
+
 // cancelPageData is passed to the cancel confirmation template.
 type cancelPageData struct {
 	Title         string
@@ -47,6 +50,8 @@ type cancelPageData struct {
 	Labels        map[string]string
 	Files         []string
 	SizeFormatted string
+	Downloaded    string // bytes downloaded so far, formatted (e.g. "234.5 MB"), or "Unknown"
+	Percent       string // percent done (e.g. "12.3%"), or "Unknown"
 	ID            string
 	Expires       int64
 	Sig           string
@@ -116,10 +121,10 @@ func newWebMux(history *HistoryFile) *http.ServeMux {
 // newCancelMux builds a public-facing mux serving only GET /cancel, POST /cancel,
 // and GET /healthz. Use this when --cancel-listen is set to expose the cancel
 // endpoint on its own port, keeping the history page on a separate internal listener.
-func newCancelMux(store *Store, cfg CancelConfig, remove removeFunc) *http.ServeMux {
+func newCancelMux(store *Store, cfg CancelConfig, remove removeFunc, getProgress progressFunc) *http.ServeMux {
 	mux := http.NewServeMux()
 	if store != nil {
-		mux.HandleFunc("GET /cancel", makeGetCancelHandler(store, cfg))
+		mux.HandleFunc("GET /cancel", makeGetCancelHandler(store, cfg, getProgress))
 		mux.HandleFunc("POST /cancel", makePostCancelHandler(store, cfg, remove))
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -129,14 +134,15 @@ func newCancelMux(store *Store, cfg CancelConfig, remove removeFunc) *http.Serve
 }
 
 // registerCancelRoutes adds GET /cancel and POST /cancel handlers to mux.
-func registerCancelRoutes(mux *http.ServeMux, store *Store, cfg CancelConfig, remove removeFunc) {
-	mux.HandleFunc("GET /cancel", makeGetCancelHandler(store, cfg))
+func registerCancelRoutes(mux *http.ServeMux, store *Store, cfg CancelConfig, remove removeFunc, getProgress progressFunc) {
+	mux.HandleFunc("GET /cancel", makeGetCancelHandler(store, cfg, getProgress))
 	mux.HandleFunc("POST /cancel", makePostCancelHandler(store, cfg, remove))
 }
 
-// makeGetCancelHandler serves the confirmation form. It validates the token and
-// peeks the store for metadata without consuming the entry.
-func makeGetCancelHandler(store *Store, cfg CancelConfig) http.HandlerFunc {
+// makeGetCancelHandler serves the confirmation form. It validates the token,
+// peeks the store for metadata without consuming the entry, and queries
+// Transmission for live download progress via getProgress.
+func makeGetCancelHandler(store *Store, cfg CancelConfig, getProgress progressFunc) http.HandlerFunc {
 	secret := []byte(cfg.HMACSecret)
 	tmpl := template.Must(template.New("cancel").Parse(cancelTmpl))
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -164,15 +170,21 @@ func makeGetCancelHandler(store *Store, cfg CancelConfig) http.HandlerFunc {
 			return
 		}
 
-		meta, ok := store.Peek(id)
+		torrentID, meta, ok := store.Peek(id)
 		if !ok {
 			http.Error(w, "download not found or already cancelled", http.StatusNotFound)
 			return
 		}
 
-		sizeFormatted := "Unknown"
-		if meta.SizeBytes > 0 {
-			sizeFormatted = bytesize.ByteSize(meta.SizeBytes).String()
+		sizeFormatted := formatGB(meta.SizeBytes)
+
+		downloaded := "Unknown"
+		percent := "Unknown"
+		if getProgress != nil {
+			if dlBytes, pct, err := getProgress(r.Context(), torrentID); err == nil && dlBytes >= 0 {
+				downloaded = formatGB(dlBytes)
+				percent = fmt.Sprintf("%.1f%%", pct*100)
+			}
 		}
 
 		data := cancelPageData{
@@ -181,6 +193,8 @@ func makeGetCancelHandler(store *Store, cfg CancelConfig) http.HandlerFunc {
 			Labels:        meta.Labels,
 			Files:         meta.Files,
 			SizeFormatted: sizeFormatted,
+			Downloaded:    downloaded,
+			Percent:       percent,
 			ID:            id,
 			Expires:       expires,
 			Sig:           sig,

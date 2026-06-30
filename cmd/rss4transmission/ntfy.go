@@ -41,12 +41,16 @@ func (c *NtfyClient) post(title, body, actions string) error {
 	return nil
 }
 
-func (c *NtfyClient) SendTorrentStarted(title, cancelURL string) error {
+func (c *NtfyClient) SendTorrentStarted(title, size, cancelURL string) error {
+	body := title
+	if size != "" {
+		body = title + "\n" + size
+	}
 	var actions string
 	if cancelURL != "" {
 		actions = fmt.Sprintf("view, Cancel Download, %s", cancelURL)
 	}
-	return c.post("Torrent Started", title, actions)
+	return c.post("Torrent Started", body, actions)
 }
 
 func (c *NtfyClient) SendTorrentCompleted(title string) error {

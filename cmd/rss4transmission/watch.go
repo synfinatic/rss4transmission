@@ -115,12 +115,33 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	}
 
 	var removeT removeFunc
+	var getProgress progressFunc
 	if ctx.CancelStore != nil {
 		removeT = func(rCtx context.Context, ids []int64) error {
 			return ctx.Transmission.TorrentRemove(rCtx, transmissionrpc.TorrentRemovePayload{
 				IDs:             ids,
 				DeleteLocalData: false,
 			})
+		}
+		getProgress = func(rCtx context.Context, torrentID int64) (int64, float64, error) {
+			torrents, err := ctx.Transmission.TorrentGet(rCtx,
+				[]string{"downloadedEver", "percentDone"}, []int64{torrentID})
+			if err != nil {
+				return 0, 0, err
+			}
+			if len(torrents) == 0 {
+				return 0, 0, nil
+			}
+			t := torrents[0]
+			var dlBytes int64
+			if t.DownloadedEver != nil {
+				dlBytes = *t.DownloadedEver
+			}
+			var pct float64
+			if t.PercentDone != nil {
+				pct = *t.PercentDone
+			}
+			return dlBytes, pct, nil
 		}
 	}
 
@@ -132,7 +153,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		if err != nil {
 			log.Fatalf("--cancel-listen: %s", err)
 		}
-		cancelMux := newCancelMux(ctx.CancelStore, ctx.Config.Cancel, removeT)
+		cancelMux := newCancelMux(ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress)
 		go startWebServer(cancelMux, addr)
 
 		if cmd.HistoryListen != "" {
@@ -150,7 +171,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		}
 		mux := newWebMux(ctx.History)
 		if ctx.CancelStore != nil {
-			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Cancel, removeT)
+			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress)
 			ctx.CancelListenEnabled = true
 		}
 		go startWebServer(mux, addr)

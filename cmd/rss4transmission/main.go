@@ -52,17 +52,17 @@ var CONFIG_FILE = []string{
 }
 
 type RunContext struct {
-	Ctx          *kong.Context
-	Cli          *CLI
-	Konf         *koanf.Koanf
-	configFile   string
-	Config       Config
+	Ctx                 *kong.Context
+	Cli                 *CLI
+	Konf                *koanf.Koanf
+	configFile          string
+	Config              Config
 	Cache               *CacheFile
 	History             *HistoryFile
 	CancelStore         *Store
 	CancelListenEnabled bool
 	Transmission        *transmissionrpc.Client
-	Provider     *file.File
+	Provider            *file.File
 }
 
 type CLI struct {

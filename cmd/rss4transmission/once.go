@@ -50,7 +50,7 @@ func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, meta Cancel
 	}
 
 	client := NewNtfyClient(ctx.Config.Ntfy)
-	if err := client.SendTorrentStarted(meta.Title, cancelURL); err != nil {
+	if err := client.SendTorrentStarted(meta.Title, formatGB(meta.SizeBytes), cancelURL); err != nil {
 		log.WithError(err).Warn("Failed to send ntfy notification")
 	}
 }
@@ -128,16 +128,110 @@ type coverage struct {
 	labels      map[string]string
 }
 
+// feedAllowed reports whether feedName should be processed given the --feed filter.
+func (cmd *OnceCmd) feedAllowed(feedName string) bool {
+	if len(cmd.Feed) == 0 {
+		return true
+	}
+	for _, f := range cmd.Feed {
+		if f == feedName {
+			return true
+		}
+	}
+	return false
+}
+
+// processFeed runs phases 1–4 for a single feed: build candidates, fetch
+// torrent data, select winners, and dispatch. Returns true if the caller
+// should stop processing further feeds (interactive Quit).
+func (cmd *OnceCmd) processFeed(ctx *RunContext, feedName string, feedCfg Feed, rss *gofeed.Feed, extractor *ExtractorSet) bool {
+	// Phase 1: Pre-filter candidates via Exclude + size, then extract title labels.
+	var candidates []*candidate
+	for _, item := range rss.Items {
+		fi := &FeedItem{Feed: feedName, Item: item}
+		if ctx.Cache.Exists(feedName, fi) {
+			continue
+		}
+		ok, reason := feedCfg.Check(item)
+		if !ok {
+			if ctx.History != nil {
+				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, item, "excluded", reason, nil))
+			}
+			continue
+		}
+		candidates = append(candidates, &candidate{
+			item:        fi,
+			titleLabels: extractor.ExtractLabels(item.Title),
+			defaults:    extractor.Defaults(),
+		})
+	}
+
+	// Phase 2: Fetch .torrent for each candidate; extract file-level labels.
+	for _, c := range candidates {
+		start := time.Now()
+		torrentBytes, err := c.item.getTorrentContents(cmd.TorrentCacheDir)
+		if err != nil {
+			log.WithError(err).Debugf("Unable to fetch torrent for %s, using title labels only", c.item.Item.Title)
+			continue
+		}
+		log.Tracef("Fetched torrent for %s in %s", c.item.Item.Title, time.Since(start))
+		c.torrentBytes = torrentBytes
+		fileNames, err := TorrentFileNames(torrentBytes)
+		if err != nil {
+			log.WithError(err).Debugf("Unable to parse torrent files for %s", c.item.Item.Title)
+			continue
+		}
+		c.fileNames = fileNames
+		c.fileLabels = extractor.ExtractFromFiles(fileNames)
+	}
+
+	// Phase 3: Select highest-preference winner per identity key.
+	winners, skipped := selectWinners(candidates, feedCfg, ctx.Cache)
+	markCacheRejectedSeen(skipped, ctx.Cache)
+	if ctx.History != nil {
+		for _, s := range skipped {
+			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, s.cand.item.Item, "skipped", s.reason, s.cand.titleLabels))
+		}
+	}
+
+	// Phase 4: Dispatch winners.
+	for _, w := range winners {
+		covs := w.coverages(feedCfg.Identity)
+		keys := make([]string, len(covs))
+		for i, cov := range covs {
+			keys[i] = cov.identityKey
+		}
+		if cmd.dispatch(ctx, feedCfg, feedName, w, keys) {
+			return true
+		}
+	}
+	return false
+}
+
+// collectActiveGUIDs builds a map of feed name → set of GUIDs currently
+// present in the fetched RSS feeds. Used by SaveCache to retain entries whose
+// torrent link is still live.
+func collectActiveGUIDs(feeds Feeds, cfgs map[string]Feed) map[string]map[string]bool {
+	active := make(map[string]map[string]bool, len(cfgs))
+	for feedName, feedCfg := range cfgs {
+		rss := feeds[feedCfg.URL]
+		if rss == nil {
+			continue
+		}
+		m := make(map[string]bool, len(rss.Items))
+		for _, item := range rss.Items {
+			m[item.GUID] = true
+		}
+		active[feedName] = m
+	}
+	return active
+}
+
 func (cmd *OnceCmd) Run(ctx *RunContext) error {
 	var err error
 
 	log.Debugf("Starting.  Download: %v, DownloadPath: %s, Interactive: %v, NoAction: %v, Skip: %v, TorrentCacheDir: %s",
-		cmd.Download,
-		cmd.DownloadPath,
-		cmd.Interactive,
-		cmd.NoAction,
-		cmd.Skip,
-		cmd.TorrentCacheDir,
+		cmd.Download, cmd.DownloadPath, cmd.Interactive, cmd.NoAction, cmd.Skip, cmd.TorrentCacheDir,
 	)
 	if cmd.DownloadPath == "" {
 		cmd.DownloadPath = os.Getenv("PWD")
@@ -147,25 +241,13 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 	feeds := Feeds{}
 
 	for feedName, feedCfg := range ctx.Config.Feeds {
-		// Apply --feed filter if specified.
-		if len(cmd.Feed) > 0 {
-			found := false
-			for _, f := range cmd.Feed {
-				if f == feedName {
-					found = true
-					break
-				}
-			}
-			if !found {
-				continue
-			}
+		if !cmd.feedAllowed(feedName) {
+			continue
 		}
-
 		if feedCfg.Extractor == "" {
 			log.Warnf("Feed %q has no Extractor configured, skipping", feedName)
 			continue
 		}
-
 		extractor, ok := ctx.Config.Extractors[feedCfg.Extractor]
 		if !ok {
 			log.Errorf("Feed %q references unknown Extractor %q, skipping", feedName, feedCfg.Extractor)
@@ -182,97 +264,16 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 			}
 			log.Tracef("Fetched RSS %s in %s", feedCfg.URL, time.Since(start))
 		}
-		rss := feeds[feedCfg.URL]
-		if rss == nil {
+		if feeds[feedCfg.URL] == nil {
 			continue
 		}
 
-		// Phase 1: Pre-filter candidates via Exclude + size, then extract title labels.
-		var candidates []*candidate
-		for _, item := range rss.Items {
-			fi := &FeedItem{
-				Feed:     feedName,
-				Item:     item,
-				Complete: false,
-			}
-			if ctx.Cache.Exists(feedName, fi) {
-				continue // already dispatched; skip history recording
-			}
-			ok, reason := feedCfg.Check(item)
-			if !ok {
-				if ctx.History != nil {
-					ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, item, "excluded", reason, nil))
-				}
-				continue
-			}
-			titleLabels := extractor.ExtractLabels(item.Title)
-			candidates = append(candidates, &candidate{
-				item:        fi,
-				titleLabels: titleLabels,
-				defaults:    extractor.Defaults(),
-			})
-		}
-
-		// Phase 2: Fetch .torrent for each candidate; extract file-level labels.
-		for _, c := range candidates {
-			start := time.Now()
-			torrentBytes, err := c.item.getTorrentContents(cmd.TorrentCacheDir)
-			if err != nil {
-				log.WithError(err).Debugf("Unable to fetch torrent for %s, using title labels only", c.item.Item.Title)
-				continue
-			}
-			log.Tracef("Fetched torrent for %s in %s", c.item.Item.Title, time.Since(start))
-			c.torrentBytes = torrentBytes
-			fileNames, err := TorrentFileNames(torrentBytes)
-			if err != nil {
-				log.WithError(err).Debugf("Unable to parse torrent files for %s", c.item.Item.Title)
-				continue
-			}
-			c.fileNames = fileNames
-			c.fileLabels = extractor.ExtractFromFiles(fileNames)
-		}
-
-		// Phase 3: For each group, select the highest-preference winner per identity key.
-		winners, skipped := selectWinners(candidates, feedCfg, ctx.Cache)
-		markCacheRejectedSeen(skipped, ctx.Cache)
-		if ctx.History != nil {
-			for _, s := range skipped {
-				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, s.cand.item.Item, "skipped", s.reason, s.cand.titleLabels))
-			}
-		}
-
-		// Phase 4: Dispatch winners.
-		quit := false
-		for _, w := range winners {
-			if quit {
-				break
-			}
-			covs := w.coverages(feedCfg.Identity)
-			keys := make([]string, len(covs))
-			for i, cov := range covs {
-				keys[i] = cov.identityKey
-			}
-			quit = cmd.dispatch(ctx, feedCfg, feedName, w, keys)
-		}
-		if quit {
+		if cmd.processFeed(ctx, feedName, feedCfg, feeds[feedCfg.URL], extractor) {
 			break
 		}
 	}
 
-	// Collect the GUIDs currently present in each feed so SaveCache can retain
-	// entries whose torrent is still being served, even if older than SeenCacheDays.
-	activeGUIDs := make(map[string]map[string]bool, len(ctx.Config.Feeds))
-	for feedName, feedCfg := range ctx.Config.Feeds {
-		rss := feeds[feedCfg.URL]
-		if rss == nil {
-			continue
-		}
-		m := make(map[string]bool, len(rss.Items))
-		for _, item := range rss.Items {
-			m[item.GUID] = true
-		}
-		activeGUIDs[feedName] = m
-	}
+	activeGUIDs := collectActiveGUIDs(feeds, ctx.Config.Feeds)
 
 	cacheTime := time.Duration(ctx.Konf.Int("SeenCacheDays")) * time.Duration(24) * time.Hour
 	if err = ctx.Cache.SaveCache(cacheTime, activeGUIDs); err != nil {

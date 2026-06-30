@@ -73,6 +73,20 @@ func TestValidateToken_WrongSecret(t *testing.T) {
 	require.Error(t, err)
 }
 
+// --- formatGB ---
+
+func TestFormatGB_Positive(t *testing.T) {
+	gib := int64(1 << 30)
+	assert.Equal(t, "1.00 GB", formatGB(gib))
+	assert.Equal(t, "4.32 GB", formatGB(int64(4.32*float64(gib))))
+	assert.Equal(t, "0.25 GB", formatGB(gib/4))
+}
+
+func TestFormatGB_ZeroOrNegative(t *testing.T) {
+	assert.Equal(t, "Unknown", formatGB(0))
+	assert.Equal(t, "Unknown", formatGB(-1))
+}
+
 // --- Store ---
 
 func TestStore_RegisterAndTake(t *testing.T) {
@@ -149,8 +163,9 @@ func TestStore_Peek_Found(t *testing.T) {
 	}
 	s.Register("id-peek", 55, meta)
 
-	got, ok := s.Peek("id-peek")
+	torrentID, got, ok := s.Peek("id-peek")
 	require.True(t, ok)
+	assert.Equal(t, int64(55), torrentID)
 	assert.Equal(t, meta.Title, got.Title)
 	assert.Equal(t, meta.FeedName, got.FeedName)
 	assert.Equal(t, meta.Labels, got.Labels)
@@ -159,7 +174,7 @@ func TestStore_Peek_Found(t *testing.T) {
 
 func TestStore_Peek_Missing(t *testing.T) {
 	s := NewStore(time.Hour)
-	_, ok := s.Peek("does-not-exist")
+	_, _, ok := s.Peek("does-not-exist")
 	assert.False(t, ok)
 }
 
@@ -167,7 +182,7 @@ func TestStore_Peek_DoesNotConsumeEntry(t *testing.T) {
 	s := NewStore(time.Hour)
 	s.Register("id-2", 88, CancelMetadata{Title: "Keep Me"})
 
-	_, ok := s.Peek("id-2")
+	_, _, ok := s.Peek("id-2")
 	require.True(t, ok, "Peek should find the entry")
 
 	// Take should still succeed after Peek.

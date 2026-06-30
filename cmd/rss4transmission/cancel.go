@@ -14,6 +14,15 @@ import (
 
 var ErrTokenExpired = errors.New("token expired")
 
+// formatGB formats a byte count as GB to two decimal places (e.g. "4.32 GB").
+// Returns "Unknown" for non-positive values.
+func formatGB(bytes int64) string {
+	if bytes <= 0 {
+		return "Unknown"
+	}
+	return fmt.Sprintf("%.2f GB", float64(bytes)/float64(int64(1)<<30))
+}
+
 // CancelMetadata holds display information about a torrent that is stored
 // alongside the Transmission torrent ID in the cancel Store.
 type CancelMetadata struct {
@@ -48,14 +57,15 @@ func (s *Store) Register(id string, torrentID int64, meta CancelMetadata) {
 	})
 }
 
-// Peek returns the metadata for the given id without consuming the entry.
-// Returns false if the id is not found.
-func (s *Store) Peek(id string) (CancelMetadata, bool) {
+// Peek returns the Transmission torrent ID and metadata for the given id without
+// consuming the entry. Returns false if the id is not found.
+func (s *Store) Peek(id string) (int64, CancelMetadata, bool) {
 	val, ok := s.m.Load(id)
 	if !ok {
-		return CancelMetadata{}, false
+		return 0, CancelMetadata{}, false
 	}
-	return val.(*storeEntry).meta, true
+	e := val.(*storeEntry)
+	return e.torrentID, e.meta, true
 }
 
 // Take removes the entry and returns the Transmission torrent ID. Returns

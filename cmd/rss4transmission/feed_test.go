@@ -90,7 +90,7 @@ func makeFeedItemWithURL(title, torrentURL string) *FeedItem {
 func TestGetTorrentContents_CacheHit(t *testing.T) {
 	dir := t.TempDir()
 	cachePath := filepath.Join(dir, sanitizeFilename("My.Title")+".torrent")
-	if err := os.WriteFile(cachePath, sentinelTorrent, 0644); err != nil {
+	if err := os.WriteFile(cachePath, sentinelTorrent, 0600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 

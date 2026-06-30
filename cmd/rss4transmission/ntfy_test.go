@@ -23,7 +23,7 @@ func TestSendTorrentStarted_Headers(t *testing.T) {
 		Topic:   "mytopic",
 		Token:   "tk_testtoken",
 	})
-	err := c.SendTorrentStarted("My.Show.S01E01", "https://example.com/cancel?id=x")
+	err := c.SendTorrentStarted("My.Show.S01E01", "4.32 GB", "https://example.com/cancel?id=x")
 	require.NoError(t, err)
 	require.NotNil(t, captured)
 
@@ -49,7 +49,23 @@ func TestSendTorrentStarted_Body(t *testing.T) {
 	defer srv.Close()
 
 	c := NewNtfyClient(NtfyConfig{BaseURL: srv.URL, Topic: "t"})
-	require.NoError(t, c.SendTorrentStarted("My.Show.S01E01", "https://example.com/cancel"))
+	require.NoError(t, c.SendTorrentStarted("My.Show.S01E01", "4.32 GB", "https://example.com/cancel"))
+	assert.Contains(t, string(body), "My.Show.S01E01")
+	assert.Contains(t, string(body), "4.32 GB")
+}
+
+func TestSendTorrentStarted_NoSize(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		require.NoError(t, err)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewNtfyClient(NtfyConfig{BaseURL: srv.URL, Topic: "t"})
+	require.NoError(t, c.SendTorrentStarted("My.Show.S01E01", "", ""))
 	assert.Equal(t, "My.Show.S01E01", string(body))
 }
 
@@ -86,7 +102,7 @@ func TestSendTorrentStarted_NoCancelURL(t *testing.T) {
 	defer srv.Close()
 
 	c := NewNtfyClient(NtfyConfig{BaseURL: srv.URL, Topic: "mytopic", Token: "tk_testtoken"})
-	err := c.SendTorrentStarted("My.Show.S01E01", "")
+	err := c.SendTorrentStarted("My.Show.S01E01", "", "")
 	require.NoError(t, err)
 	require.NotNil(t, captured)
 	assert.Empty(t, captured.Header.Get("Actions"), "empty cancelURL must produce no Actions header")
@@ -99,6 +115,6 @@ func TestSendTorrentStarted_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	c := NewNtfyClient(NtfyConfig{BaseURL: srv.URL, Topic: "t"})
-	err := c.SendTorrentStarted("title", "https://example.com/cancel")
+	err := c.SendTorrentStarted("title", "1.23 GB", "https://example.com/cancel")
 	require.Error(t, err)
 }
