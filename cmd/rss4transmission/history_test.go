@@ -436,6 +436,34 @@ func TestOpenHistory_RoundTrip(t *testing.T) {
 	}
 }
 
+// --- RunContext.recordHistory ---
+
+func TestRecordHistory_NilHistory_NoPanic(t *testing.T) {
+	ctx := &RunContext{} // History is nil
+	item := makeGofeedItem("Show", "guid1")
+	ctx.recordHistory("feed", item, "dispatched", "", nil) // must not panic
+}
+
+func TestRecordHistory_WithHistory_AddsRecord(t *testing.T) {
+	h := emptyHistory()
+	ctx := &RunContext{History: h}
+	item := makeGofeedItem("Show S01E01", "guid1")
+	ctx.recordHistory("feed", item, "dispatched", "reason", map[string]string{"res": "1080p"})
+
+	if len(h.Records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(h.Records))
+	}
+	if h.Records[0].Outcome != "dispatched" {
+		t.Errorf("Outcome = %q, want dispatched", h.Records[0].Outcome)
+	}
+	if h.Records[0].Feed != "feed" {
+		t.Errorf("Feed = %q, want feed", h.Records[0].Feed)
+	}
+	if h.Records[0].Labels["res"] != "1080p" {
+		t.Errorf("Labels[res] = %q, want 1080p", h.Records[0].Labels["res"])
+	}
+}
+
 func TestOpenHistory_UsesProcessedAtWhenPublishedZero(t *testing.T) {
 	dir := t.TempDir()
 	h := &HistoryFile{

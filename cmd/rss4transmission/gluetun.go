@@ -105,12 +105,12 @@ func (g *Gluetun) CheckVpnTunnel() {
 	ForceRotate = false
 
 	var open bool
-	err = fmt.Errorf("force execution")
-	for i := 0; err != nil && i < 5; i++ {
+	for i := 0; i < 5; i++ {
 		open, err = g.isPortOpen()
-		if err != nil {
-			time.Sleep(3 * time.Second)
+		if err == nil {
+			break
 		}
+		time.Sleep(3 * time.Second)
 	}
 	if err != nil {
 		log.WithError(err).Errorf("Unable to check IsPortOpen()")
@@ -118,16 +118,16 @@ func (g *Gluetun) CheckVpnTunnel() {
 	}
 
 	if !open {
-		err = fmt.Errorf("force execution")
-		for i := 0; err != nil && i < 5; i++ {
+		for i := 0; i < 5; i++ {
 			err = g.updatePort()
-			if err != nil {
-				time.Sleep(3 * time.Second)
+			if err == nil {
+				break
 			}
+			time.Sleep(3 * time.Second)
 		}
-	}
-	if err != nil {
-		log.WithError(err).Errorf("Unable to UpdatePort()")
+		if err != nil {
+			log.WithError(err).Errorf("Unable to UpdatePort()")
+		}
 	}
 }
 
@@ -144,8 +144,7 @@ type PortResponse struct {
 
 // getPort returns the forwarded port from Gluetun
 func (g *Gluetun) getPort() (int64, error) {
-	body := new(bytes.Buffer)
-	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/portforward", g.URL), body)
+	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/portforward", g.URL), nil)
 	if err != nil {
 		return int64(0), err
 	}
@@ -179,8 +178,7 @@ type StatusResponse struct {
 
 // getStatus returns the status of the VPN tunnel from Gluetun
 func (g *Gluetun) getStatus() (VPNStatus, error) {
-	body := new(bytes.Buffer)
-	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/vpn/status", g.URL), body)
+	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/vpn/status", g.URL), nil)
 	if err != nil {
 		return VPNDown, err
 	}
@@ -254,8 +252,7 @@ func (g *Gluetun) updatePort() error {
 }
 
 func (g *Gluetun) getPublicIp() (string, error) {
-	body := new(bytes.Buffer)
-	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/publicip/ip", g.URL), body)
+	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/publicip/ip", g.URL), nil)
 	if err != nil {
 		return "", err
 	}
@@ -290,9 +287,8 @@ func (g *Gluetun) isPortOpen() (bool, error) {
 		return false, err
 	}
 
-	// track that this failed.
 	if !open {
-		g.portCheckFailed += 1
+		g.portCheckFailed++
 	} else {
 		g.portCheckFailed = 0
 	}
@@ -328,9 +324,9 @@ func (g *Gluetun) rotate() error {
 		status, err = g.getStatus()
 		if err != nil {
 			log.WithError(err).Errorf("Unable to GetStatus")
-			time.Sleep(time.Duration(3 * time.Second))
+			time.Sleep(3 * time.Second)
 		} else if status == VPNDown {
-			time.Sleep(time.Duration(3 * time.Second))
+			time.Sleep(3 * time.Second)
 		}
 	}
 

@@ -155,6 +155,14 @@ func (h *HistoryFile) SaveHistory(d time.Duration) error {
 	return os.WriteFile(h.filename, data, 0644) //nolint:gosec
 }
 
+// recordHistory is a convenience method on RunContext that creates a HistoryRecord
+// and adds it to the history file. It is a no-op when ctx.History is nil.
+func (ctx *RunContext) recordHistory(feedName string, item *gofeed.Item, outcome, reason string, labels map[string]string) {
+	if ctx.History != nil {
+		ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, item, outcome, reason, labels))
+	}
+}
+
 // GetRecords returns a copy of all records for safe concurrent reads.
 func (h *HistoryFile) GetRecords() []HistoryRecord {
 	h.mu.RLock()

@@ -62,9 +62,7 @@ type cancelPageData struct {
 // invalid or out-of-range values.
 func parseHistoryAddr(s string) (string, error) {
 	// If it already contains a colon it is a host:port or [ipv6]:port.
-	if _, _, err := net.SplitHostPort(s); err == nil {
-		// Validate the port part.
-		_, portStr, _ := net.SplitHostPort(s)
+	if _, portStr, err := net.SplitHostPort(s); err == nil {
 		p, err := strconv.Atoi(portStr)
 		if err != nil || p < 1 || p > 65535 {
 			return "", fmt.Errorf("invalid port in %q", s)
