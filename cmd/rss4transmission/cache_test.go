@@ -333,7 +333,7 @@ func TestSaveCache_NoPruning(t *testing.T) {
 		needSave: true,
 	}
 
-	if err := c.SaveCache(30 * 24 * time.Hour, nil); err != nil {
+	if err := c.SaveCache(30*24*time.Hour, nil); err != nil {
 		t.Fatalf("SaveCache returned error: %v", err)
 	}
 
@@ -368,7 +368,7 @@ func TestSaveCache_Pruning(t *testing.T) {
 		needSave: true,
 	}
 
-	if err := c.SaveCache(30 * 24 * time.Hour, nil); err != nil {
+	if err := c.SaveCache(30*24*time.Hour, nil); err != nil {
 		t.Fatalf("SaveCache returned error: %v", err)
 	}
 	if len(c.Seen) != 1 || c.Seen[0].GUID != "recent" {
@@ -398,7 +398,7 @@ func TestSaveCache_PruningRebuildsIdentityIndex(t *testing.T) {
 	}
 	c.rebuildIdentityIndex()
 
-	if err := c.SaveCache(30 * 24 * time.Hour, nil); err != nil {
+	if err := c.SaveCache(30*24*time.Hour, nil); err != nil {
 		t.Fatalf("SaveCache returned error: %v", err)
 	}
 	if _, ok := c.identityIndex[oldKey]; ok {
@@ -425,7 +425,7 @@ func TestSaveCache_OldPublishedRecentAddTime_Kept(t *testing.T) {
 		filename: path,
 		needSave: true,
 	}
-	if err := c.SaveCache(30 * 24 * time.Hour, nil); err != nil {
+	if err := c.SaveCache(30*24*time.Hour, nil); err != nil {
 		t.Fatalf("SaveCache returned error: %v", err)
 	}
 	if len(c.Seen) != 1 {
@@ -449,7 +449,7 @@ func TestSaveCache_OldAddTime_Pruned(t *testing.T) {
 		filename: path,
 		needSave: true,
 	}
-	if err := c.SaveCache(30 * 24 * time.Hour, nil); err != nil {
+	if err := c.SaveCache(30*24*time.Hour, nil); err != nil {
 		t.Fatalf("SaveCache returned error: %v", err)
 	}
 	if len(c.Seen) != 0 {
@@ -524,7 +524,7 @@ func TestSaveCache_SkipsWhenUnchanged(t *testing.T) {
 		needSave: false,
 	}
 
-	if err := c.SaveCache(30 * 24 * time.Hour, nil); err != nil {
+	if err := c.SaveCache(30*24*time.Hour, nil); err != nil {
 		t.Fatalf("SaveCache returned error: %v", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {

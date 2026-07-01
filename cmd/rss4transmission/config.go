@@ -33,6 +33,7 @@ var ConfigDefaults = map[string]interface{}{
 	"Transmission.Username": "admin",
 	"Transmission.Password": "admin",
 	"SeenCacheDays":         30,
+	"Cancel.TokenTTLH":      24,
 }
 
 type Config struct {
@@ -40,8 +41,22 @@ type Config struct {
 	Extractors    map[string]*ExtractorSet `koanf:"Extractors"`
 	Transmission  Transmission             `koanf:"Transmission"`
 	Gluetun       GluetunConfig            `koanf:"Gluetun"`
+	Ntfy          NtfyConfig               `koanf:"Ntfy"`
+	Cancel        CancelConfig             `koanf:"Cancel"`
 	SeenFile      string                   `koanf:"SeenFile"`
 	SeenCacheDays int                      `koanf:"SeenCacheDays"`
+}
+
+type NtfyConfig struct {
+	BaseURL string `koanf:"BaseURL"`
+	Topic   string `koanf:"Topic"`
+	Token   string `koanf:"Token"` //nolint:gosec
+}
+
+type CancelConfig struct {
+	HMACSecret string `koanf:"HMACSecret"` //nolint:gosec
+	BaseURL    string `koanf:"BaseURL"`
+	TokenTTLH  int    `koanf:"TokenTTLH"`
 }
 
 type Transmission struct {

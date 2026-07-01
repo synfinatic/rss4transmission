@@ -469,13 +469,13 @@ func TestPruneTorrentCache(t *testing.T) {
 
 	// Fresh file — should survive pruning.
 	freshPath := filepath.Join(dir, "fresh.torrent")
-	if err := os.WriteFile(freshPath, []byte("fresh"), 0644); err != nil {
+	if err := os.WriteFile(freshPath, []byte("fresh"), 0600); err != nil {
 		t.Fatalf("setup fresh: %v", err)
 	}
 
 	// Old file — should be deleted.
 	oldPath := filepath.Join(dir, "old.torrent")
-	if err := os.WriteFile(oldPath, []byte("old"), 0644); err != nil {
+	if err := os.WriteFile(oldPath, []byte("old"), 0600); err != nil {
 		t.Fatalf("setup old: %v", err)
 	}
 	oldMtime := time.Now().Add(-(maxAge + 24*time.Hour))

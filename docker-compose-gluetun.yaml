@@ -6,8 +6,12 @@ services:
     image: synfinatic/rss4transmission:latest
     container_name: rss4transmission
     restart: unless-stopped
-    # note that this is not on the gluetun network so fetching RSS feeds does
-    # not happen over the VPN
+    # rss4transmission is intentionally NOT on the gluetun network so that RSS
+    # feed fetching does not go through the VPN. Because of this, its ports are
+    # published directly from this container — not via the gluetun service.
+    # If you want the cancel endpoint on the same host IP as gluetun, use
+    # network_mode: "service:gluetun" here and move the port below to gluetun's
+    # ports section (note: this will also route RSS fetching over the VPN).
     depends_on:
       - gluetun
       - transmission
@@ -17,10 +21,12 @@ services:
       - LOG_LEVEL=info
       - HISTORY_FILE=       # path to history JSON file (e.g. /config/history.json)
       - HISTORY_LISTEN=     # set to host:port or bare port to enable the history web UI
+      - CANCEL_LISTEN=      # public-facing /cancel and /healthz only (e.g. 0.0.0.0:8080)
+                            # port-forward from your firewall/NAS to this port
       - TORRENT_CACHE_DIR=  # directory to cache fetched .torrent files (e.g. /config/torrent-cache)
-    # Uncomment and adjust when HISTORY_LISTEN is enabled.
+    # Uncomment and set the port to match CANCEL_LISTEN (and/or HISTORY_LISTEN).
     # ports:
-    #   - "8080:8080"  # match the port in HISTORY_LISTEN
+    #   - "8080:8080"  # CANCEL_LISTEN port — forward this from your firewall/NAS
     volumes:
       - /volume1/docker/transmission/rss4transmission:/config
 
