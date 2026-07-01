@@ -211,6 +211,65 @@ func TestGroupMatches_MissingLabel(t *testing.T) {
 	}
 }
 
+// --- withDefaultLabels ---
+
+func TestWithDefaultLabels_EmptyDefaults(t *testing.T) {
+	labels := map[string]string{"series": "MotoGP"}
+	result := withDefaultLabels(labels, nil)
+	// With no defaults the original map must be returned (no copy).
+	result["sentinel"] = "x"
+	if labels["sentinel"] != "x" {
+		t.Error("empty defaults: expected same map reference to be returned")
+	}
+}
+
+func TestWithDefaultLabels_AllPresent(t *testing.T) {
+	labels := map[string]string{"series": "MotoGP", "resolution": "1080p"}
+	defaults := map[string]string{"resolution": "720p"}
+	result := withDefaultLabels(labels, defaults)
+	if result["resolution"] != "1080p" {
+		t.Errorf("resolution = %q, want 1080p (existing value must not be overridden by default)", result["resolution"])
+	}
+	// All defaults already present → original map returned, no copy.
+	result["sentinel"] = "x"
+	if labels["sentinel"] != "x" {
+		t.Error("all defaults present: expected same map reference to be returned")
+	}
+}
+
+func TestWithDefaultLabels_MissingDefault(t *testing.T) {
+	labels := map[string]string{"series": "MotoGP"}
+	defaults := map[string]string{"resolution": "720p", "series": "Moto2"}
+	result := withDefaultLabels(labels, defaults)
+	if result["series"] != "MotoGP" {
+		t.Errorf("series = %q, want MotoGP (existing value must not be replaced by default)", result["series"])
+	}
+	if result["resolution"] != "720p" {
+		t.Errorf("resolution = %q, want 720p (default must be applied for missing key)", result["resolution"])
+	}
+}
+
+func TestWithDefaultLabels_NoMutation(t *testing.T) {
+	labels := map[string]string{"series": "MotoGP"}
+	defaults := map[string]string{"resolution": "720p"}
+	_ = withDefaultLabels(labels, defaults)
+	if _, ok := labels["resolution"]; ok {
+		t.Error("withDefaultLabels must not mutate the original labels map")
+	}
+}
+
+func TestWithDefaultLabels_AllMissing(t *testing.T) {
+	labels := map[string]string{}
+	defaults := map[string]string{"series": "MotoGP", "resolution": "720p"}
+	result := withDefaultLabels(labels, defaults)
+	if result["series"] != "MotoGP" {
+		t.Errorf("series = %q, want MotoGP", result["series"])
+	}
+	if result["resolution"] != "720p" {
+		t.Errorf("resolution = %q, want 720p", result["resolution"])
+	}
+}
+
 func TestGroupMatches_EmptyRequire(t *testing.T) {
 	g := Group{Require: map[string][]string{}}
 	labels := map[string]string{"series": "MotoGP"}

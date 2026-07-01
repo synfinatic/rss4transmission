@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -20,17 +22,7 @@ type Group struct {
 func (g *Group) Matches(labels map[string]string) bool {
 	for label, acceptable := range g.Require {
 		v, ok := labels[label]
-		if !ok {
-			return false
-		}
-		matched := false
-		for _, a := range acceptable {
-			if a == v {
-				matched = true
-				break
-			}
-		}
-		if !matched {
+		if !ok || !slices.Contains(acceptable, v) {
 			return false
 		}
 	}
@@ -56,12 +48,8 @@ func IdentityKey(labels map[string]string, identityLabels []string) (string, boo
 // fileLabels. Neither input map is modified.
 func MergeLabels(titleLabels, fileLabels map[string]string) map[string]string {
 	merged := make(map[string]string, len(titleLabels)+len(fileLabels))
-	for k, v := range titleLabels {
-		merged[k] = v
-	}
-	for k, v := range fileLabels {
-		merged[k] = v
-	}
+	maps.Copy(merged, titleLabels)
+	maps.Copy(merged, fileLabels)
 	return merged
 }
 
@@ -71,12 +59,11 @@ func MergeLabels(titleLabels, fileLabels map[string]string) map[string]string {
 func PreferenceRank(labels map[string]string, prefer []PreferDimension) []int {
 	rank := make([]int, len(prefer))
 	for i, dim := range prefer {
+		rank[i] = len(dim.Order) // default: worst rank
 		v, ok := labels[dim.Label]
 		if !ok {
-			rank[i] = len(dim.Order)
 			continue
 		}
-		rank[i] = len(dim.Order)
 		for j, o := range dim.Order {
 			if o == v {
 				rank[i] = j
@@ -85,6 +72,28 @@ func PreferenceRank(labels map[string]string, prefer []PreferDimension) []int {
 		}
 	}
 	return rank
+}
+
+// withDefaultLabels returns labels with any absent defaults filled in.
+// If no defaults are needed, it returns labels unchanged (no allocation).
+func withDefaultLabels(labels, defaults map[string]string) map[string]string {
+	if len(defaults) == 0 {
+		return labels
+	}
+	var result map[string]string
+	for k, v := range defaults {
+		if _, ok := labels[k]; !ok {
+			if result == nil {
+				result = make(map[string]string, len(labels)+len(defaults))
+				maps.Copy(result, labels)
+			}
+			result[k] = v
+		}
+	}
+	if result != nil {
+		return result
+	}
+	return labels
 }
 
 // IsBetter returns true if rank a is strictly better (lexicographically lower)

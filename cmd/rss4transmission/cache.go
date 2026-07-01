@@ -109,13 +109,13 @@ func (c *CacheFile) BestRankForKey(key string, prefer []PreferDimension) ([]int,
 // to use time-based pruning only.
 func (c *CacheFile) SaveCache(d time.Duration, activeGUIDs map[string]map[string]bool) error {
 	deletedRecord := false
-	NewSeen := []CacheRecord{}
+	newSeen := []CacheRecord{}
 
 	for _, s := range c.Seen {
 		withinWindow := time.Since(s.AddTime).Hours() < d.Hours()
 		stillInFeed := activeGUIDs[s.Feed] != nil && activeGUIDs[s.Feed][s.GUID]
 		if withinWindow || stillInFeed {
-			NewSeen = append(NewSeen, s)
+			newSeen = append(newSeen, s)
 		} else {
 			deletedRecord = true
 			log.Infof("Removing %s from cache", s.GUID)
@@ -127,7 +127,7 @@ func (c *CacheFile) SaveCache(d time.Duration, activeGUIDs map[string]map[string
 		return nil
 	}
 
-	c.Seen = NewSeen
+	c.Seen = newSeen
 	if deletedRecord {
 		c.rebuildIdentityIndex()
 	}

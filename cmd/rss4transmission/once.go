@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -98,27 +99,7 @@ func (c *candidate) coverages(identityLabels []string) []coverage {
 	seen := map[string]bool{}
 	var result []coverage
 	for _, labels := range labelSets {
-		// Apply extractor defaults for labels still absent after merging.
-		// A new map is created only when at least one default is needed, so
-		// the original title/merged maps are never mutated.
-		if len(c.defaults) > 0 {
-			var withDefaults map[string]string
-			for k, v := range c.defaults {
-				if _, ok := labels[k]; !ok {
-					if withDefaults == nil {
-						withDefaults = make(map[string]string, len(labels)+len(c.defaults))
-						for kk, vv := range labels {
-							withDefaults[kk] = vv
-						}
-					}
-					withDefaults[k] = v
-				}
-			}
-			if withDefaults != nil {
-				labels = withDefaults
-			}
-		}
-
+		labels = withDefaultLabels(labels, c.defaults)
 		key, ok := IdentityKey(labels, identityLabels)
 		if !ok || seen[key] {
 			continue
@@ -136,15 +117,7 @@ type coverage struct {
 
 // feedAllowed reports whether feedName should be processed given the --feed filter.
 func (cmd *OnceCmd) feedAllowed(feedName string) bool {
-	if len(cmd.Feed) == 0 {
-		return true
-	}
-	for _, f := range cmd.Feed {
-		if f == feedName {
-			return true
-		}
-	}
-	return false
+	return len(cmd.Feed) == 0 || slices.Contains(cmd.Feed, feedName)
 }
 
 // processFeed runs phases 1–4 for a single feed: build candidates, fetch
@@ -160,9 +133,7 @@ func (cmd *OnceCmd) processFeed(ctx *RunContext, feedName string, feedCfg Feed, 
 		}
 		ok, reason := feedCfg.Check(item)
 		if !ok {
-			if ctx.History != nil {
-				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, item, "excluded", reason, nil))
-			}
+			ctx.recordHistory(feedName, item, "excluded", reason, nil)
 			continue
 		}
 		candidates = append(candidates, &candidate{
@@ -194,10 +165,8 @@ func (cmd *OnceCmd) processFeed(ctx *RunContext, feedName string, feedCfg Feed, 
 	// Phase 3: Select highest-preference winner per identity key.
 	winners, skipped := selectWinners(candidates, feedCfg, ctx.Cache)
 	markCacheRejectedSeen(skipped, ctx.Cache)
-	if ctx.History != nil {
-		for _, s := range skipped {
-			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, s.cand.item.Item, "skipped", s.reason, s.cand.titleLabels))
-		}
+	for _, s := range skipped {
+		ctx.recordHistory(feedName, s.cand.item.Item, "skipped", s.reason, s.cand.titleLabels)
 	}
 
 	// Phase 4: Dispatch winners.
@@ -303,16 +272,12 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 
 	if cmd.NoAction {
 		log.Infof("%s match: %s", feedName, w.item.Item.Title)
-		if ctx.History != nil {
-			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "skipped", "no-action mode", w.titleLabels))
-		}
+		ctx.recordHistory(feedName, w.item.Item, "skipped", "no-action mode", w.titleLabels)
 		return false
 	}
 	if cmd.Skip {
 		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
-		if ctx.History != nil {
-			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "skipped", "user skip", w.titleLabels))
-		}
+		ctx.recordHistory(feedName, w.item.Item, "skipped", "user skip", w.titleLabels)
 		return false
 	}
 	if cmd.Interactive {
@@ -322,29 +287,21 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 	if cmd.Download {
 		if _, err = w.item.Download(ctx, cmd.DownloadPath, cmd.TorrentCacheDir); err != nil {
 			log.WithError(err).Errorf("Unable to download: %s", w.item.Item.Title)
-			if ctx.History != nil {
-				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
-			}
+			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), w.titleLabels)
 			return false
 		}
-		if ctx.History != nil {
-			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "downloaded", "", w.titleLabels))
-		}
+		ctx.recordHistory(feedName, w.item.Item, "downloaded", "", w.titleLabels)
 	} else {
 		torrentBytes, err := ensureTorrentBytes(w.item, cmd.TorrentCacheDir, w.torrentBytes)
 		if err != nil {
 			log.WithError(err).Errorf("Unable to fetch torrent data for %s", w.item.Item.Title)
-			if ctx.History != nil {
-				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
-			}
+			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), w.titleLabels)
 			return false
 		}
 		torrentID, err := w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, torrentBytes)
 		if err != nil {
 			log.WithError(err).Errorf("Unable to torrent: %s", feedName)
-			if ctx.History != nil {
-				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
-			}
+			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), w.titleLabels)
 			return false
 		}
 		meta := CancelMetadata{
@@ -355,9 +312,7 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 			SizeBytes: extractSize(w.item.Item),
 		}
 		sendNtfyStarted(ctx, feedCfg, torrentID, meta)
-		if ctx.History != nil {
-			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "dispatched", "", w.titleLabels))
-		}
+		ctx.recordHistory(feedName, w.item.Item, "dispatched", "", w.titleLabels)
 	}
 	ctx.Cache.AddItem(w.item, w.titleLabels, keys)
 	return false
@@ -372,22 +327,16 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 	case Download:
 		if _, err = w.item.Download(ctx, cmd.DownloadPath, cmd.TorrentCacheDir); err != nil {
 			log.WithError(err).Errorf("Unable to download: %s", w.item.Item.Title)
-			if ctx.History != nil {
-				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
-			}
+			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), w.titleLabels)
 			return false
 		}
 		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
-		if ctx.History != nil {
-			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "downloaded", "", w.titleLabels))
-		}
+		ctx.recordHistory(feedName, w.item.Item, "downloaded", "", w.titleLabels)
 	case Torrent:
 		torrentID, err := w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, w.torrentBytes)
 		if err != nil {
 			log.WithError(err).Errorf("Unable to torrent: %s", feedName)
-			if ctx.History != nil {
-				ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "error", err.Error(), w.titleLabels))
-			}
+			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), w.titleLabels)
 			return false
 		}
 		meta := CancelMetadata{
@@ -399,14 +348,10 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 		}
 		sendNtfyStarted(ctx, feedCfg, torrentID, meta)
 		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
-		if ctx.History != nil {
-			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "dispatched", "", w.titleLabels))
-		}
+		ctx.recordHistory(feedName, w.item.Item, "dispatched", "", w.titleLabels)
 	case Skip:
 		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
-		if ctx.History != nil {
-			ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, w.item.Item, "skipped", "user skip", w.titleLabels))
-		}
+		ctx.recordHistory(feedName, w.item.Item, "skipped", "user skip", w.titleLabels)
 	case SkipOnce:
 		// don't add to cache
 	case Quit:
@@ -511,20 +456,7 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) ([]*
 	// matches a dispatched winner's, the real reason is that the same content is
 	// already covered by that winner.
 	titleOnlyKey := func(c *candidate) (string, bool) {
-		labels := c.titleLabels
-		if len(c.defaults) > 0 {
-			merged := make(map[string]string, len(labels)+len(c.defaults))
-			for k, v := range labels {
-				merged[k] = v
-			}
-			for k, v := range c.defaults {
-				if _, ok := merged[k]; !ok {
-					merged[k] = v
-				}
-			}
-			labels = merged
-		}
-		return IdentityKey(labels, feedCfg.Identity)
+		return IdentityKey(withDefaultLabels(c.titleLabels, c.defaults), feedCfg.Identity)
 	}
 	titleKeyWinner := make(map[string]string)
 	for _, w := range winners {
