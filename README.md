@@ -31,8 +31,10 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
 - **Label-based selection** — extract structured metadata (channel/feed, series, round, session,
   resolution, etc.) from torrent titles and file names; deduplicate by identity key; prefer
   higher-quality versions automatically
-- **[ntfy](https://ntfy.sh) push notifications** — receive a notification when a torrent starts,
-  with a simple Cancel button that removes the torrent from Transmission before it finishes
+- **[ntfy](https://ntfy.sh) push notifications** — receive a notification when a torrent starts
+  (with a Cancel button) and when it completes; notification title, body, and priority are
+  user-defined via `text/template` strings in the config file, with full access to torrent
+  metadata (labels, size, feed name, GUID, and more)
 - **History web UI** — browsable record of every processed feed item with outcome and extracted
   labels
 - **Gluetun VPN integration** — automatically restarts the VPN and syncs the peer port into
@@ -48,8 +50,9 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
   Gluetun integration, seen cache, torrent file cache, environment variables
 - [Feeds & Labels](docs/feeds.md) — feed configuration, label extractors, identity
   deduplication, preference ranking, full config example
-- [Notifications & History](docs/notifications.md) — ntfy push notifications, cancel endpoint
-  (Traefik and direct port-forward models), history web UI, completed notification script
+- [Notifications & History](docs/notifications.md) — ntfy push notifications with customizable
+  templates and priority, cancel endpoint (Traefik and direct port-forward models), history web
+  UI, completed notification via `/notify-complete` endpoint
 - [fail2ban Integration](docs/fail2ban.md) — access log setup, filter and jail configuration,
   Docker volume-mount example, client IP resolution with Cloudflare support
 

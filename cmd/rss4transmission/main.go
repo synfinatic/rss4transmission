@@ -225,5 +225,9 @@ func (rc *RunContext) loadConfig(configFile string) (*koanf.Koanf, error) {
 		return konf, err
 	}
 
+	if err := rc.Config.Ntfy.Validate(); err != nil {
+		return konf, fmt.Errorf("invalid ntfy template: %w", err)
+	}
+
 	return konf, nil
 }

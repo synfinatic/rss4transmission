@@ -162,6 +162,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			log.Fatalf("--cancel-listen: %s", err)
 		}
 		cancelMux := newCancelMux(ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress, accessLog)
+		registerNotifyCompleteRoute(cancelMux, ctx.Config.Ntfy, ctx.Config.Cancel, accessLog)
 		go startWebServer(cancelMux, addr)
 
 		if cmd.HistoryListen != "" {
@@ -188,6 +189,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress, accessLog)
 			ctx.CancelListenEnabled = true
 		}
+		registerNotifyCompleteRoute(mux, ctx.Config.Ntfy, ctx.Config.Cancel, accessLog)
 		go startWebServer(mux, addr)
 	}
 

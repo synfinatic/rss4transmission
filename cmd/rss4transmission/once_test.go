@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"github.com/mmcdole/gofeed"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func makeCandidate(guid string, labels map[string]string, fileLabels []map[string]string) *candidate {
@@ -459,6 +462,87 @@ func TestMarkCacheRejectedSeen_IgnoresOtherReasons(t *testing.T) {
 	if len(cache.Seen) != 0 {
 		t.Errorf("expected no Seen entries for non-cache-rejection reasons, got %d", len(cache.Seen))
 	}
+}
+
+// --- sendNtfyStarted ---
+
+func makeSendNtfyRunContext(t *testing.T, ntfyCfg NtfyConfig) *RunContext {
+	t.Helper()
+	require.NoError(t, ntfyCfg.Validate())
+	rc := &RunContext{}
+	rc.Config.Ntfy = ntfyCfg
+	return rc
+}
+
+func TestSendNtfyStarted_FullContext(t *testing.T) {
+	var captured *http.Request
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	ctx := makeSendNtfyRunContext(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"})
+	meta := CancelMetadata{
+		Title:     "My.Show.S01E01",
+		FeedName:  "shows",
+		SizeBytes: 1 << 30,
+	}
+	item := &gofeed.Item{Title: "My.Show.S01E01", GUID: "guid1", Link: "https://example.com/item"}
+	sendNtfyStarted(ctx, Feed{}, 42, meta, item)
+
+	require.NotNil(t, captured, "ntfy should have been called")
+	assert.Equal(t, "Torrent Started", captured.Header.Get("Title"))
+	assert.Contains(t, captured.Header.Get("Priority"), "default")
+}
+
+func TestSendNtfyStarted_GUIDAndLinkInContext(t *testing.T) {
+	var body []byte
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	ctx := makeSendNtfyRunContext(t, NtfyConfig{
+		BaseURL:     ntfySrv.URL,
+		Topic:       "t",
+		StartedBody: "{{.GUID}}|{{.Link}}",
+	})
+	meta := CancelMetadata{Title: "My.Show.S01E01"}
+	item := &gofeed.Item{
+		Title: "My.Show.S01E01",
+		GUID:  "guid1",
+		Link:  "https://example.com/item",
+	}
+	sendNtfyStarted(ctx, Feed{}, 0, meta, item)
+	assert.Equal(t, "guid1|https://example.com/item", string(body))
+}
+
+func TestSendNtfyStarted_NoNotify(t *testing.T) {
+	requestCount := 0
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	ctx := makeSendNtfyRunContext(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"})
+	sendNtfyStarted(ctx, Feed{NoNotify: true}, 0, CancelMetadata{Title: "T"}, nil)
+	assert.Equal(t, 0, requestCount, "NoNotify=true must send no notification")
+}
+
+func TestSendNtfyStarted_MissingBaseURL(t *testing.T) {
+	requestCount := 0
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	ctx := makeSendNtfyRunContext(t, NtfyConfig{Topic: "t"}) // no BaseURL
+	sendNtfyStarted(ctx, Feed{}, 0, CancelMetadata{Title: "T"}, nil)
+	assert.Equal(t, 0, requestCount, "missing BaseURL must send no notification")
 }
 
 // --- pruneTorrentCache ---

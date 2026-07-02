@@ -830,3 +830,190 @@ func TestParseHistoryAddr(t *testing.T) {
 		})
 	}
 }
+
+// --- POST /notify-complete ---
+
+func makeNotifyCompleteMux(t *testing.T, ntfyCfg NtfyConfig, cancelCfg CancelConfig) *http.ServeMux {
+	t.Helper()
+	require.NoError(t, ntfyCfg.Validate())
+	mux := http.NewServeMux()
+	registerNotifyCompleteRoute(mux, ntfyCfg, cancelCfg, nil)
+	return mux
+}
+
+func TestNotifyComplete_Success(t *testing.T) {
+	var captured *http.Request
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, CancelConfig{})
+	body := bytes.NewBufferString(`{"name":"My.Show.S01E01","dir":"/downloads","id":42}`)
+	req := httptest.NewRequest("POST", "/notify-complete", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	require.NotNil(t, captured, "ntfy should have received a request")
+	assert.Equal(t, "Torrent Complete", captured.Header.Get("Title"))
+	assert.Equal(t, "default", captured.Header.Get("Priority"))
+}
+
+func TestNotifyComplete_BadJSON(t *testing.T) {
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, CancelConfig{})
+	req := httptest.NewRequest("POST", "/notify-complete", bytes.NewBufferString(`not-json`))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestNotifyComplete_NtfyError(t *testing.T) {
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer ntfySrv.Close()
+
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, CancelConfig{})
+	body := bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":1}`)
+	req := httptest.NewRequest("POST", "/notify-complete", body)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+}
+
+func TestNotifyComplete_CustomTemplate(t *testing.T) {
+	var captured *http.Request
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	mux := makeNotifyCompleteMux(t, NtfyConfig{
+		BaseURL:        ntfySrv.URL,
+		Topic:          "t",
+		CompletedTitle: "Done: {{.Title}}",
+	}, CancelConfig{})
+	body := bytes.NewBufferString(`{"name":"My.Show.S01E01","dir":"/dl","id":7}`)
+	req := httptest.NewRequest("POST", "/notify-complete", body)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "Done: My.Show.S01E01", captured.Header.Get("Title"))
+}
+
+func TestNotifyComplete_CustomPriority(t *testing.T) {
+	var captured *http.Request
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	mux := makeNotifyCompleteMux(t, NtfyConfig{
+		BaseURL:           ntfySrv.URL,
+		Topic:             "t",
+		CompletedPriority: "high",
+	}, CancelConfig{})
+	body := bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":3}`)
+	req := httptest.NewRequest("POST", "/notify-complete", body)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "high", captured.Header.Get("Priority"))
+}
+
+func TestNotifyComplete_NotRegisteredWhenNtfyUnconfigured(t *testing.T) {
+	mux := http.NewServeMux()
+	ntfyCfg := NtfyConfig{} // no BaseURL/Topic
+	require.NoError(t, ntfyCfg.Validate())
+	registerNotifyCompleteRoute(mux, ntfyCfg, CancelConfig{}, nil)
+
+	req := httptest.NewRequest("POST", "/notify-complete", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestNotifyComplete_Auth_NoSecretConfigured(t *testing.T) {
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	// HMACSecret empty → no auth required
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, CancelConfig{})
+	body := bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":1}`)
+	req := httptest.NewRequest("POST", "/notify-complete", body)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+func TestNotifyComplete_Auth_MissingHeader(t *testing.T) {
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	cancelCfg := CancelConfig{HMACSecret: "supersecret"}
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, cancelCfg)
+	body := bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":1}`)
+	req := httptest.NewRequest("POST", "/notify-complete", body)
+	// No Authorization header
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+}
+
+func TestNotifyComplete_Auth_WrongToken(t *testing.T) {
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	cancelCfg := CancelConfig{HMACSecret: "supersecret"}
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, cancelCfg)
+	body := bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":1}`)
+	req := httptest.NewRequest("POST", "/notify-complete", body)
+	req.Header.Set("Authorization", "Bearer wrongtoken")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+}
+
+func TestNotifyComplete_Auth_CorrectToken(t *testing.T) {
+	var captured *http.Request
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	cancelCfg := CancelConfig{HMACSecret: "supersecret"}
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, cancelCfg)
+	body := bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":1}`)
+	req := httptest.NewRequest("POST", "/notify-complete", body)
+	req.Header.Set("Authorization", "Bearer supersecret")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.NotNil(t, captured, "ntfy should have been called with correct token")
+}

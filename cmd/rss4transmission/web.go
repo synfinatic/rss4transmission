@@ -21,6 +21,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -199,6 +200,78 @@ func newCancelMux(store *Store, cfg CancelConfig, remove removeFunc, getProgress
 func registerCancelRoutes(mux *http.ServeMux, store *Store, cfg CancelConfig, remove removeFunc, getProgress progressFunc, accessLog *logrus.Logger) {
 	mux.HandleFunc("GET /cancel", makeGetCancelHandler(store, cfg, getProgress, accessLog))
 	mux.HandleFunc("POST /cancel", makePostCancelHandler(store, cfg, remove, accessLog))
+}
+
+// registerNotifyCompleteRoute adds POST /notify-complete to mux when ntfy is configured.
+// When cancelCfg.HMACSecret is non-empty the endpoint requires
+// Authorization: Bearer <HMACSecret>. accessLog is optional.
+func registerNotifyCompleteRoute(mux *http.ServeMux, ntfyCfg NtfyConfig, cancelCfg CancelConfig, accessLog *logrus.Logger) {
+	if ntfyCfg.BaseURL == "" || ntfyCfg.Topic == "" {
+		return
+	}
+	mux.HandleFunc("POST /notify-complete", makeNotifyCompleteHandler(ntfyCfg, cancelCfg, accessLog))
+}
+
+// notifyCompleteRequest is the JSON body accepted by POST /notify-complete.
+type notifyCompleteRequest struct {
+	Name string `json:"name"`
+	Dir  string `json:"dir"`
+	ID   int64  `json:"id"`
+}
+
+func makeNotifyCompleteHandler(ntfyCfg NtfyConfig, cancelCfg CancelConfig, accessLog *logrus.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if cancelCfg.HMACSecret != "" {
+			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if got != cancelCfg.HMACSecret {
+				if accessLog != nil {
+					accessLog.WithFields(logrus.Fields{
+						"endpoint": "/notify-complete",
+						"result":   "unauthorized",
+					}).Warn("notify-complete access")
+				}
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+
+		var req notifyCompleteRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			if accessLog != nil {
+				accessLog.WithFields(logrus.Fields{
+					"endpoint": "/notify-complete",
+					"result":   "bad_request",
+				}).Warn("notify-complete access")
+			}
+			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+			return
+		}
+		ctx := &NtfyTemplateContext{
+			Title:     req.Name,
+			Dir:       req.Dir,
+			TorrentID: req.ID,
+		}
+		client := NewNtfyClient(ntfyCfg)
+		if err := client.SendTorrentCompleted(ctx); err != nil {
+			if accessLog != nil {
+				accessLog.WithFields(logrus.Fields{
+					"endpoint": "/notify-complete",
+					"result":   "ntfy_error",
+					"error":    err.Error(),
+				}).Warn("notify-complete access")
+			}
+			http.Error(w, "failed to send notification", http.StatusInternalServerError)
+			return
+		}
+		if accessLog != nil {
+			accessLog.WithFields(logrus.Fields{
+				"endpoint": "/notify-complete",
+				"result":   "ok",
+				"name":     req.Name,
+			}).Info("notify-complete access")
+		}
+		w.WriteHeader(http.StatusOK)
+	}
 }
 
 // tokenErrorResponse translates a parseCancelToken error into the appropriate HTTP response.

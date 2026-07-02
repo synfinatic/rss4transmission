@@ -29,7 +29,7 @@ func extractSize(item *gofeed.Item) int64 {
 // sendNtfyStarted sends a "torrent started" notification to ntfy. The cancel
 // action button is only included when --cancel-listen is active and all cancel
 // config fields are set; otherwise a plain notification is sent.
-func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, meta CancelMetadata) {
+func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, meta CancelMetadata, item *gofeed.Item) {
 	if feedCfg.NoNotify {
 		return
 	}
@@ -50,8 +50,29 @@ func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, meta Cancel
 			strings.TrimRight(ctx.Config.Cancel.BaseURL, "/"), cancelID, expires, sig)
 	}
 
+	var guid, link string
+	var published *time.Time
+	if item != nil {
+		guid = item.GUID
+		link = item.Link
+		published = item.PublishedParsed
+	}
+	ntfyCtx := &NtfyTemplateContext{
+		Title:     meta.Title,
+		FeedName:  meta.FeedName,
+		Files:     meta.Files,
+		Labels:    meta.Labels,
+		SizeBytes: meta.SizeBytes,
+		Size:      formatGB(meta.SizeBytes),
+		GUID:      guid,
+		Link:      link,
+		Published: published,
+		TorrentID: torrentID,
+		CancelURL: cancelURL,
+	}
+
 	client := NewNtfyClient(ctx.Config.Ntfy)
-	if err := client.SendTorrentStarted(meta.Title, formatGB(meta.SizeBytes), cancelURL); err != nil {
+	if err := client.SendTorrentStarted(ntfyCtx); err != nil {
 		log.WithError(err).Warn("Failed to send ntfy notification")
 		return
 	}
@@ -311,7 +332,7 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 			Files:     w.fileNames,
 			SizeBytes: extractSize(w.item.Item),
 		}
-		sendNtfyStarted(ctx, feedCfg, torrentID, meta)
+		sendNtfyStarted(ctx, feedCfg, torrentID, meta, w.item.Item)
 		ctx.recordHistory(feedName, w.item.Item, "dispatched", "", w.titleLabels)
 	}
 	ctx.Cache.AddItem(w.item, w.titleLabels, keys)
@@ -346,7 +367,7 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 			Files:     w.fileNames,
 			SizeBytes: extractSize(w.item.Item),
 		}
-		sendNtfyStarted(ctx, feedCfg, torrentID, meta)
+		sendNtfyStarted(ctx, feedCfg, torrentID, meta, w.item.Item)
 		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
 		ctx.recordHistory(feedName, w.item.Item, "dispatched", "", w.titleLabels)
 	case Skip:
