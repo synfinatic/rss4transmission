@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1016,4 +1017,64 @@ func TestNotifyComplete_Auth_CorrectToken(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	assert.NotNil(t, captured, "ntfy should have been called with correct token")
+}
+
+func TestNotifyComplete_EmptyName(t *testing.T) {
+	requestCount := 0
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, CancelConfig{})
+	body := bytes.NewBufferString(`{"name":"","dir":"/dl","id":1}`)
+	req := httptest.NewRequest("POST", "/notify-complete", body)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Equal(t, 0, requestCount, "ntfy should not be called with empty name")
+}
+
+func TestNotifyComplete_BodyTooLarge(t *testing.T) {
+	requestCount := 0
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, CancelConfig{})
+	// Build a valid JSON body that exceeds 1 MB.
+	huge := `{"name":"` + strings.Repeat("x", 2<<20) + `","dir":"/dl","id":1}`
+	req := httptest.NewRequest("POST", "/notify-complete", strings.NewReader(huge))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Equal(t, 0, requestCount, "ntfy should not be called for oversized body")
+}
+
+func TestNotifyComplete_SizeIsUnknown(t *testing.T) {
+	var body []byte
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	// When no size is available in the completion hook, Size should be "Unknown".
+	mux := makeNotifyCompleteMux(t, NtfyConfig{
+		BaseURL:       ntfySrv.URL,
+		Topic:         "t",
+		CompletedBody: "{{.Size}}",
+	}, CancelConfig{})
+	req := httptest.NewRequest("POST", "/notify-complete", bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":1}`))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "Unknown", string(body))
 }

@@ -27,16 +27,14 @@ import (
 )
 
 var ConfigDefaults = map[string]interface{}{
-	"Transmission.Host":      "localhost",
-	"Transmission.Port":      9091,
-	"Transmission.HTTPS":     false,
-	"Transmission.Path":      "/transmission/rpc",
-	"Transmission.Username":  "admin",
-	"Transmission.Password":  "admin",
-	"SeenCacheDays":          30,
-	"Cancel.TokenTTLH":       24,
-	"Ntfy.StartedPriority":   "default",
-	"Ntfy.CompletedPriority": "default",
+	"Transmission.Host":     "localhost",
+	"Transmission.Port":     9091,
+	"Transmission.HTTPS":    false,
+	"Transmission.Path":     "/transmission/rpc",
+	"Transmission.Username": "admin",
+	"Transmission.Password": "admin",
+	"SeenCacheDays":         30,
+	"Cancel.TokenTTLH":      24,
 }
 
 type Config struct {

@@ -4,13 +4,7 @@ import (
 	"testing"
 
 	"github.com/mmcdole/gofeed"
-	"github.com/stretchr/testify/assert"
 )
-
-func TestConfigDefaults_NtfyPriorityFields(t *testing.T) {
-	assert.Equal(t, "default", ConfigDefaults["Ntfy.StartedPriority"])
-	assert.Equal(t, "default", ConfigDefaults["Ntfy.CompletedPriority"])
-}
 
 func makeItem(title string, enclosureLength string) *gofeed.Item {
 	item := &gofeed.Item{Title: title}

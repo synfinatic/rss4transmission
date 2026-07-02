@@ -33,7 +33,11 @@ var validNtfyPriorities = map[string]struct{}{
 
 // Validate applies template defaults and compiles all four notification templates.
 // It also validates that priority fields contain ntfy-accepted values.
+// Returns nil immediately when ntfy is disabled (BaseURL or Topic not set).
 func (c *NtfyConfig) Validate() error {
+	if c.BaseURL == "" || c.Topic == "" {
+		return nil
+	}
 	if c.StartedTitle == "" {
 		c.StartedTitle = "Torrent Started"
 	}

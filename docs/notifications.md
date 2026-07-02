@@ -61,7 +61,7 @@ are available:
 | `{{.Files}}` | `[]string` | List of file names in the torrent | Empty for completions |
 | `{{.Labels}}` | `map[string]string` | Extracted labels (e.g. resolution, language) | Empty for completions |
 | `{{.SizeBytes}}` | `int64` | Raw size in bytes | `0` when unknown |
-| `{{.Size}}` | `string` | Human-readable size (e.g. `"4.32 GB"`) | `"Unknown"` when size is 0 |
+| `{{.Size}}` | `string` | Human-readable size (e.g. `"4.32 GB"`) | `"Unknown"` when size is 0 or unavailable (always `"Unknown"` for completions) |
 | `{{.GUID}}` | `string` | RSS item GUID | Empty for completions |
 | `{{.Link}}` | `string` | RSS item URL (web page) | Empty for completions |
 | `{{.Published}}` | `*time.Time` | RSS item publication time | May be `nil`; guard with `{{if .Published}}` |

@@ -301,7 +301,7 @@ func TestSendTorrentCompleted_CustomPriority(t *testing.T) {
 // --- NtfyConfig.Validate() ---
 
 func TestNtfyConfig_Validate_Defaults(t *testing.T) {
-	cfg := NtfyConfig{}
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "test"}
 	require.NoError(t, cfg.Validate())
 
 	assert.Equal(t, "Torrent Started", cfg.StartedTitle)
@@ -324,7 +324,7 @@ func TestNtfyConfig_Validate_Defaults(t *testing.T) {
 }
 
 func TestNtfyConfig_Validate_CustomTemplate(t *testing.T) {
-	cfg := NtfyConfig{StartedTitle: "{{.FeedName}} started"}
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "test", StartedTitle: "{{.FeedName}} started"}
 	require.NoError(t, cfg.Validate())
 
 	ctx := &NtfyTemplateContext{FeedName: "shows"}
@@ -334,21 +334,27 @@ func TestNtfyConfig_Validate_CustomTemplate(t *testing.T) {
 }
 
 func TestNtfyConfig_Validate_InvalidTemplate(t *testing.T) {
-	cfg := NtfyConfig{StartedTitle: "{{.Unclosed"}
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "test", StartedTitle: "{{.Unclosed"}
 	err := cfg.Validate()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "StartedTitle")
 }
 
 func TestNtfyConfig_Validate_InvalidPriority(t *testing.T) {
-	cfg := NtfyConfig{StartedPriority: "urgent"}
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "test", StartedPriority: "urgent"}
 	err := cfg.Validate()
 	require.Error(t, err)
 }
 
 func TestNtfyConfig_Validate_ValidPriorities(t *testing.T) {
 	for _, p := range []string{"min", "low", "default", "high", "max"} {
-		cfg := NtfyConfig{StartedPriority: p, CompletedPriority: p}
+		cfg := NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "test", StartedPriority: p, CompletedPriority: p}
 		require.NoError(t, cfg.Validate(), "priority %q should be valid", p)
 	}
+}
+
+func TestNtfyConfig_Validate_SkipsWhenDisabled(t *testing.T) {
+	// Invalid template should not cause an error when ntfy is disabled (no BaseURL/Topic).
+	cfg := NtfyConfig{StartedTitle: "{{.Unclosed"}
+	require.NoError(t, cfg.Validate(), "invalid template should be ignored when ntfy is disabled")
 }

@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -223,7 +224,7 @@ func makeNotifyCompleteHandler(ntfyCfg NtfyConfig, cancelCfg CancelConfig, acces
 	return func(w http.ResponseWriter, r *http.Request) {
 		if cancelCfg.HMACSecret != "" {
 			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if got != cancelCfg.HMACSecret {
+			if subtle.ConstantTimeCompare([]byte(got), []byte(cancelCfg.HMACSecret)) != 1 {
 				if accessLog != nil {
 					accessLog.WithFields(logrus.Fields{
 						"endpoint": "/notify-complete",
@@ -235,6 +236,7 @@ func makeNotifyCompleteHandler(ntfyCfg NtfyConfig, cancelCfg CancelConfig, acces
 			}
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 		var req notifyCompleteRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			if accessLog != nil {
@@ -246,10 +248,21 @@ func makeNotifyCompleteHandler(ntfyCfg NtfyConfig, cancelCfg CancelConfig, acces
 			http.Error(w, "invalid JSON body", http.StatusBadRequest)
 			return
 		}
+		if req.Name == "" {
+			if accessLog != nil {
+				accessLog.WithFields(logrus.Fields{
+					"endpoint": "/notify-complete",
+					"result":   "bad_request",
+				}).Warn("notify-complete access")
+			}
+			http.Error(w, "name is required", http.StatusBadRequest)
+			return
+		}
 		ctx := &NtfyTemplateContext{
 			Title:     req.Name,
 			Dir:       req.Dir,
 			TorrentID: req.ID,
+			Size:      formatGB(0), // no size info available from Transmission hook
 		}
 		client := NewNtfyClient(ntfyCfg)
 		if err := client.SendTorrentCompleted(ctx); err != nil {
