@@ -20,6 +20,7 @@ type WatchCmd struct {
 	HistoryListen   string   `kong:"help='Address to serve torrent history on, as host:port or bare port (disabled if empty)'"`
 	CancelListen    string   `kong:"help='Address to serve /cancel and /healthz on (host:port or bare port); splits listeners so history stays internal'"`
 	TorrentCacheDir string   `kong:"help='Directory to cache fetched .torrent files across runs'"`
+	AccessLog       string   `kong:"help='Path to append-mode HTTP access log for fail2ban integration (disabled if empty)'"`
 }
 
 // retryLoadConfig calls tryLoad repeatedly, sleeping interval between attempts.
@@ -148,6 +149,8 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		}
 	}
 
+	accessLog := openAccessLog(cmd.AccessLog)
+
 	if cmd.CancelListen != "" {
 		// Split-listener mode: /cancel and /healthz on the public port, history on a
 		// separate internal port. Cancel routes are NOT registered on the history mux.
@@ -158,7 +161,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		if err != nil {
 			log.Fatalf("--cancel-listen: %s", err)
 		}
-		cancelMux := newCancelMux(ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress)
+		cancelMux := newCancelMux(ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress, accessLog)
 		go startWebServer(cancelMux, addr)
 
 		if cmd.HistoryListen != "" {
@@ -182,7 +185,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		}
 		mux := newWebMux(ctx.History)
 		if ctx.CancelStore != nil {
-			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress)
+			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress, accessLog)
 			ctx.CancelListenEnabled = true
 		}
 		go startWebServer(mux, addr)

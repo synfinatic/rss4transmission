@@ -39,6 +39,8 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
   Transmission when running behind [Gluetun](https://github.com/qdm12/gluetun)
 - **Torrent file cache** — avoids re-fetching `.torrent` files on every watch-loop iteration;
   pruned automatically
+- **fail2ban integration** — optional access log with timestamps and client IPs lets fail2ban
+  detect and ban brute-force attempts against the cancel endpoint
 
 ## Documentation
 
@@ -48,6 +50,8 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
   deduplication, preference ranking, full config example
 - [Notifications & History](docs/notifications.md) — ntfy push notifications, cancel endpoint
   (Traefik and direct port-forward models), history web UI, completed notification script
+- [fail2ban Integration](docs/fail2ban.md) — access log setup, filter and jail configuration,
+  Docker volume-mount example, client IP resolution with Cloudflare support
 
 ## License
 

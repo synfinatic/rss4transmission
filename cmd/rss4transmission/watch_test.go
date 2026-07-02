@@ -13,6 +13,13 @@ func TestWatchCmd_HasHistoryFileField(t *testing.T) {
 	}
 }
 
+func TestWatchCmd_HasAccessLogField(t *testing.T) {
+	_, ok := reflect.TypeOf(WatchCmd{}).FieldByName("AccessLog")
+	if !ok {
+		t.Error("WatchCmd must have an AccessLog field")
+	}
+}
+
 func TestConfig_NoHistoryFileField(t *testing.T) {
 	_, ok := reflect.TypeOf(Config{}).FieldByName("HistoryFile")
 	if ok {
