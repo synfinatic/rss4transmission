@@ -242,3 +242,4 @@ environment:
 | `HISTORY_LISTEN` | `host:port` or bare port — starts the history/cancel web UI |
 | `CANCEL_LISTEN` | `host:port` — separate public-facing listener for `/cancel` and `/healthz` |
 | `TORRENT_CACHE_DIR` | Directory to cache fetched `.torrent` files across runs |
+| `ACCESS_LOG` | Path to the fail2ban-compatible HTTP access log file (append mode); disabled when empty |
