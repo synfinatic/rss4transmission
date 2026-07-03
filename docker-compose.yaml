@@ -11,9 +11,10 @@ services:
       - LOG_LEVEL=info
       - HISTORY_FILE=       # path to history JSON file (e.g. /config/history.json)
       - PRIVATE_LISTEN=     # host:port or bare port — enables history UI (private/internal listener)
-      - PUBLIC_LISTEN=      # host:port or bare port — public-facing /cancel and /healthz only
-                            # Set PUBLIC_LISTEN and port-forward from your firewall to expose /cancel
-                            # without exposing the history UI. Example: PUBLIC_LISTEN=0.0.0.0:8080
+      - PUBLIC_LISTEN=      # host:port or bare port — public-facing /cancel, /notify-complete,
+                            # and /healthz only. Set PUBLIC_LISTEN and port-forward from your firewall
+                            # to expose /cancel without exposing the history UI.
+                            # Example: PUBLIC_LISTEN=0.0.0.0:8080
                             # If only PRIVATE_LISTEN is set, /cancel is served there too (Traefik mode).
       - TORRENT_CACHE_DIR=  # directory to cache fetched .torrent files (e.g. /config/torrent-cache)
     volumes:

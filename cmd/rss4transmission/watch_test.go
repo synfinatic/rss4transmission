@@ -48,6 +48,20 @@ func TestWatchCmd_NoCancelListenField(t *testing.T) {
 	}
 }
 
+func TestRunContext_HasCancelRoutesEnabledField(t *testing.T) {
+	_, ok := reflect.TypeOf(RunContext{}).FieldByName("CancelRoutesEnabled")
+	if !ok {
+		t.Error("RunContext must have a CancelRoutesEnabled field")
+	}
+}
+
+func TestRunContext_NoPublicListenEnabledField(t *testing.T) {
+	_, ok := reflect.TypeOf(RunContext{}).FieldByName("PublicListenEnabled")
+	if ok {
+		t.Error("RunContext must not have a PublicListenEnabled field; use CancelRoutesEnabled instead")
+	}
+}
+
 func TestConfig_NoHistoryFileField(t *testing.T) {
 	_, ok := reflect.TypeOf(Config{}).FieldByName("HistoryFile")
 	if ok {
