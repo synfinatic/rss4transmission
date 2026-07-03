@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"text/template"
 
 	"github.com/mmcdole/gofeed"
 )
@@ -48,9 +49,20 @@ type Config struct {
 }
 
 type NtfyConfig struct {
-	BaseURL string `koanf:"BaseURL"`
-	Topic   string `koanf:"Topic"`
-	Token   string `koanf:"Token"` //nolint:gosec
+	BaseURL           string `koanf:"BaseURL"`
+	Topic             string `koanf:"Topic"`
+	Token             string `koanf:"Token"` //nolint:gosec
+	StartedTitle      string `koanf:"StartedTitle"`
+	StartedBody       string `koanf:"StartedBody"`
+	StartedPriority   string `koanf:"StartedPriority"`
+	CompletedTitle    string `koanf:"CompletedTitle"`
+	CompletedBody     string `koanf:"CompletedBody"`
+	CompletedPriority string `koanf:"CompletedPriority"`
+
+	startedTitleTmpl   *template.Template
+	startedBodyTmpl    *template.Template
+	completedTitleTmpl *template.Template
+	completedBodyTmpl  *template.Template
 }
 
 type CancelConfig struct {
