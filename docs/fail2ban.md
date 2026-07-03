@@ -21,7 +21,7 @@ is created if it does not exist and opened in append mode so entries survive res
 
 ```bash
 rss4transmission watch \
-  --cancel-listen 0.0.0.0:8080 \
+  --public-listen 0.0.0.0:8080 \
   --access-log /var/log/rss4transmission/access.log \
   ...
 ```

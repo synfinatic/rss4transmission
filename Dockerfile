@@ -9,15 +9,15 @@ COPY --from=builder  /code/dist/rss4transmission /usr/local/bin/
 ENV POLL_SECONDS=300
 ENV LOG_LEVEL="info"
 ENV HISTORY_FILE=""
-ENV HISTORY_LISTEN=""
-ENV CANCEL_LISTEN=""
+ENV PRIVATE_LISTEN=""
+ENV PUBLIC_LISTEN=""
 ENV TORRENT_CACHE_DIR=""
 ENV ACCESS_LOG=""
 
 ENTRYPOINT exec /usr/local/bin/rss4transmission watch --sleep $POLL_SECONDS \
     --log-level $LOG_LEVEL --config /mnt/config.yaml --seen-file /mnt/cache.json \
     ${HISTORY_FILE:+--history-file $HISTORY_FILE} \
-    ${HISTORY_LISTEN:+--history-listen $HISTORY_LISTEN} \
-    ${CANCEL_LISTEN:+--cancel-listen $CANCEL_LISTEN} \
+    ${PRIVATE_LISTEN:+--private-listen $PRIVATE_LISTEN} \
+    ${PUBLIC_LISTEN:+--public-listen $PUBLIC_LISTEN} \
     ${TORRENT_CACHE_DIR:+--torrent-cache-dir $TORRENT_CACHE_DIR} \
     ${ACCESS_LOG:+--access-log $ACCESS_LOG}

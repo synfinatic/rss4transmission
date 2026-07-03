@@ -10,15 +10,15 @@ services:
       - POLL_SECONDS=120
       - LOG_LEVEL=info
       - HISTORY_FILE=       # path to history JSON file (e.g. /config/history.json)
-      - HISTORY_LISTEN=     # host:port or bare port — enables history UI (internal only when CANCEL_LISTEN is set)
-      - CANCEL_LISTEN=      # host:port or bare port — public-facing /cancel and /healthz only
-                            # Set CANCEL_LISTEN and port-forward from your firewall to expose /cancel
-                            # without exposing the history UI. Example: CANCEL_LISTEN=0.0.0.0:8080
-                            # If only HISTORY_LISTEN is set, /cancel is served there too (Traefik mode).
+      - PRIVATE_LISTEN=     # host:port or bare port — enables history UI (private/internal listener)
+      - PUBLIC_LISTEN=      # host:port or bare port — public-facing /cancel and /healthz only
+                            # Set PUBLIC_LISTEN and port-forward from your firewall to expose /cancel
+                            # without exposing the history UI. Example: PUBLIC_LISTEN=0.0.0.0:8080
+                            # If only PRIVATE_LISTEN is set, /cancel is served there too (Traefik mode).
       - TORRENT_CACHE_DIR=  # directory to cache fetched .torrent files (e.g. /config/torrent-cache)
     volumes:
       - /volume1/docker/transmission/rss4transmission:/config
-    # Option A — Traefik routes only /cancel and /healthz externally (CANCEL_LISTEN not needed):
+    # Option A — Traefik routes only /cancel and /healthz externally (PUBLIC_LISTEN not needed):
     networks:
       - internal
       - traefik
@@ -28,8 +28,8 @@ services:
       - "traefik.http.routers.rss4tx.entrypoints=websecure"
       - "traefik.http.routers.rss4tx.tls.certresolver=letsencrypt"
       - "traefik.http.services.rss4tx.loadbalancer.server.port=8080"
-    # Option B — no Traefik; firewall port-forwards directly to CANCEL_LISTEN port:
-    # Set CANCEL_LISTEN=0.0.0.0:8080 and add:
+    # Option B — no Traefik; firewall port-forwards directly to PUBLIC_LISTEN port:
+    # Set PUBLIC_LISTEN=0.0.0.0:8080 and add:
     # ports:
     #   - "8080:8080"
     # Remove the networks/labels above and use network_mode: host or a single internal network.
