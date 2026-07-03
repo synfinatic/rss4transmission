@@ -118,10 +118,10 @@ func newAccessLogger(path string) (*logrus.Logger, error) {
 	return lg, nil
 }
 
-// parseHistoryAddr normalises a --history-listen value to a "host:port" address.
+// parseListenAddr normalises a listen address to a "host:port" address.
 // A bare port number is expanded to "127.0.0.1:<port>". Returns an error for
 // invalid or out-of-range values.
-func parseHistoryAddr(s string) (string, error) {
+func parseListenAddr(s string) (string, error) {
 	// If it already contains a colon it is a host:port or [ipv6]:port.
 	if _, portStr, err := net.SplitHostPort(s); err == nil {
 		p, err := strconv.Atoi(portStr)
@@ -178,8 +178,8 @@ func newWebMux(history *HistoryFile) *http.ServeMux {
 }
 
 // newCancelMux builds a public-facing mux serving only GET /cancel, POST /cancel,
-// and GET /healthz. Use this when --cancel-listen is set to expose the cancel
-// endpoint on its own port, keeping the history page on a separate internal listener.
+// and GET /healthz. Use this when --public-listen is set to expose the cancel
+// endpoint on its own port, keeping the history page on a separate private listener.
 // POST /cancel is only registered when both store and remove are non-nil.
 // accessLog is optional; when non-nil each request outcome is written to it.
 func newCancelMux(store *Store, cfg CancelConfig, remove removeFunc, getProgress progressFunc, accessLog *logrus.Logger) *http.ServeMux {

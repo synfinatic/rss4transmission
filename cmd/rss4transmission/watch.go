@@ -17,8 +17,8 @@ type WatchCmd struct {
 	DownloadPath    string   `kong:"short='p',help='Path to download torrent files to ($PWD)'"`
 	Sleep           int      `kong:"short='s',default='300',help='Seconds to sleep between scraping'"`
 	HistoryFile     string   `kong:"help='Path to history JSON file'"`
-	HistoryListen   string   `kong:"help='Address to serve torrent history on, as host:port or bare port (disabled if empty)'"`
-	CancelListen    string   `kong:"help='Address to serve /cancel and /healthz on (host:port or bare port); splits listeners so history stays internal'"`
+	PrivateListen   string   `kong:"help='Address to serve torrent history on (internal only), as host:port or bare port (disabled if empty)'"`
+	PublicListen    string   `kong:"help='Address to serve /cancel, /notify-complete, and /healthz on (host:port or bare port); splits listeners so history stays on the private listener'"`
 	TorrentCacheDir string   `kong:"help='Directory to cache fetched .torrent files across runs'"`
 	AccessLog       string   `kong:"help='Path to append-mode HTTP access log for fail2ban integration (disabled if empty)'"`
 }
@@ -151,43 +151,44 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 
 	accessLog := openAccessLog(cmd.AccessLog)
 
-	if cmd.CancelListen != "" {
-		// Split-listener mode: /cancel and /healthz on the public port, history on a
-		// separate internal port. Cancel routes are NOT registered on the history mux.
+	if cmd.PublicListen != "" {
+		// Split-listener mode: /cancel, /notify-complete, and /healthz on the public
+		// port, history on a separate private port. Cancel routes are NOT registered on
+		// the private mux.
 		if ctx.CancelStore != nil {
-			ctx.CancelListenEnabled = true
+			ctx.CancelRoutesEnabled = true
 		}
-		addr, err := parseHistoryAddr(cmd.CancelListen)
+		addr, err := parseListenAddr(cmd.PublicListen)
 		if err != nil {
-			log.Fatalf("--cancel-listen: %s", err)
+			log.Fatalf("--public-listen: %s", err)
 		}
 		cancelMux := newCancelMux(ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress, accessLog)
 		registerNotifyCompleteRoute(cancelMux, ctx.Config.Ntfy, ctx.Config.Cancel, accessLog)
 		go startWebServer(cancelMux, addr)
 
-		if cmd.HistoryListen != "" {
-			histAddr, err := parseHistoryAddr(cmd.HistoryListen)
+		if cmd.PrivateListen != "" {
+			histAddr, err := parseListenAddr(cmd.PrivateListen)
 			if err != nil {
-				log.Fatalf("--history-listen: %s", err)
+				log.Fatalf("--private-listen: %s", err)
 			}
 			if ctx.History == nil {
-				log.Warnf("--history-listen is set but --history-file was not provided; history page will return 404")
+				log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 			}
 			go startWebServer(newWebMux(ctx.History), histAddr)
 		}
-	} else if cmd.HistoryListen != "" {
-		// Single-listener mode (backward compat): history + cancel on the same port.
-		addr, err := parseHistoryAddr(cmd.HistoryListen)
+	} else if cmd.PrivateListen != "" {
+		// Single-listener mode: history + cancel on the same port.
+		addr, err := parseListenAddr(cmd.PrivateListen)
 		if err != nil {
-			log.Fatalf("--history-listen: %s", err)
+			log.Fatalf("--private-listen: %s", err)
 		}
 		if ctx.History == nil {
-			log.Warnf("--history-listen is set but --history-file was not provided; history page will return 404")
+			log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 		}
 		mux := newWebMux(ctx.History)
 		if ctx.CancelStore != nil {
 			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress, accessLog)
-			ctx.CancelListenEnabled = true
+			ctx.CancelRoutesEnabled = true
 		}
 		registerNotifyCompleteRoute(mux, ctx.Config.Ntfy, ctx.Config.Cancel, accessLog)
 		go startWebServer(mux, addr)

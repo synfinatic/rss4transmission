@@ -27,8 +27,9 @@ func extractSize(item *gofeed.Item) int64 {
 }
 
 // sendNtfyStarted sends a "torrent started" notification to ntfy. The cancel
-// action button is only included when --cancel-listen is active and all cancel
-// config fields are set; otherwise a plain notification is sent.
+// action button is only included when cancel routes are registered (either via
+// --private-listen alone or --public-listen) and all cancel config fields are
+// set; otherwise a plain notification is sent.
 func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, meta CancelMetadata, item *gofeed.Item) {
 	if feedCfg.NoNotify {
 		return
@@ -38,7 +39,7 @@ func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, meta Cancel
 	}
 
 	var cancelURL, cancelID string
-	if ctx.CancelListenEnabled &&
+	if ctx.CancelRoutesEnabled &&
 		ctx.Config.Cancel.HMACSecret != "" &&
 		ctx.Config.Cancel.BaseURL != "" &&
 		ctx.CancelStore != nil &&

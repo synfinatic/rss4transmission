@@ -23,12 +23,12 @@ services:
       - POLL_SECONDS=120
       - LOG_LEVEL=info
       - HISTORY_FILE=       # path to history JSON file (e.g. /config/history.json)
-      - HISTORY_LISTEN=     # host:port or bare port — enables history UI
-      - CANCEL_LISTEN=      # public-facing /cancel and /healthz only
+      - PRIVATE_LISTEN=     # host:port or bare port — enables history UI (private/internal)
+      - PUBLIC_LISTEN=      # public-facing /cancel, /notify-complete, and /healthz only
       - TORRENT_CACHE_DIR=  # directory to cache .torrent files (e.g. /config/torrent-cache)
     volumes:
       - /volume1/docker/transmission/rss4transmission:/config
-    # Option A — Traefik routes /cancel and /healthz externally (CANCEL_LISTEN not needed):
+    # Option A — Traefik routes /cancel and /healthz externally (PUBLIC_LISTEN not needed):
     networks:
       - internal
       - traefik
@@ -38,8 +38,8 @@ services:
       - "traefik.http.routers.rss4tx.entrypoints=websecure"
       - "traefik.http.routers.rss4tx.tls.certresolver=letsencrypt"
       - "traefik.http.services.rss4tx.loadbalancer.server.port=8080"
-    # Option B — no Traefik; firewall port-forwards directly to CANCEL_LISTEN port:
-    # Set CANCEL_LISTEN=0.0.0.0:8080 and add:
+    # Option B — no Traefik; firewall port-forwards directly to PUBLIC_LISTEN port
+    # (/cancel, /notify-complete, /healthz). Set PUBLIC_LISTEN=0.0.0.0:8080 and add:
     # ports:
     #   - "8080:8080"
     # Remove the networks/labels above; use network_mode: host or a single internal network.
@@ -100,10 +100,10 @@ services:
       - POLL_SECONDS=120
       - LOG_LEVEL=info
       - HISTORY_FILE=
-      - HISTORY_LISTEN=
-      - CANCEL_LISTEN=      # e.g. 0.0.0.0:8080; port-forward from your firewall to this port
+      - PRIVATE_LISTEN=
+      - PUBLIC_LISTEN=      # /cancel, /notify-complete, /healthz (e.g. 0.0.0.0:8080); port-forward from your firewall to this port
       - TORRENT_CACHE_DIR=
-    # Uncomment to expose CANCEL_LISTEN externally:
+    # Uncomment to expose PUBLIC_LISTEN externally:
     # ports:
     #   - "8080:8080"
     volumes:
@@ -239,7 +239,7 @@ environment:
 | `POLL_SECONDS` | Seconds between feed scrapes in watch mode (default: `300`) |
 | `LOG_LEVEL` | Log verbosity: `error`, `warn`, `info`, `debug`, `trace` (default: `info`) |
 | `HISTORY_FILE` | Path to the history JSON file; enables history recording when set |
-| `HISTORY_LISTEN` | `host:port` or bare port — starts the history/cancel web UI |
-| `CANCEL_LISTEN` | `host:port` — separate public-facing listener for `/cancel` and `/healthz` |
+| `PRIVATE_LISTEN` | `host:port` or bare port — starts the private history web UI |
+| `PUBLIC_LISTEN` | `host:port` — public-facing listener for `/cancel`, `/notify-complete`, and `/healthz` |
 | `TORRENT_CACHE_DIR` | Directory to cache fetched `.torrent` files across runs |
 | `ACCESS_LOG` | Path to the fail2ban-compatible HTTP access log file (append mode); disabled when empty |

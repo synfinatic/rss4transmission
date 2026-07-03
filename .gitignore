@@ -6,3 +6,4 @@ coverage.*
 *.rss
 plan.md
 torrents
+.build_files

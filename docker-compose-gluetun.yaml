@@ -20,13 +20,13 @@ services:
       - POLL_SECONDS=120
       - LOG_LEVEL=info
       - HISTORY_FILE=       # path to history JSON file (e.g. /config/history.json)
-      - HISTORY_LISTEN=     # set to host:port or bare port to enable the history web UI
-      - CANCEL_LISTEN=      # public-facing /cancel and /healthz only (e.g. 0.0.0.0:8080)
+      - PRIVATE_LISTEN=     # set to host:port or bare port to enable the history web UI (private)
+      - PUBLIC_LISTEN=      # public-facing /cancel, /notify-complete, and /healthz only (e.g. 0.0.0.0:8080)
                             # port-forward from your firewall/NAS to this port
       - TORRENT_CACHE_DIR=  # directory to cache fetched .torrent files (e.g. /config/torrent-cache)
-    # Uncomment and set the port to match CANCEL_LISTEN (and/or HISTORY_LISTEN).
+    # Uncomment and set the port to match PUBLIC_LISTEN (and/or PRIVATE_LISTEN).
     # ports:
-    #   - "8080:8080"  # CANCEL_LISTEN port — forward this from your firewall/NAS
+    #   - "8080:8080"  # PUBLIC_LISTEN port — forward this from your firewall/NAS
     volumes:
       - /volume1/docker/transmission/rss4transmission:/config
 

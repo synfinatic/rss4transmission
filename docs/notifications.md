@@ -120,11 +120,11 @@ There are two deployment models.
 
 **Model 1 — Traefik (or other reverse proxy)**
 
-Use `--history-listen` to start a single web server and let Traefik route only `/cancel` and
+Use `--private-listen` to start a single web server and let Traefik route only `/cancel` and
 `/healthz` externally:
 
 ```bash
-rss4transmission watch --config config.yaml --history-listen :8080
+rss4transmission watch --config config.yaml --private-listen :8080
 ```
 
 The [docker-compose.yaml](../docker-compose.yaml) example defaults to this model. Its Traefik
@@ -132,31 +132,31 @@ labels route only those two paths externally while keeping the history page (`/`
 
 **Model 2 — Direct port-forward (no reverse proxy)**
 
-Use `--cancel-listen` to start a separate public-facing listener that serves only `/cancel`,
-`/notify-complete`, and `/healthz`, keeping the history page on `--history-listen`
+Use `--public-listen` to start a separate public-facing listener that serves only `/cancel`,
+`/notify-complete`, and `/healthz`, keeping the history page on `--private-listen`
 (internal only):
 
 ```bash
 rss4transmission watch --config config.yaml \
-  --cancel-listen 0.0.0.0:8080 \
-  --history-listen 127.0.0.1:9090
+  --public-listen 0.0.0.0:8080 \
+  --private-listen 127.0.0.1:9090
 ```
 
-Port-forward from your firewall directly to the `--cancel-listen` port. The history page is
-never reachable on that port (requests to `/` return 404). `--history-listen` is optional; omit
+Port-forward from your firewall directly to the `--public-listen` port. The history page is
+never reachable on that port (requests to `/` return 404). `--private-listen` is optional; omit
 it if you don't need the history UI.
 
 In Docker:
 
 ```yaml
 environment:
-  - CANCEL_LISTEN=0.0.0.0:8080
-  - HISTORY_LISTEN=127.0.0.1:9090  # optional
+  - PUBLIC_LISTEN=0.0.0.0:8080
+  - PRIVATE_LISTEN=127.0.0.1:9090  # optional
 ports:
   - "8080:8080"
 ```
 
-When using [docker-compose-gluetun.yaml](../docker-compose-gluetun.yaml), set `CANCEL_LISTEN`
+When using [docker-compose-gluetun.yaml](../docker-compose-gluetun.yaml), set `PUBLIC_LISTEN`
 and uncomment the `ports` block to forward the cancel port from your firewall or NAS.
 
 ## History Web UI
@@ -164,20 +164,20 @@ and uncomment the `ports` block to forward the cancel port from your firewall or
 Pass `--history-file` to enable history recording. rss4transmission records the outcome of
 every feed item it processes (dispatched, downloaded, skipped, excluded, error).
 
-Pass `--history-listen` to start the web UI. That flag accepts a bare port number (binds to
+Pass `--private-listen` to start the web UI. That flag accepts a bare port number (binds to
 `127.0.0.1`) or a full `host:port` address (including IPv6 `[::1]:port`).
 
 ```bash
-# Single listener (Traefik routes /cancel externally)
+# Single private listener (Traefik routes /cancel externally)
 rss4transmission watch --config config.yaml \
     --history-file /data/history.json \
-    --history-listen 8080
+    --private-listen 8080
 
-# Split listeners (firewall port-forwards to --cancel-listen)
+# Split listeners (firewall port-forwards to --public-listen)
 rss4transmission watch --config config.yaml \
     --history-file /data/history.json \
-    --history-listen 127.0.0.1:9090 \
-    --cancel-listen 0.0.0.0:8080
+    --private-listen 127.0.0.1:9090 \
+    --public-listen 0.0.0.0:8080
 ```
 
 The history page shows each item's feed name, title, publication date, outcome, and extracted
@@ -188,13 +188,13 @@ In Docker:
 ```yaml
 environment:
   - HISTORY_FILE=/config/history.json
-  - HISTORY_LISTEN=8080             # binds to 127.0.0.1:8080
-  - CANCEL_LISTEN=0.0.0.0:8080     # optional; enables split-listener mode
+  - PRIVATE_LISTEN=8080             # binds to 127.0.0.1:8080
+  - PUBLIC_LISTEN=0.0.0.0:8080     # optional; enables split-listener mode
 ```
 
 ## Routes Overview
 
-| Route | `--history-listen` (single) | `--history-listen` (split) | `--cancel-listen` (split) |
+| Route | `--private-listen` (single) | `--private-listen` (split) | `--public-listen` (split) |
 |---|---|---|---|
 | `/` (history page) | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
 | `/cancel` | ✓ | — | ✓ |
@@ -208,7 +208,7 @@ details to the `/notify-complete` endpoint, which renders your configured `Compl
 `CompletedBody`, and `CompletedPriority` templates before sending to ntfy.
 
 Set `RSS4TRANSMISSION_URL` to the base URL of your rss4transmission server (same host:port as
-`--cancel-listen` or `--history-listen`). If `Cancel.HMACSecret` is configured, also set
+`--public-listen` or `--private-listen`). If `Cancel.HMACSecret` is configured, also set
 `CANCEL_HMAC_SECRET` to the same value — the endpoint will then require
 `Authorization: Bearer <secret>` and reject unauthenticated requests with `401`.
 

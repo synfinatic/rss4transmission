@@ -60,7 +60,7 @@ type RunContext struct {
 	Cache               *CacheFile
 	History             *HistoryFile
 	CancelStore         *Store
-	CancelListenEnabled bool
+	CancelRoutesEnabled bool
 	Transmission        *transmissionrpc.Client
 	Provider            *file.File
 }

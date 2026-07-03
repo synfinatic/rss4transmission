@@ -110,10 +110,12 @@ error hold-downs to avoid spamming retries.
 port into Transmission's session settings.
 
 **History web UI (`web.go`)**: The `watch` command accepts `--history-file` (path to the history JSON,
-env `HISTORY_FILE` in Docker) and `--history-listen` (env `HISTORY_LISTEN`). `--history-file` enables
-recording; `--history-listen` additionally starts an HTTP server (bare port or `host:port`) serving a
-browsable history. In the gluetun docker-compose, expose the port explicitly via the `ports:` block;
-in the plain docker-compose `network_mode: host` already exposes all ports.
+env `HISTORY_FILE` in Docker), `--private-listen` (env `PRIVATE_LISTEN`), and `--public-listen`
+(env `PUBLIC_LISTEN`). `--history-file` enables recording; `--private-listen` starts a private HTTP
+server (bare port or `host:port`) serving the history UI and optionally `/cancel`; `--public-listen`
+starts a separate public-facing server for `/cancel`, `/healthz`, and `/notify-complete` only.
+In the gluetun docker-compose, expose the port explicitly via the `ports:` block; in the plain
+docker-compose `network_mode: host` already exposes all ports.
 
 **Config defaults** are defined as a `map[string]interface{}` in `config.go` and loaded before the YAML
 file, so koanf's merge semantics provide defaults without nil-checks in code.

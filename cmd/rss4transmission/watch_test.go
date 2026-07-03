@@ -20,6 +20,48 @@ func TestWatchCmd_HasAccessLogField(t *testing.T) {
 	}
 }
 
+func TestWatchCmd_HasPrivateListenField(t *testing.T) {
+	_, ok := reflect.TypeOf(WatchCmd{}).FieldByName("PrivateListen")
+	if !ok {
+		t.Error("WatchCmd must have a PrivateListen field")
+	}
+}
+
+func TestWatchCmd_HasPublicListenField(t *testing.T) {
+	_, ok := reflect.TypeOf(WatchCmd{}).FieldByName("PublicListen")
+	if !ok {
+		t.Error("WatchCmd must have a PublicListen field")
+	}
+}
+
+func TestWatchCmd_NoHistoryListenField(t *testing.T) {
+	_, ok := reflect.TypeOf(WatchCmd{}).FieldByName("HistoryListen")
+	if ok {
+		t.Error("WatchCmd must not have a HistoryListen field; use PrivateListen instead")
+	}
+}
+
+func TestWatchCmd_NoCancelListenField(t *testing.T) {
+	_, ok := reflect.TypeOf(WatchCmd{}).FieldByName("CancelListen")
+	if ok {
+		t.Error("WatchCmd must not have a CancelListen field; use PublicListen instead")
+	}
+}
+
+func TestRunContext_HasCancelRoutesEnabledField(t *testing.T) {
+	_, ok := reflect.TypeOf(RunContext{}).FieldByName("CancelRoutesEnabled")
+	if !ok {
+		t.Error("RunContext must have a CancelRoutesEnabled field")
+	}
+}
+
+func TestRunContext_NoPublicListenEnabledField(t *testing.T) {
+	_, ok := reflect.TypeOf(RunContext{}).FieldByName("PublicListenEnabled")
+	if ok {
+		t.Error("RunContext must not have a PublicListenEnabled field; use CancelRoutesEnabled instead")
+	}
+}
+
 func TestConfig_NoHistoryFileField(t *testing.T) {
 	_, ok := reflect.TypeOf(Config{}).FieldByName("HistoryFile")
 	if ok {

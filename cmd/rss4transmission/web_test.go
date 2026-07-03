@@ -802,7 +802,7 @@ func makeTestAccessLogger() (*logrus.Logger, *bytes.Buffer) {
 	return lg, buf
 }
 
-func TestParseHistoryAddr(t *testing.T) {
+func TestParseListenAddr(t *testing.T) {
 	cases := []struct {
 		input   string
 		want    string
@@ -821,7 +821,7 @@ func TestParseHistoryAddr(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
-			got, err := parseHistoryAddr(tc.input)
+			got, err := parseListenAddr(tc.input)
 			if tc.wantErr {
 				require.Error(t, err)
 			} else {
