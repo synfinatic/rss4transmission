@@ -148,6 +148,68 @@ func TestCoverages_DeduplicatesKeys(t *testing.T) {
 	}
 }
 
+// --- candidate.allLabels ---
+
+func TestAllLabels_MergesFileLabelsOverTitle(t *testing.T) {
+	// resolution is only present in the file name, not the RSS title.
+	c := makeCandidate("t1",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
+		[]map[string]string{{"resolution": "1080p"}},
+	)
+	got := c.allLabels()
+	if got["resolution"] != "1080p" {
+		t.Errorf("allLabels()[resolution] = %q, want 1080p (from file label)", got["resolution"])
+	}
+	if got["series"] != "MotoGP" {
+		t.Errorf("allLabels()[series] = %q, want MotoGP (from title label)", got["series"])
+	}
+}
+
+func TestAllLabels_FileLabelOverridesTitleLabel(t *testing.T) {
+	c := makeCandidate("t1",
+		map[string]string{"series": "MotoGP", "resolution": "720p"},
+		[]map[string]string{{"resolution": "1080p"}},
+	)
+	got := c.allLabels()
+	if got["resolution"] != "1080p" {
+		t.Errorf("allLabels()[resolution] = %q, want 1080p (file label overrides title)", got["resolution"])
+	}
+}
+
+func TestAllLabels_AppliesDefaultsForMissingLabels(t *testing.T) {
+	c := makeCandidate("t1", map[string]string{"series": "MotoGP"}, nil)
+	c.defaults = map[string]string{"language": "English"}
+	got := c.allLabels()
+	if got["language"] != "English" {
+		t.Errorf("allLabels()[language] = %q, want English (from default)", got["language"])
+	}
+}
+
+// --- dispatch cache recording ---
+
+// Regression test: Prefer.order ranking is computed from merged title+file
+// labels (candidate.coverages), but the cache used to be seeded from
+// titleLabels only. When a Prefer dimension (like resolution) is only present
+// in the torrent's file names, the cached record lost that label, so future
+// runs saw a "worst possible" cached rank and would re-dispatch a lower
+// preference candidate, silently ignoring the configured order.
+func TestDispatch_Skip_RecordsFileDerivedLabelsInCache(t *testing.T) {
+	c := makeCandidate("guid1",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
+		[]map[string]string{{"resolution": "1080p"}},
+	)
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil, nil)
+	keys := []string{"series=MotoGP|round=RD01|session=Race"}
+
+	ctx := &RunContext{Cache: emptyCache()}
+	cmd := &OnceCmd{Skip: true}
+	cmd.dispatch(ctx, feedCfg, "testfeed", c, keys)
+
+	require.Len(t, ctx.Cache.Seen, 1)
+	assert.Equal(t, "1080p", ctx.Cache.Seen[0].Labels["resolution"],
+		"cached labels should include the file-derived resolution label used to rank this candidate")
+}
+
 // --- selectWinners ---
 
 func TestSelectWinners_SingleCandidate(t *testing.T) {

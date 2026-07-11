@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -135,6 +136,22 @@ func (c *candidate) coverages(identityLabels []string) []coverage {
 type coverage struct {
 	identityKey string
 	labels      map[string]string
+}
+
+// allLabels returns titleLabels merged with every file's labels (later files
+// override earlier ones, and file labels override title labels for the same
+// key), with extractor defaults filled in for anything still missing. Unlike
+// coverages(), this is not scoped to a single identity key — it's the full
+// label set used when recording a dispatched candidate in the seen cache, so
+// Prefer dimensions that only appear in file names (e.g. resolution) aren't
+// lost on future preference-rank comparisons.
+func (c *candidate) allLabels() map[string]string {
+	merged := make(map[string]string, len(c.titleLabels))
+	maps.Copy(merged, c.titleLabels)
+	for _, fl := range c.fileLabels {
+		maps.Copy(merged, fl)
+	}
+	return withDefaultLabels(merged, c.defaults)
 }
 
 // feedAllowed reports whether feedName should be processed given the --feed filter.
@@ -298,7 +315,7 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 		return false
 	}
 	if cmd.Skip {
-		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
+		ctx.Cache.AddItem(w.item, w.allLabels(), keys)
 		ctx.recordHistory(feedName, w.item.Item, "skipped", "user skip", w.titleLabels)
 		return false
 	}
@@ -336,7 +353,7 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 		sendNtfyStarted(ctx, feedCfg, torrentID, meta, w.item.Item)
 		ctx.recordHistory(feedName, w.item.Item, "dispatched", "", w.titleLabels)
 	}
-	ctx.Cache.AddItem(w.item, w.titleLabels, keys)
+	ctx.Cache.AddItem(w.item, w.allLabels(), keys)
 	return false
 }
 
@@ -352,7 +369,7 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), w.titleLabels)
 			return false
 		}
-		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
+		ctx.Cache.AddItem(w.item, w.allLabels(), keys)
 		ctx.recordHistory(feedName, w.item.Item, "downloaded", "", w.titleLabels)
 	case Torrent:
 		torrentID, err := w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, w.torrentBytes)
@@ -369,10 +386,10 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 			SizeBytes: extractSize(w.item.Item),
 		}
 		sendNtfyStarted(ctx, feedCfg, torrentID, meta, w.item.Item)
-		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
+		ctx.Cache.AddItem(w.item, w.allLabels(), keys)
 		ctx.recordHistory(feedName, w.item.Item, "dispatched", "", w.titleLabels)
 	case Skip:
-		ctx.Cache.AddItem(w.item, w.titleLabels, keys)
+		ctx.Cache.AddItem(w.item, w.allLabels(), keys)
 		ctx.recordHistory(feedName, w.item.Item, "skipped", "user skip", w.titleLabels)
 	case SkipOnce:
 		// don't add to cache
