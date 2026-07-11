@@ -238,6 +238,30 @@ func TestDispatchBatch_MultiBatch_BetterPreference(t *testing.T) {
 	}
 }
 
+func TestDispatchBatch_CachesFileDerivedLabels(t *testing.T) {
+	// Regression: resolution is only present in file names, not the title.
+	// dispatchBatch must still cache it so a later worse-preference candidate
+	// in a subsequent batch is correctly rejected.
+	cmd, _ := simTestCmd(t)
+	ctx := simTestCtx()
+	feedCfg := testFeedForSim()
+
+	c1 := makeCandidate("batch1",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
+		[]map[string]string{{"resolution": "1080p"}},
+	)
+	cmd.dispatchBatch(ctx, feedCfg, []*candidate{c1})
+
+	c2 := makeCandidate("batch2",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race", "resolution": "720p"},
+		nil,
+	)
+	won := cmd.dispatchBatch(ctx, feedCfg, []*candidate{c2})
+	if won != 0 {
+		t.Errorf("expected 0 winners in batch 2 (720p should lose to cached 1080p, even though 1080p only came from a file label), got %d", won)
+	}
+}
+
 func TestDispatchBatch_FileNotOverwritten(t *testing.T) {
 	// If a .torrent file already exists on disk, it should not be overwritten.
 	cmd, dir := simTestCmd(t)

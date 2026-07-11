@@ -117,8 +117,9 @@ func (cmd *SimulateCmd) dispatchBatch(ctx *RunContext, feedCfg Feed, candidates 
 			for j, cov := range covs {
 				keys[j] = cov.identityKey
 			}
-			log.Infof("WINNER: %s labels=%v", c.item.Item.Title, c.titleLabels)
-			ctx.Cache.AddItem(c.item, c.titleLabels, keys)
+			labels := c.allLabels(feedCfg.Identity)
+			log.Infof("WINNER: %s labels=%v", c.item.Item.Title, labels)
+			ctx.Cache.AddItem(c.item, labels, keys)
 			count++
 		} else {
 			log.Debugf("skipped: %s", c.item.Item.Title)

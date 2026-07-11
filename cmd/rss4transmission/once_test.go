@@ -156,7 +156,7 @@ func TestAllLabels_MergesFileLabelsOverTitle(t *testing.T) {
 		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
 		[]map[string]string{{"resolution": "1080p"}},
 	)
-	got := c.allLabels()
+	got := c.allLabels([]string{"series", "round", "session"})
 	if got["resolution"] != "1080p" {
 		t.Errorf("allLabels()[resolution] = %q, want 1080p (from file label)", got["resolution"])
 	}
@@ -170,7 +170,7 @@ func TestAllLabels_FileLabelOverridesTitleLabel(t *testing.T) {
 		map[string]string{"series": "MotoGP", "resolution": "720p"},
 		[]map[string]string{{"resolution": "1080p"}},
 	)
-	got := c.allLabels()
+	got := c.allLabels([]string{"series"})
 	if got["resolution"] != "1080p" {
 		t.Errorf("allLabels()[resolution] = %q, want 1080p (file label overrides title)", got["resolution"])
 	}
@@ -179,9 +179,26 @@ func TestAllLabels_FileLabelOverridesTitleLabel(t *testing.T) {
 func TestAllLabels_AppliesDefaultsForMissingLabels(t *testing.T) {
 	c := makeCandidate("t1", map[string]string{"series": "MotoGP"}, nil)
 	c.defaults = map[string]string{"language": "English"}
-	got := c.allLabels()
+	got := c.allLabels([]string{"series"})
 	if got["language"] != "English" {
 		t.Errorf("allLabels()[language] = %q, want English (from default)", got["language"])
+	}
+}
+
+func TestAllLabels_ExcludesFileWithoutValidIdentityKey(t *testing.T) {
+	// Regression: a file that matches only the resolution regex (e.g. a
+	// sample clip) but not the identity labels must not be allowed to
+	// overwrite the resolution from the file that actually won selection.
+	c := makeCandidate("bundle",
+		map[string]string{"round": "RD01", "session": "Race"}, // no series in title
+		[]map[string]string{
+			{"series": "MotoGP", "resolution": "1080p"}, // valid coverage
+			{"resolution": "720p"},                      // sample: no series -> no valid coverage
+		},
+	)
+	got := c.allLabels([]string{"series", "round", "session"})
+	if got["resolution"] != "1080p" {
+		t.Errorf("allLabels()[resolution] = %q, want 1080p (sample file's 720p must not override the winning coverage's value)", got["resolution"])
 	}
 }
 
@@ -208,6 +225,31 @@ func TestDispatch_Skip_RecordsFileDerivedLabelsInCache(t *testing.T) {
 	require.Len(t, ctx.Cache.Seen, 1)
 	assert.Equal(t, "1080p", ctx.Cache.Seen[0].Labels["resolution"],
 		"cached labels should include the file-derived resolution label used to rank this candidate")
+}
+
+// Regression: the History UI/ntfy metadata used to be seeded from titleLabels
+// while the cache used the merged labels, so a dispatched item's history
+// record wouldn't show the file-derived label that actually decided its
+// preference rank.
+func TestDispatch_Skip_RecordsFileDerivedLabelsInHistory(t *testing.T) {
+	c := makeCandidate("guid1",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
+		[]map[string]string{{"resolution": "1080p"}},
+	)
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil, nil)
+	keys := []string{"series=MotoGP|round=RD01|session=Race"}
+
+	ctx := &RunContext{
+		Cache:   emptyCache(),
+		History: &HistoryFile{guidIndex: map[string]int{}},
+	}
+	cmd := &OnceCmd{Skip: true}
+	cmd.dispatch(ctx, feedCfg, "testfeed", c, keys)
+
+	records := ctx.History.GetRecords()
+	require.Len(t, records, 1)
+	assert.Equal(t, "1080p", records[0].Labels["resolution"],
+		"history record should include the file-derived resolution label, matching what was cached")
 }
 
 // --- selectWinners ---

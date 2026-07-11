@@ -138,17 +138,23 @@ type coverage struct {
 	labels      map[string]string
 }
 
-// allLabels returns titleLabels merged with every file's labels (later files
-// override earlier ones, and file labels override title labels for the same
-// key), with extractor defaults filled in for anything still missing. Unlike
-// coverages(), this is not scoped to a single identity key — it's the full
-// label set used when recording a dispatched candidate in the seen cache, so
-// Prefer dimensions that only appear in file names (e.g. resolution) aren't
-// lost on future preference-rank comparisons.
-func (c *candidate) allLabels() map[string]string {
-	merged := make(map[string]string, len(c.titleLabels))
+// allLabels returns titleLabels merged with the labels of every file that
+// forms a valid coverage for identityLabels (same scoping as coverages()),
+// with extractor defaults filled in for anything still missing. A file that
+// matches only a Prefer-dimension regex but not the identity regexes (a
+// sample clip, an NFO, a stray extra) never wins selection and must not be
+// allowed to overwrite a value that came from the file that did. This is the
+// full label set used when recording a dispatched candidate in the seen
+// cache, so Prefer dimensions that only appear in file names (e.g.
+// resolution) aren't lost on future preference-rank comparisons.
+func (c *candidate) allLabels(identityLabels []string) map[string]string {
+	merged := make(map[string]string, len(c.titleLabels)+len(c.fileLabels))
 	maps.Copy(merged, c.titleLabels)
 	for _, fl := range c.fileLabels {
+		combined := withDefaultLabels(MergeLabels(c.titleLabels, fl), c.defaults)
+		if _, ok := IdentityKey(combined, identityLabels); !ok {
+			continue
+		}
 		maps.Copy(merged, fl)
 	}
 	return withDefaultLabels(merged, c.defaults)
@@ -308,15 +314,16 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 // Returns true if the user selected Quit in interactive mode.
 func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *candidate, keys []string) bool {
 	var err error
+	labels := w.allLabels(feedCfg.Identity)
 
 	if cmd.NoAction {
 		log.Infof("%s match: %s", feedName, w.item.Item.Title)
-		ctx.recordHistory(feedName, w.item.Item, "skipped", "no-action mode", w.titleLabels)
+		ctx.recordHistory(feedName, w.item.Item, "skipped", "no-action mode", labels)
 		return false
 	}
 	if cmd.Skip {
-		ctx.Cache.AddItem(w.item, w.allLabels(), keys)
-		ctx.recordHistory(feedName, w.item.Item, "skipped", "user skip", w.titleLabels)
+		ctx.Cache.AddItem(w.item, labels, keys)
+		ctx.recordHistory(feedName, w.item.Item, "skipped", "user skip", labels)
 		return false
 	}
 	if cmd.Interactive {
@@ -326,34 +333,34 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 	if cmd.Download {
 		if _, err = w.item.Download(ctx, cmd.DownloadPath, cmd.TorrentCacheDir); err != nil {
 			log.WithError(err).Errorf("Unable to download: %s", w.item.Item.Title)
-			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), w.titleLabels)
+			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), labels)
 			return false
 		}
-		ctx.recordHistory(feedName, w.item.Item, "downloaded", "", w.titleLabels)
+		ctx.recordHistory(feedName, w.item.Item, "downloaded", "", labels)
 	} else {
 		torrentBytes, err := ensureTorrentBytes(w.item, cmd.TorrentCacheDir, w.torrentBytes)
 		if err != nil {
 			log.WithError(err).Errorf("Unable to fetch torrent data for %s", w.item.Item.Title)
-			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), w.titleLabels)
+			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), labels)
 			return false
 		}
 		torrentID, err := w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, torrentBytes)
 		if err != nil {
 			log.WithError(err).Errorf("Unable to torrent: %s", feedName)
-			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), w.titleLabels)
+			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), labels)
 			return false
 		}
 		meta := CancelMetadata{
 			Title:     w.item.Item.Title,
 			FeedName:  feedName,
-			Labels:    w.titleLabels,
+			Labels:    labels,
 			Files:     w.fileNames,
 			SizeBytes: extractSize(w.item.Item),
 		}
 		sendNtfyStarted(ctx, feedCfg, torrentID, meta, w.item.Item)
-		ctx.recordHistory(feedName, w.item.Item, "dispatched", "", w.titleLabels)
+		ctx.recordHistory(feedName, w.item.Item, "dispatched", "", labels)
 	}
-	ctx.Cache.AddItem(w.item, w.allLabels(), keys)
+	ctx.Cache.AddItem(w.item, labels, keys)
 	return false
 }
 
@@ -361,36 +368,37 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 // Returns true if the user selected Quit.
 func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName string, w *candidate, keys []string) bool {
 	var err error
+	labels := w.allLabels(feedCfg.Identity)
 
 	switch prompt(feedName, w.item.Item.Title) {
 	case Download:
 		if _, err = w.item.Download(ctx, cmd.DownloadPath, cmd.TorrentCacheDir); err != nil {
 			log.WithError(err).Errorf("Unable to download: %s", w.item.Item.Title)
-			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), w.titleLabels)
+			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), labels)
 			return false
 		}
-		ctx.Cache.AddItem(w.item, w.allLabels(), keys)
-		ctx.recordHistory(feedName, w.item.Item, "downloaded", "", w.titleLabels)
+		ctx.Cache.AddItem(w.item, labels, keys)
+		ctx.recordHistory(feedName, w.item.Item, "downloaded", "", labels)
 	case Torrent:
 		torrentID, err := w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, w.torrentBytes)
 		if err != nil {
 			log.WithError(err).Errorf("Unable to torrent: %s", feedName)
-			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), w.titleLabels)
+			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), labels)
 			return false
 		}
 		meta := CancelMetadata{
 			Title:     w.item.Item.Title,
 			FeedName:  feedName,
-			Labels:    w.titleLabels,
+			Labels:    labels,
 			Files:     w.fileNames,
 			SizeBytes: extractSize(w.item.Item),
 		}
 		sendNtfyStarted(ctx, feedCfg, torrentID, meta, w.item.Item)
-		ctx.Cache.AddItem(w.item, w.allLabels(), keys)
-		ctx.recordHistory(feedName, w.item.Item, "dispatched", "", w.titleLabels)
+		ctx.Cache.AddItem(w.item, labels, keys)
+		ctx.recordHistory(feedName, w.item.Item, "dispatched", "", labels)
 	case Skip:
-		ctx.Cache.AddItem(w.item, w.allLabels(), keys)
-		ctx.recordHistory(feedName, w.item.Item, "skipped", "user skip", w.titleLabels)
+		ctx.Cache.AddItem(w.item, labels, keys)
+		ctx.recordHistory(feedName, w.item.Item, "skipped", "user skip", labels)
 	case SkipOnce:
 		// don't add to cache
 	case Quit:
