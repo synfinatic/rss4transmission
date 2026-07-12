@@ -20,6 +20,26 @@ func simTestCmd(t *testing.T) (*SimulateCmd, string) {
 	return &SimulateCmd{Dir: dir}, dir
 }
 
+// --- findFeedByName ---
+
+func TestFindFeedByName_Found(t *testing.T) {
+	feeds := []Feed{{Name: "A", URL: "https://a"}, {Name: "B", URL: "https://b"}}
+	got, ok := findFeedByName(feeds, "B")
+	if !ok {
+		t.Fatal("expected to find feed B")
+	}
+	if got.URL != "https://b" {
+		t.Errorf("got URL %q, want https://b", got.URL)
+	}
+}
+
+func TestFindFeedByName_NotFound(t *testing.T) {
+	feeds := []Feed{{Name: "A", URL: "https://a"}}
+	if _, ok := findFeedByName(feeds, "Missing"); ok {
+		t.Error("expected ok=false for missing feed name")
+	}
+}
+
 // --- sanitizeFilename ---
 
 func TestSanitizeFilename_Clean(t *testing.T) {

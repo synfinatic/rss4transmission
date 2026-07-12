@@ -41,6 +41,9 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
   Transmission when running behind [Gluetun](https://github.com/qdm12/gluetun)
 - **Torrent file cache** — avoids re-fetching `.torrent` files on every watch-loop iteration;
   pruned automatically
+- **Ordered, stop-after-dispatch processing** — feeds are processed in the order they're listed
+  in the config file; as soon as one torrent is dispatched or downloaded, the run stops
+  immediately, resuming with the next feed on the following `once`/`watch` tick
 - **fail2ban integration** — optional access log with timestamps and client IPs lets fail2ban
   detect and ban brute-force attempts against the cancel endpoint
 

@@ -104,17 +104,25 @@ func (c *CacheFile) BestRankForKey(key string, prefer []PreferDimension) ([]int,
 // SaveCache updates the cache and removes any entries older than the specified
 // duration.
 // SaveCache prunes records and writes to disk. A record is kept if it is within
-// the retention window d, or if its GUID is still present in activeGUIDs
-// (feed name → set of GUIDs currently in the feed). Pass nil for activeGUIDs
-// to use time-based pruning only.
+// the retention window d, if its GUID is still present in activeGUIDs (feed
+// name → set of GUIDs currently in the feed), or if its feed has a present-but-
+// nil entry in activeGUIDs — meaning the feed is still configured but wasn't
+// actually fetched this run (early stop, --feed filter, or a fetch error), so
+// there's no evidence the GUID is gone and pruning is deferred to a run that
+// actually checks it. A feed name absent from activeGUIDs entirely (no longer
+// configured) falls back to time-based pruning. Pass nil for activeGUIDs to use
+// time-based pruning only.
 func (c *CacheFile) SaveCache(d time.Duration, activeGUIDs map[string]map[string]bool) error {
 	deletedRecord := false
 	newSeen := []CacheRecord{}
 
 	for _, s := range c.Seen {
 		withinWindow := time.Since(s.AddTime).Hours() < d.Hours()
-		stillInFeed := activeGUIDs[s.Feed] != nil && activeGUIDs[s.Feed][s.GUID]
-		if withinWindow || stillInFeed {
+		feedGUIDs, feedConfigured := activeGUIDs[s.Feed]
+		fetchedThisRun := feedGUIDs != nil
+		stillInFeed := fetchedThisRun && feedGUIDs[s.GUID]
+		notCheckedThisRun := feedConfigured && !fetchedThisRun
+		if withinWindow || stillInFeed || notCheckedThisRun {
 			newSeen = append(newSeen, s)
 		} else {
 			deletedRecord = true

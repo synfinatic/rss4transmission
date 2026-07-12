@@ -1,14 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/hekmon/transmissionrpc/v3"
 	"github.com/mmcdole/gofeed"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -250,6 +253,155 @@ func TestDispatch_Skip_RecordsFileDerivedLabelsInHistory(t *testing.T) {
 	require.Len(t, records, 1)
 	assert.Equal(t, "1080p", records[0].Labels["resolution"],
 		"history record should include the file-derived resolution label, matching what was cached")
+}
+
+// --- dispatch stop-processing semantics ---
+
+// fakeTransmissionServer emulates just enough of Transmission's RPC protocol
+// (the X-Transmission-Session-Id CSRF handshake, then a successful
+// "torrent-add" reply) for transmissionrpc.Client.TorrentAdd to succeed.
+func fakeTransmissionServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	const sessionID = "test-session-id"
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Transmission-Session-Id") != sessionID {
+			w.Header().Set("X-Transmission-Session-Id", sessionID)
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		var req struct {
+			Tag int `json:"tag"`
+		}
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(body, &req))
+
+		resp := map[string]any{
+			"result": "success",
+			"tag":    req.Tag,
+			"arguments": map[string]any{
+				"torrent-added": map[string]any{"id": 1},
+			},
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
+	}))
+}
+
+func TestDispatch_NoAction_DoesNotStopProcessing(t *testing.T) {
+	c := makeCandidate("guid1", map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"}, nil)
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil, nil)
+	keys := []string{"series=MotoGP|round=RD01|session=Race"}
+
+	ctx := &RunContext{Cache: emptyCache(), History: &HistoryFile{guidIndex: map[string]int{}}}
+	cmd := &OnceCmd{NoAction: true}
+	stop := cmd.dispatch(ctx, feedCfg, "testfeed", c, keys)
+
+	assert.False(t, stop, "--no-action must never stop processing")
+}
+
+func TestDispatch_Skip_DoesNotStopProcessing(t *testing.T) {
+	c := makeCandidate("guid1", map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"}, nil)
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil, nil)
+	keys := []string{"series=MotoGP|round=RD01|session=Race"}
+
+	ctx := &RunContext{Cache: emptyCache(), History: &HistoryFile{guidIndex: map[string]int{}}}
+	cmd := &OnceCmd{Skip: true}
+	stop := cmd.dispatch(ctx, feedCfg, "testfeed", c, keys)
+
+	assert.False(t, stop, "--skip must never stop processing")
+}
+
+func TestDispatch_Download_StopsProcessing(t *testing.T) {
+	torrentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("fake torrent content"))
+	}))
+	defer torrentSrv.Close()
+
+	c := &candidate{
+		item: &FeedItem{
+			Feed: "testfeed",
+			Item: &gofeed.Item{
+				Title: "guid1",
+				GUID:  "guid1",
+				Enclosures: []*gofeed.Enclosure{
+					{URL: torrentSrv.URL + "/my.torrent", Type: "application/x-bittorrent"},
+				},
+			},
+		},
+		titleLabels: map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
+	}
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil, nil)
+	keys := []string{"series=MotoGP|round=RD01|session=Race"}
+
+	ctx := &RunContext{Cache: emptyCache(), History: &HistoryFile{guidIndex: map[string]int{}}}
+	cmd := &OnceCmd{Download: true, DownloadPath: t.TempDir()}
+	stop := cmd.dispatch(ctx, feedCfg, "testfeed", c, keys)
+
+	assert.True(t, stop, "a successful --download must stop processing")
+	records := ctx.History.GetRecords()
+	require.Len(t, records, 1)
+	assert.Equal(t, "downloaded", records[0].Outcome)
+}
+
+func TestDispatch_RealSubmit_StopsProcessing(t *testing.T) {
+	srv := fakeTransmissionServer(t)
+	defer srv.Close()
+	endpoint, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	client, err := transmissionrpc.New(endpoint, nil)
+	require.NoError(t, err)
+
+	c := makeCandidate("guid1", map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"}, nil)
+	c.torrentBytes = []byte("fake torrent data") // pre-populated so no network fetch is needed
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil, nil)
+	keys := []string{"series=MotoGP|round=RD01|session=Race"}
+
+	ctx := &RunContext{
+		Cache:        emptyCache(),
+		History:      &HistoryFile{guidIndex: map[string]int{}},
+		Transmission: client,
+	}
+	cmd := &OnceCmd{}
+	stop := cmd.dispatch(ctx, feedCfg, "testfeed", c, keys)
+
+	assert.True(t, stop, "a real Transmission submission must stop processing")
+	records := ctx.History.GetRecords()
+	require.Len(t, records, 1)
+	assert.Equal(t, "dispatched", records[0].Outcome)
+}
+
+// --- collectActiveGUIDs ---
+
+func TestCollectActiveGUIDs_FetchedFeed_ListsItsGUIDs(t *testing.T) {
+	feeds := Feeds{
+		"https://a": {Items: []*gofeed.Item{{GUID: "g1"}, {GUID: "g2"}}},
+	}
+	cfgs := []Feed{{Name: "A", URL: "https://a"}}
+
+	active := collectActiveGUIDs(feeds, cfgs)
+
+	require.Contains(t, active, "A")
+	assert.True(t, active["A"]["g1"])
+	assert.True(t, active["A"]["g2"])
+}
+
+func TestCollectActiveGUIDs_UnfetchedFeed_GetsPresentNilEntry(t *testing.T) {
+	// A configured feed whose URL was never fetched this run (early stop,
+	// --feed filter, or a fetch error) must still get a map entry — present
+	// but nil — so SaveCache can distinguish "not checked" from "no longer
+	// configured".
+	feeds := Feeds{} // nothing fetched
+	cfgs := []Feed{{Name: "B", URL: "https://b"}}
+
+	active := collectActiveGUIDs(feeds, cfgs)
+
+	guids, ok := active["B"]
+	if !ok {
+		t.Fatal("expected an entry for feed B even though it wasn't fetched")
+	}
+	if guids != nil {
+		t.Errorf("expected nil GUID set for unfetched feed, got %v", guids)
+	}
 }
 
 // --- selectWinners ---
