@@ -509,6 +509,62 @@ func TestSaveCache_OldAndNotInFeed_Pruned(t *testing.T) {
 	}
 }
 
+func TestSaveCache_FeedConfiguredButNotFetchedThisRun_NotPruned(t *testing.T) {
+	// A feed that is still configured but wasn't fetched this run (early stop,
+	// --feed filter, or a fetch error) is represented in activeGUIDs by a
+	// present key with a nil value. Records for it must not be pruned just
+	// because we have no fresh evidence either way.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	old := time.Now().Add(-365 * 24 * time.Hour)
+	c := &CacheFile{
+		Version: CACHE_VERSION,
+		Errors:  map[string]int64{},
+		Seen: []CacheRecord{
+			{Feed: "unvisited", GUID: "guid1", AddTime: old},
+		},
+		filename: path,
+		needSave: true,
+	}
+	activeGUIDs := map[string]map[string]bool{
+		"unvisited": nil, // configured, but not fetched this run
+	}
+	if err := c.SaveCache(30*24*time.Hour, activeGUIDs); err != nil {
+		t.Fatalf("SaveCache returned error: %v", err)
+	}
+	if len(c.Seen) != 1 {
+		t.Errorf("expected record kept (feed not fetched this run), got %d records", len(c.Seen))
+	}
+}
+
+func TestSaveCache_FeedRemovedFromConfig_StillPrunedByTime(t *testing.T) {
+	// A feed no longer present in activeGUIDs at all (removed from config
+	// entirely) must fall back to time-based pruning, not be retained forever.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+
+	old := time.Now().Add(-365 * 24 * time.Hour)
+	c := &CacheFile{
+		Version: CACHE_VERSION,
+		Errors:  map[string]int64{},
+		Seen: []CacheRecord{
+			{Feed: "removed", GUID: "guid1", AddTime: old},
+		},
+		filename: path,
+		needSave: true,
+	}
+	activeGUIDs := map[string]map[string]bool{
+		"other": {"guid2": true}, // "removed" isn't a key at all
+	}
+	if err := c.SaveCache(30*24*time.Hour, activeGUIDs); err != nil {
+		t.Fatalf("SaveCache returned error: %v", err)
+	}
+	if len(c.Seen) != 0 {
+		t.Errorf("expected record pruned (feed no longer configured), got %d records", len(c.Seen))
+	}
+}
+
 func TestSaveCache_SkipsWhenUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cache.json")

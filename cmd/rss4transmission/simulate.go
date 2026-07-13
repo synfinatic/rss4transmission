@@ -17,8 +17,19 @@ type SimulateCmd struct {
 	Dir      string `kong:"default='.',name='torrent-dir',help='Directory to write .torrent files'"`
 }
 
+// findFeedByName returns the feed with the given Name, since Feeds is an
+// ordered list rather than a map.
+func findFeedByName(feeds []Feed, name string) (Feed, bool) {
+	for _, f := range feeds {
+		if f.Name == name {
+			return f, true
+		}
+	}
+	return Feed{}, false
+}
+
 func (cmd *SimulateCmd) Run(ctx *RunContext) error {
-	feedCfg, ok := ctx.Config.Feeds[cmd.Feed]
+	feedCfg, ok := findFeedByName(ctx.Config.Feeds, cmd.Feed)
 	if !ok {
 		return fmt.Errorf("feed %q not found in config", cmd.Feed)
 	}

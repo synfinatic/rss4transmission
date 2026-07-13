@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/mmcdole/gofeed"
@@ -123,5 +125,147 @@ func TestFeedValidate_Valid(t *testing.T) {
 	}
 	if err := f.Validate("myfeed", map[string]*ExtractorSet{"racing": es}); err != nil {
 		t.Errorf("expected valid feed to pass validation: %v", err)
+	}
+}
+
+func TestValidateFeedNames_Unique(t *testing.T) {
+	feeds := []Feed{{Name: "A", URL: "https://a"}, {Name: "B", URL: "https://b"}}
+	if err := validateFeedNames(feeds); err != nil {
+		t.Errorf("expected no error for unique names, got: %v", err)
+	}
+}
+
+func TestValidateFeedNames_BlankName(t *testing.T) {
+	feeds := []Feed{{Name: "", URL: "https://a"}}
+	if err := validateFeedNames(feeds); err == nil {
+		t.Error("expected error for blank feed name")
+	}
+}
+
+func TestValidateFeedNames_Duplicate(t *testing.T) {
+	feeds := []Feed{{Name: "A", URL: "https://a"}, {Name: "A", URL: "https://b"}}
+	if err := validateFeedNames(feeds); err == nil {
+		t.Error("expected error for duplicate feed name")
+	}
+}
+
+func TestLoadConfig_FeedsPreserveFileOrder(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `
+Feeds:
+  - Name: Zzz
+    URL: https://example.com/z
+  - Name: Aaa
+    URL: https://example.com/a
+  - Name: Mmm
+    URL: https://example.com/m
+`
+	if err := os.WriteFile(cfgPath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	rc := &RunContext{}
+	if _, err := rc.loadConfig(cfgPath); err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+
+	want := []string{"Zzz", "Aaa", "Mmm"}
+	if len(rc.Config.Feeds) != len(want) {
+		t.Fatalf("expected %d feeds, got %d", len(want), len(rc.Config.Feeds))
+	}
+	for i, name := range want {
+		if rc.Config.Feeds[i].Name != name {
+			t.Errorf("feed[%d].Name = %q, want %q", i, rc.Config.Feeds[i].Name, name)
+		}
+	}
+}
+
+func TestLoadConfig_RejectsDuplicateFeedNames(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `
+Feeds:
+  - Name: Dup
+    URL: https://example.com/a
+  - Name: Dup
+    URL: https://example.com/b
+`
+	if err := os.WriteFile(cfgPath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	rc := &RunContext{}
+	if _, err := rc.loadConfig(cfgPath); err == nil {
+		t.Error("expected loadConfig to reject duplicate feed names")
+	}
+}
+
+func TestLoadConfig_RejectsBlankFeedName(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `
+Feeds:
+  - URL: https://example.com/a
+`
+	if err := os.WriteFile(cfgPath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	rc := &RunContext{}
+	if _, err := rc.loadConfig(cfgPath); err == nil {
+		t.Error("expected loadConfig to reject a blank feed name")
+	}
+}
+
+func TestLoadConfig_BadReload_KeepsPreviousGoodConfig(t *testing.T) {
+	// Simulates watch's live config-reload path: loadConfig is called again on
+	// the same RunContext. A reload with duplicate/blank feed names must be
+	// rejected without corrupting the already-running, valid config.
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	goodYAML := `
+Feeds:
+  - Name: Good1
+    URL: https://example.com/1
+  - Name: Good2
+    URL: https://example.com/2
+`
+	if err := os.WriteFile(cfgPath, []byte(goodYAML), 0600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	rc := &RunContext{}
+	if _, err := rc.loadConfig(cfgPath); err != nil {
+		t.Fatalf("initial loadConfig failed: %v", err)
+	}
+	if len(rc.Config.Feeds) != 2 {
+		t.Fatalf("expected 2 feeds after initial load, got %d", len(rc.Config.Feeds))
+	}
+
+	badYAML := `
+Feeds:
+  - Name: Dup
+    URL: https://example.com/1
+  - Name: Dup
+    URL: https://example.com/2
+`
+	if err := os.WriteFile(cfgPath, []byte(badYAML), 0600); err != nil {
+		t.Fatalf("failed to overwrite config: %v", err)
+	}
+
+	if _, err := rc.loadConfig(cfgPath); err == nil {
+		t.Error("expected reload with duplicate feed names to fail")
+	}
+
+	if len(rc.Config.Feeds) != 2 {
+		t.Fatalf("expected previous config to survive a bad reload, got %d feeds", len(rc.Config.Feeds))
+	}
+	want := []string{"Good1", "Good2"}
+	for i, name := range want {
+		if rc.Config.Feeds[i].Name != name {
+			t.Errorf("feed[%d].Name = %q, want %q (config should be unchanged after bad reload)",
+				i, rc.Config.Feeds[i].Name, name)
+		}
 	}
 }

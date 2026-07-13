@@ -142,9 +142,9 @@ func main() {
 		log.WithError(err).Fatalf("Unable to load %s", rc.configFile)
 	}
 
-	for name, feedCfg := range rc.Config.Feeds {
-		if err = feedCfg.Validate(name, rc.Config.Extractors); err != nil {
-			log.WithError(err).Fatalf("Invalid feed %q config", name)
+	for _, feedCfg := range rc.Config.Feeds {
+		if err = feedCfg.Validate(feedCfg.Name, rc.Config.Extractors); err != nil {
+			log.WithError(err).Fatalf("Invalid feed %q config", feedCfg.Name)
 		}
 	}
 
@@ -221,13 +221,23 @@ func (rc *RunContext) loadConfig(configFile string) (*koanf.Koanf, error) {
 		return konf, err
 	}
 
-	if err := konf.Unmarshal("", &rc.Config); err != nil {
+	var cfg Config
+	if err := konf.Unmarshal("", &cfg); err != nil {
 		return konf, err
 	}
 
-	if err := rc.Config.Ntfy.Validate(); err != nil {
+	if err := cfg.Ntfy.Validate(); err != nil {
 		return konf, fmt.Errorf("invalid ntfy template: %w", err)
 	}
+
+	if err := validateFeedNames(cfg.Feeds); err != nil {
+		return konf, fmt.Errorf("invalid feed configuration: %w", err)
+	}
+
+	// Only commit the newly parsed config once every check above has passed,
+	// so a bad reload (e.g. watch.go's live config-reload) leaves the
+	// previously running config fully intact instead of partially applied.
+	rc.Config = cfg
 
 	return konf, nil
 }

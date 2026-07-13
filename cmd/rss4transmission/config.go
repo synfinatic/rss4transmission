@@ -38,7 +38,7 @@ var ConfigDefaults = map[string]interface{}{
 }
 
 type Config struct {
-	Feeds         map[string]Feed          `koanf:"Feeds"`
+	Feeds         []Feed                   `koanf:"Feeds"`
 	Extractors    map[string]*ExtractorSet `koanf:"Extractors"`
 	Transmission  Transmission             `koanf:"Transmission"`
 	Gluetun       GluetunConfig            `koanf:"Gluetun"`
@@ -92,6 +92,7 @@ type GluetunConfig struct {
 }
 
 type Feed struct {
+	Name           string   `koanf:"Name"`
 	URL            string   `koanf:"URL"`
 	Exclude        []string `koanf:"Exclude"`
 	DownloadPath   string   `koanf:"DownloadPath"`
@@ -112,6 +113,23 @@ type Feed struct {
 	exclude  []*regexp.Regexp
 	minSize  uint64
 	maxSize  uint64
+}
+
+// validateFeedNames ensures every feed has a non-empty, unique Name. Since
+// Feeds is an ordered list rather than a map, Name is the only identifier
+// tying a feed to its cache records, history entries, and --feed filter.
+func validateFeedNames(feeds []Feed) error {
+	seen := make(map[string]bool, len(feeds))
+	for _, f := range feeds {
+		if f.Name == "" {
+			return fmt.Errorf("feed with URL %q: Name is required", f.URL)
+		}
+		if seen[f.Name] {
+			return fmt.Errorf("duplicate feed name %q", f.Name)
+		}
+		seen[f.Name] = true
+	}
+	return nil
 }
 
 // Validate checks that the feed config is self-consistent.

@@ -167,7 +167,8 @@ func (cmd *OnceCmd) feedAllowed(feedName string) bool {
 
 // processFeed runs phases 1–4 for a single feed: build candidates, fetch
 // torrent data, select winners, and dispatch. Returns true if the caller
-// should stop processing further feeds (interactive Quit).
+// should stop processing further feeds this run — either a torrent was
+// dispatched/downloaded, or the user selected Quit interactively.
 func (cmd *OnceCmd) processFeed(ctx *RunContext, feedName string, feedCfg Feed, rss *gofeed.Feed, extractor *ExtractorSet) bool {
 	// Phase 1: Pre-filter candidates via Exclude + size, then extract title labels.
 	var candidates []*candidate
@@ -229,20 +230,23 @@ func (cmd *OnceCmd) processFeed(ctx *RunContext, feedName string, feedCfg Feed, 
 }
 
 // collectActiveGUIDs builds a map of feed name → set of GUIDs currently
-// present in the fetched RSS feeds. Used by SaveCache to retain entries whose
-// torrent link is still live.
-func collectActiveGUIDs(feeds Feeds, cfgs map[string]Feed) map[string]map[string]bool {
+// present in the fetched RSS feeds. Every configured feed gets an entry: a
+// populated set if its RSS was fetched this run, or an explicit nil if it
+// wasn't (early stop, --feed filter, or a fetch error) — the nil lets
+// SaveCache tell "not checked this run" apart from "no longer configured".
+func collectActiveGUIDs(feeds Feeds, cfgs []Feed) map[string]map[string]bool {
 	active := make(map[string]map[string]bool, len(cfgs))
-	for feedName, feedCfg := range cfgs {
+	for _, feedCfg := range cfgs {
 		rss := feeds[feedCfg.URL]
 		if rss == nil {
+			active[feedCfg.Name] = nil
 			continue
 		}
 		m := make(map[string]bool, len(rss.Items))
 		for _, item := range rss.Items {
 			m[item.GUID] = true
 		}
-		active[feedName] = m
+		active[feedCfg.Name] = m
 	}
 	return active
 }
@@ -260,17 +264,17 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 	// Cache gofeed results per URL so each RSS endpoint is fetched only once.
 	feeds := Feeds{}
 
-	for feedName, feedCfg := range ctx.Config.Feeds {
-		if !cmd.feedAllowed(feedName) {
+	for _, feedCfg := range ctx.Config.Feeds {
+		if !cmd.feedAllowed(feedCfg.Name) {
 			continue
 		}
 		if feedCfg.Extractor == "" {
-			log.Warnf("Feed %q has no Extractor configured, skipping", feedName)
+			log.Warnf("Feed %q has no Extractor configured, skipping", feedCfg.Name)
 			continue
 		}
 		extractor, ok := ctx.Config.Extractors[feedCfg.Extractor]
 		if !ok {
-			log.Errorf("Feed %q references unknown Extractor %q, skipping", feedName, feedCfg.Extractor)
+			log.Errorf("Feed %q references unknown Extractor %q, skipping", feedCfg.Name, feedCfg.Extractor)
 			continue
 		}
 
@@ -288,7 +292,7 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 			continue
 		}
 
-		if cmd.processFeed(ctx, feedName, feedCfg, feeds[feedCfg.URL], extractor) {
+		if cmd.processFeed(ctx, feedCfg.Name, feedCfg, feeds[feedCfg.URL], extractor) {
 			break
 		}
 	}
@@ -311,7 +315,10 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 }
 
 // dispatch handles a single winner: submits it and records it in the cache.
-// Returns true if the user selected Quit in interactive mode.
+// Returns true if processing should stop for the rest of this run — either
+// because the item was actually dispatched (torrented or downloaded), or the
+// user selected Quit in interactive mode. NoAction, Skip, and error paths
+// never stop processing, since nothing was produced.
 func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *candidate, keys []string) bool {
 	var err error
 	labels := w.allLabels(feedCfg.Identity)
@@ -361,11 +368,13 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 		ctx.recordHistory(feedName, w.item.Item, "dispatched", "", labels)
 	}
 	ctx.Cache.AddItem(w.item, labels, keys)
-	return false
+	return true
 }
 
-// dispatchInteractive prompts the user for what to do with a winner.
-// Returns true if the user selected Quit.
+// dispatchInteractive prompts the user for what to do with a winner. Returns
+// true if processing should stop for the rest of this run — either because
+// the item was actually dispatched (torrented or downloaded), or the user
+// selected Quit.
 func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName string, w *candidate, keys []string) bool {
 	var err error
 	labels := w.allLabels(feedCfg.Identity)
@@ -379,6 +388,7 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 		}
 		ctx.Cache.AddItem(w.item, labels, keys)
 		ctx.recordHistory(feedName, w.item.Item, "downloaded", "", labels)
+		return true
 	case Torrent:
 		torrentID, err := w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, w.torrentBytes)
 		if err != nil {
@@ -396,6 +406,7 @@ func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName 
 		sendNtfyStarted(ctx, feedCfg, torrentID, meta, w.item.Item)
 		ctx.Cache.AddItem(w.item, labels, keys)
 		ctx.recordHistory(feedName, w.item.Item, "dispatched", "", labels)
+		return true
 	case Skip:
 		ctx.Cache.AddItem(w.item, labels, keys)
 		ctx.recordHistory(feedName, w.item.Item, "skipped", "user skip", labels)

@@ -8,6 +8,7 @@ All feeds support these options:
 
 | Field | Description |
 |---|---|
+| `Name` | Unique feed name (required). Feeds are processed in the order they're listed. |
 | `URL` | RSS feed URL (required) |
 | `DownloadPath` | Destination directory for torrents added to Transmission |
 | `Exclude` | List of regexes — items whose title matches any are skipped before label extraction |
@@ -15,6 +16,11 @@ All feeds support these options:
 | `NoValidateCert` | Skip TLS certificate validation for this feed's URL |
 | `NoSubmit` | Dry-run: log matches but do not send to Transmission |
 | `NoNotify` | Skip ntfy notifications for this feed (see [Notifications](notifications.md)) |
+
+`Feeds` is a list, so feeds are always processed in the order they appear in the config file. As
+soon as one item is actually dispatched (submitted to Transmission or downloaded to disk with
+`--download`), the current `once`/`watch` run stops immediately — remaining feeds and candidates
+are picked up on the next run.
 
 ## Label-Based Feed Configuration
 
@@ -62,7 +68,7 @@ A feed enters label mode when `Extractor` is set:
 
 ```yaml
 Feeds:
-  MotoGP2024:
+  - Name: MotoGP2024
     URL: https://rss.example.com/feed
     DownloadPath: /torrents/motogp
     Exclude:
@@ -130,7 +136,7 @@ Extractors:
         Regexp: '(\d{3,4}p)'
 
 Feeds:
-  MotoGP2024:
+  - Name: MotoGP2024
     URL: https://rss.example.com/feed
     DownloadPath: /torrents/motogp
     Extractor: motogp
