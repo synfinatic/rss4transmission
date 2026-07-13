@@ -164,7 +164,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		}
 		cancelMux := newCancelMux(ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress, accessLog)
 		registerNotifyCompleteRoute(cancelMux, ctx.Config.Ntfy, ctx.Config.Cancel, accessLog)
-		go startWebServer(cancelMux, addr)
+		go startWebServer("public", cancelMux, addr)
 
 		if cmd.PrivateListen != "" {
 			histAddr, err := parseListenAddr(cmd.PrivateListen)
@@ -174,7 +174,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			if ctx.History == nil {
 				log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 			}
-			go startWebServer(newWebMux(ctx.History), histAddr)
+			go startWebServer("private", newWebMux(ctx.History), histAddr)
 		}
 	} else if cmd.PrivateListen != "" {
 		// Single-listener mode: history + cancel on the same port.
@@ -191,7 +191,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			ctx.CancelRoutesEnabled = true
 		}
 		registerNotifyCompleteRoute(mux, ctx.Config.Ntfy, ctx.Config.Cancel, accessLog)
-		go startWebServer(mux, addr)
+		go startWebServer("private", mux, addr)
 	}
 
 	var g *Gluetun
