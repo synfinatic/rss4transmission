@@ -454,11 +454,12 @@ func makePostCancelHandler(store *Store, cfg CancelConfig, remove removeFunc, ac
 	}
 }
 
-// startWebServer starts the HTTP server on addr. Blocks until the server
-// stops; intended to be called in a goroutine.
-func startWebServer(mux *http.ServeMux, addr string) {
-	log.Infof("Starting web server on http://%s", addr)
+// startWebServer starts the HTTP server on addr, identifying it in the log
+// as name (e.g. "public", "private"). Blocks until the server stops;
+// intended to be called in a goroutine.
+func startWebServer(name string, mux *http.ServeMux, addr string) {
+	log.Infof("Starting %s web server on http://%s", name, addr)
 	if err := http.ListenAndServe(addr, mux); err != nil { //nolint:gosec
-		log.WithError(err).Error("Web server stopped")
+		log.WithError(err).Errorf("%s web server stopped", name)
 	}
 }

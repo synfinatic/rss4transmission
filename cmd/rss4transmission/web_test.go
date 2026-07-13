@@ -1078,3 +1078,17 @@ func TestNotifyComplete_SizeIsUnknown(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, "Unknown", string(body))
 }
+
+func TestStartWebServer_LogsName(t *testing.T) {
+	origLog := log
+	defer func() { log = origLog }()
+
+	lg, buf := makeTestAccessLogger()
+	log = lg
+
+	// An invalid address makes net.Listen fail immediately, so
+	// startWebServer returns without blocking.
+	startWebServer("public", http.NewServeMux(), "not-a-valid-addr")
+
+	assert.Contains(t, buf.String(), "Starting public web server on http://not-a-valid-addr")
+}
