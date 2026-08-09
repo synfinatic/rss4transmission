@@ -344,6 +344,28 @@ func TestConfigReloader_OnWatchEvent_WatchError_DoesNotNotify(t *testing.T) {
 	}
 }
 
+// TestConfigReloader_OnWatchEvent_NotifyReload_DoesNotHoldLock is the
+// regression test for the bug where notifyReload was invoked while r.mu
+// was still held (via defer). notifyConfigReload performs a synchronous
+// HTTP POST with a 30s timeout, so calling it under the lock could block
+// the ticker loop's once.Run and the web handlers (which also take
+// reloader.mu) for up to 30s on a slow/unreachable ntfy server. The lock
+// must be released before notifyReload runs.
+func TestConfigReloader_OnWatchEvent_NotifyReload_DoesNotHoldLock(t *testing.T) {
+	r := &configReloader{
+		reload:        func() error { return nil },
+		registerWatch: func(cb func(event any, err error)) error { return nil },
+	}
+	r.notifyReload = func(err error) {
+		if !r.mu.TryLock() {
+			t.Fatal("expected r.mu to be unlocked while notifyReload runs, but it was held")
+		}
+		r.mu.Unlock()
+	}
+
+	r.onWatchEvent(nil, nil)
+}
+
 func TestConfigReloader_Recover_NotifiesSuccessOnceAfterRetries(t *testing.T) {
 	calls := 0
 	var notified []error
@@ -364,21 +386,33 @@ func TestConfigReloader_Recover_NotifiesSuccessOnceAfterRetries(t *testing.T) {
 
 	r.recover()
 
-	if len(notified) != 1 {
-		t.Fatalf("expected notifyReload to be called exactly once, got %d", len(notified))
+	// One failure notice (from the first failed attempt) plus one final
+	// success notice; the last call must report success.
+	if len(notified) != 2 {
+		t.Fatalf("expected notifyReload to be called twice (failure then success), got %d", len(notified))
 	}
-	if notified[0] != nil {
-		t.Errorf("expected notifyReload to be called with nil error, got %v", notified[0])
+	if notified[0] == nil {
+		t.Errorf("expected first notifyReload call to report the failure error, got nil")
+	}
+	if notified[1] != nil {
+		t.Errorf("expected final notifyReload call to report success (nil), got %v", notified[1])
 	}
 }
 
-func TestConfigReloader_Recover_DoesNotNotifyPerFailedAttempt(t *testing.T) {
+// TestConfigReloader_Recover_NotifiesFailureOnceThenSuccess is the
+// regression test for the bug where recover() only ever notified on
+// eventual success. Editors that save via atomic rename/replace make
+// koanf's watcher report an error, which routes through the err != nil
+// branch into recover() — so a bad edit saved that way must still produce
+// a failure notification (once, not per retry attempt), followed by a
+// success notification once the config is valid again.
+func TestConfigReloader_Recover_NotifiesFailureOnceThenSuccess(t *testing.T) {
 	calls := 0
-	notifyCalls := 0
+	var notified []error
 	r := &configReloader{
 		reload: func() error {
 			calls++
-			if calls < 3 {
+			if calls < 4 {
 				return fmt.Errorf("not ready")
 			}
 			return nil
@@ -386,13 +420,19 @@ func TestConfigReloader_Recover_DoesNotNotifyPerFailedAttempt(t *testing.T) {
 		registerWatch: func(cb func(event any, err error)) error { return nil },
 		retryInterval: 0,
 		notifyReload: func(err error) {
-			notifyCalls++
+			notified = append(notified, err)
 		},
 	}
 
 	r.recover()
 
-	if notifyCalls != 1 {
-		t.Errorf("expected notifyReload to be called once (not per retry attempt), got %d", notifyCalls)
+	if len(notified) != 2 {
+		t.Fatalf("expected notifyReload to be called twice (one failure notice, then one success notice), got %d", len(notified))
+	}
+	if notified[0] == nil {
+		t.Errorf("expected first notifyReload call to report the failure error, got nil")
+	}
+	if notified[1] != nil {
+		t.Errorf("expected final notifyReload call to report success (nil), got %v", notified[1])
 	}
 }

@@ -62,15 +62,21 @@ func (r *configReloader) onWatchEvent(event any, err error) {
 		return
 	}
 
-	// don't change the config while we are processing the feed
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	reloadErr := func() error {
+		// don't change the config while we are processing the feed
+		r.mu.Lock()
+		defer r.mu.Unlock()
 
-	log.Infof("config changed. reloading...")
-	reloadErr := r.reload()
+		log.Infof("config changed. reloading...")
+		return r.reload()
+	}()
+
 	if reloadErr != nil {
 		log.WithError(reloadErr).Errorf("failed to reload config file")
 	}
+	// notify outside the lock: notifyConfigReload does a synchronous HTTP
+	// POST with a 30s timeout, and holding r.mu that long would block the
+	// ticker loop's once.Run and the web handlers that also take r.mu.
 	if r.notifyReload != nil {
 		r.notifyReload(reloadErr)
 	}
@@ -80,10 +86,25 @@ func (r *configReloader) onWatchEvent(event any, err error) {
 // blocks (via retryLoadConfig) until the config file is readable again, so
 // callers run it in its own goroutine.
 func (r *configReloader) recover() {
+	notifiedFailure := false
 	attempt := retryLoadConfig(func() error {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		return r.reload()
+		reloadErr := func() error {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			return r.reload()
+		}()
+
+		// Report the first failure so a bad edit saved via atomic
+		// rename/replace (which routes through this recovery path rather
+		// than onWatchEvent's direct reload) is still visible, but don't
+		// spam a notification per retry attempt.
+		if reloadErr != nil && !notifiedFailure {
+			notifiedFailure = true
+			if r.notifyReload != nil {
+				r.notifyReload(reloadErr)
+			}
+		}
+		return reloadErr
 	}, r.retryInterval)
 
 	log.Infof("config reloaded after %d attempt(s), re-registering file watcher", attempt)
