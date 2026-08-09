@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
@@ -215,4 +216,183 @@ func TestConfigReloader_Recover_ReregisterFailureIsLoggedNotFatal(t *testing.T) 
 
 	// Must not panic even though re-registration itself fails.
 	r.recover()
+}
+
+// --- notifyReload wiring ---
+
+func TestConfigReloader_OnWatchEvent_NilNotifyReload_DoesNotPanic(t *testing.T) {
+	r := &configReloader{
+		reload:        func() error { return nil },
+		registerWatch: func(cb func(event any, err error)) error { return nil },
+	}
+
+	// notifyReload is unset (zero value nil); this must not panic.
+	r.onWatchEvent(nil, nil)
+}
+
+func TestConfigReloader_Recover_NilNotifyReload_DoesNotPanic(t *testing.T) {
+	r := &configReloader{
+		reload:        func() error { return nil },
+		registerWatch: func(cb func(event any, err error)) error { return nil },
+		retryInterval: 0,
+	}
+
+	// notifyReload is unset (zero value nil); this must not panic.
+	r.recover()
+}
+
+func TestConfigReloader_OnWatchEvent_Success_NotifiesWithNilError(t *testing.T) {
+	var notified []error
+	r := &configReloader{
+		reload:        func() error { return nil },
+		registerWatch: func(cb func(event any, err error)) error { return nil },
+		notifyReload: func(err error) {
+			notified = append(notified, err)
+		},
+	}
+
+	r.onWatchEvent(nil, nil)
+
+	if len(notified) != 1 {
+		t.Fatalf("expected notifyReload to be called once, got %d", len(notified))
+	}
+	if notified[0] != nil {
+		t.Errorf("expected notifyReload to be called with nil error, got %v", notified[0])
+	}
+}
+
+func TestConfigReloader_OnWatchEvent_ReloadFailure_NotifiesWithError(t *testing.T) {
+	wantErr := fmt.Errorf("bad yaml")
+	var notified []error
+	r := &configReloader{
+		reload:        func() error { return wantErr },
+		registerWatch: func(cb func(event any, err error)) error { return nil },
+		notifyReload: func(err error) {
+			notified = append(notified, err)
+		},
+	}
+
+	r.onWatchEvent(nil, nil)
+
+	if len(notified) != 1 {
+		t.Fatalf("expected notifyReload to be called once, got %d", len(notified))
+	}
+	if notified[0] == nil || notified[0].Error() != wantErr.Error() {
+		t.Errorf("expected notifyReload to be called with %v, got %v", wantErr, notified[0])
+	}
+}
+
+// TestConfigReloader_OnWatchEvent_WatchError_DoesNotNotify confirms the
+// err != nil (watcher-death) branch itself never calls notifyReload
+// directly/synchronously — any notification only comes from recover(), and
+// only once its reload has actually completed. reload here blocks until the
+// test signals it to proceed, so we can observe the state in between: after
+// recover() has started but before reload returns, notifyReload must still
+// be unfired.
+func TestConfigReloader_OnWatchEvent_WatchError_DoesNotNotify(t *testing.T) {
+	started := make(chan struct{})
+	proceed := make(chan struct{})
+	reregistered := make(chan struct{}, 1)
+	var notifyCount int
+	var mu sync.Mutex
+	r := &configReloader{
+		reload: func() error {
+			close(started)
+			<-proceed
+			return nil
+		},
+		registerWatch: func(cb func(event any, err error)) error {
+			reregistered <- struct{}{}
+			return nil
+		},
+		retryInterval: 0,
+		notifyReload: func(err error) {
+			mu.Lock()
+			notifyCount++
+			mu.Unlock()
+		},
+	}
+
+	r.onWatchEvent(nil, fmt.Errorf("fsnotify watch channel closed"))
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected recover() to invoke reload, but it never started")
+	}
+
+	mu.Lock()
+	got := notifyCount
+	mu.Unlock()
+	if got != 0 {
+		t.Fatalf("notifyReload must not fire before reload completes, got %d calls", got)
+	}
+
+	close(proceed)
+
+	select {
+	case <-reregistered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected watcher to be re-registered after error, but it was not")
+	}
+
+	mu.Lock()
+	got = notifyCount
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("expected notifyReload to be called once (by recover(), after reload completed), got %d", got)
+	}
+}
+
+func TestConfigReloader_Recover_NotifiesSuccessOnceAfterRetries(t *testing.T) {
+	calls := 0
+	var notified []error
+	r := &configReloader{
+		reload: func() error {
+			calls++
+			if calls < 3 {
+				return fmt.Errorf("not ready")
+			}
+			return nil
+		},
+		registerWatch: func(cb func(event any, err error)) error { return nil },
+		retryInterval: 0,
+		notifyReload: func(err error) {
+			notified = append(notified, err)
+		},
+	}
+
+	r.recover()
+
+	if len(notified) != 1 {
+		t.Fatalf("expected notifyReload to be called exactly once, got %d", len(notified))
+	}
+	if notified[0] != nil {
+		t.Errorf("expected notifyReload to be called with nil error, got %v", notified[0])
+	}
+}
+
+func TestConfigReloader_Recover_DoesNotNotifyPerFailedAttempt(t *testing.T) {
+	calls := 0
+	notifyCalls := 0
+	r := &configReloader{
+		reload: func() error {
+			calls++
+			if calls < 3 {
+				return fmt.Errorf("not ready")
+			}
+			return nil
+		},
+		registerWatch: func(cb func(event any, err error)) error { return nil },
+		retryInterval: 0,
+		notifyReload: func(err error) {
+			notifyCalls++
+		},
+	}
+
+	r.recover()
+
+	if notifyCalls != 1 {
+		t.Errorf("expected notifyReload to be called once (not per retry attempt), got %d", notifyCalls)
+	}
 }

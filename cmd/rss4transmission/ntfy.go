@@ -11,6 +11,12 @@ import (
 
 const ntfyTimeout = 30 * time.Second
 
+// NtfyConfigContext holds the data available to config-reload notification templates.
+type NtfyConfigContext struct {
+	ConfigFile string
+	Error      string // empty on success
+}
+
 // NtfyTemplateContext holds all torrent data available to notification templates.
 type NtfyTemplateContext struct {
 	Title     string
@@ -31,56 +37,87 @@ var validNtfyPriorities = map[string]struct{}{
 	"min": {}, "low": {}, "default": {}, "high": {}, "max": {},
 }
 
-// Validate applies template defaults and compiles all four notification templates.
-// It also validates that priority fields contain ntfy-accepted values.
-// Returns nil immediately when ntfy is disabled (BaseURL or Topic not set).
+// compileNotificationTemplates applies defaults to title/body/priority in
+// place, validates priority, and compiles title/body as text/template.
+// titleField/bodyField/priorityField name the config fields in error
+// messages, e.g. "StartedTitle".
+func compileNotificationTemplates(title, body, priority *string, titleDefault, bodyDefault, priorityDefault, titleField, bodyField, priorityField string) (*template.Template, *template.Template, error) {
+	if *title == "" {
+		*title = titleDefault
+	}
+	if *body == "" {
+		*body = bodyDefault
+	}
+	if *priority == "" {
+		*priority = priorityDefault
+	}
+
+	if _, ok := validNtfyPriorities[*priority]; !ok {
+		return nil, nil, fmt.Errorf("ntfy %s %q is not valid (min/low/default/high/max)", priorityField, *priority)
+	}
+
+	titleTmpl, err := template.New(titleField).Parse(*title)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ntfy %s template: %w", titleField, err)
+	}
+	bodyTmpl, err := template.New(bodyField).Parse(*body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ntfy %s template: %w", bodyField, err)
+	}
+	return titleTmpl, bodyTmpl, nil
+}
+
+// Validate applies template defaults and compiles notification templates. It
+// also validates that priority fields contain ntfy-accepted values.
+// Returns nil immediately when ntfy is disabled (BaseURL not set). The
+// Started/Completed (torrent) and ConfigReloaded/ConfigFailed (config-reload)
+// notification groups are independently opt-in, gated by Topic and
+// ConfigTopic respectively, so either can be enabled without the other.
 func (c *NtfyConfig) Validate() error {
-	if c.BaseURL == "" || c.Topic == "" {
+	if c.BaseURL == "" {
 		return nil
 	}
-	if c.StartedTitle == "" {
-		c.StartedTitle = "Torrent Started"
-	}
-	if c.StartedBody == "" {
-		c.StartedBody = "{{.Title}}\n{{.Size}}"
-	}
-	if c.StartedPriority == "" {
-		c.StartedPriority = "default"
-	}
-	if c.CompletedTitle == "" {
-		c.CompletedTitle = "Torrent Complete"
-	}
-	if c.CompletedBody == "" {
-		c.CompletedBody = "{{.Title}}\n{{.Dir}}"
-	}
-	if c.CompletedPriority == "" {
-		c.CompletedPriority = "default"
+
+	if c.Topic != "" {
+		var err error
+		c.startedTitleTmpl, c.startedBodyTmpl, err = compileNotificationTemplates(
+			&c.StartedTitle, &c.StartedBody, &c.StartedPriority,
+			"Torrent Started", "{{.Title}}\n{{.Size}}", "default",
+			"StartedTitle", "StartedBody", "StartedPriority")
+		if err != nil {
+			return err
+		}
+		c.completedTitleTmpl, c.completedBodyTmpl, err = compileNotificationTemplates(
+			&c.CompletedTitle, &c.CompletedBody, &c.CompletedPriority,
+			"Torrent Complete", "{{.Title}}\n{{.Dir}}", "default",
+			"CompletedTitle", "CompletedBody", "CompletedPriority")
+		if err != nil {
+			return err
+		}
 	}
 
-	if _, ok := validNtfyPriorities[c.StartedPriority]; !ok {
-		return fmt.Errorf("ntfy StartedPriority %q is not valid (min/low/default/high/max)", c.StartedPriority)
-	}
-	if _, ok := validNtfyPriorities[c.CompletedPriority]; !ok {
-		return fmt.Errorf("ntfy CompletedPriority %q is not valid (min/low/default/high/max)", c.CompletedPriority)
+	if c.ConfigTopic != "" {
+		var err error
+		c.configReloadedTitleTmpl, c.configReloadedBodyTmpl, err = compileNotificationTemplates(
+			&c.ConfigReloadedTitle, &c.ConfigReloadedBody, &c.ConfigReloadedPriority,
+			"Config Reloaded", "{{.ConfigFile}}", "low",
+			"ConfigReloadedTitle", "ConfigReloadedBody", "ConfigReloadedPriority")
+		if err != nil {
+			return err
+		}
+		c.configFailedTitleTmpl, c.configFailedBodyTmpl, err = compileNotificationTemplates(
+			&c.ConfigFailedTitle, &c.ConfigFailedBody, &c.ConfigFailedPriority,
+			"Config Reload FAILED", "{{.ConfigFile}}\n{{.Error}}", "high",
+			"ConfigFailedTitle", "ConfigFailedBody", "ConfigFailedPriority")
+		if err != nil {
+			return err
+		}
 	}
 
-	var err error
-	if c.startedTitleTmpl, err = template.New("StartedTitle").Parse(c.StartedTitle); err != nil {
-		return fmt.Errorf("ntfy StartedTitle template: %w", err)
-	}
-	if c.startedBodyTmpl, err = template.New("StartedBody").Parse(c.StartedBody); err != nil {
-		return fmt.Errorf("ntfy StartedBody template: %w", err)
-	}
-	if c.completedTitleTmpl, err = template.New("CompletedTitle").Parse(c.CompletedTitle); err != nil {
-		return fmt.Errorf("ntfy CompletedTitle template: %w", err)
-	}
-	if c.completedBodyTmpl, err = template.New("CompletedBody").Parse(c.CompletedBody); err != nil {
-		return fmt.Errorf("ntfy CompletedBody template: %w", err)
-	}
 	return nil
 }
 
-func renderTemplate(tmpl *template.Template, ctx *NtfyTemplateContext) (string, error) {
+func renderTemplate(tmpl *template.Template, ctx any) (string, error) {
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, ctx); err != nil {
 		return "", err
@@ -98,8 +135,8 @@ func NewNtfyClient(cfg NtfyConfig) *NtfyClient {
 	return &NtfyClient{cfg: cfg, client: &http.Client{Timeout: ntfyTimeout}}
 }
 
-func (c *NtfyClient) post(title, body, actions, priority string) error {
-	url := fmt.Sprintf("%s/%s", strings.TrimRight(c.cfg.BaseURL, "/"), c.cfg.Topic)
+func (c *NtfyClient) post(topic, title, body, actions, priority string) error {
+	url := fmt.Sprintf("%s/%s", strings.TrimRight(c.cfg.BaseURL, "/"), topic)
 	req, err := http.NewRequest("POST", url, strings.NewReader(body))
 	if err != nil {
 		return err
@@ -137,7 +174,7 @@ func (c *NtfyClient) SendTorrentStarted(ctx *NtfyTemplateContext) error {
 	if ctx.CancelURL != "" {
 		actions = fmt.Sprintf("view, More Info, %s", ctx.CancelURL)
 	}
-	return c.post(title, body, actions, c.cfg.StartedPriority)
+	return c.post(c.cfg.Topic, title, body, actions, c.cfg.StartedPriority)
 }
 
 func (c *NtfyClient) SendTorrentCompleted(ctx *NtfyTemplateContext) error {
@@ -149,5 +186,54 @@ func (c *NtfyClient) SendTorrentCompleted(ctx *NtfyTemplateContext) error {
 	if err != nil {
 		return err
 	}
-	return c.post(title, body, "", c.cfg.CompletedPriority)
+	return c.post(c.cfg.Topic, title, body, "", c.cfg.CompletedPriority)
+}
+
+func (c *NtfyClient) SendConfigReloadSuccess(ctx *NtfyConfigContext) error {
+	title, err := renderTemplate(c.cfg.configReloadedTitleTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	body, err := renderTemplate(c.cfg.configReloadedBodyTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	return c.post(c.cfg.ConfigTopic, title, body, "", c.cfg.ConfigReloadedPriority)
+}
+
+func (c *NtfyClient) SendConfigReloadFailure(ctx *NtfyConfigContext) error {
+	title, err := renderTemplate(c.cfg.configFailedTitleTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	body, err := renderTemplate(c.cfg.configFailedBodyTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	return c.post(c.cfg.ConfigTopic, title, body, "", c.cfg.ConfigFailedPriority)
+}
+
+// notifyConfigReload sends a config-reload outcome notification to ntfy's
+// ConfigTopic. No-op when BaseURL or ConfigTopic is unset. Send failures are
+// logged as warnings, never fatal — a broken notification channel must not
+// block the config-reload feature itself.
+func notifyConfigReload(cfg NtfyConfig, configFile string, reloadErr error) {
+	if cfg.BaseURL == "" || cfg.ConfigTopic == "" {
+		return
+	}
+
+	ntfyCtx := &NtfyConfigContext{ConfigFile: configFile}
+	client := NewNtfyClient(cfg)
+
+	if reloadErr != nil {
+		ntfyCtx.Error = reloadErr.Error()
+		if err := client.SendConfigReloadFailure(ntfyCtx); err != nil {
+			log.WithError(err).Warn("Failed to send ntfy config-reload-failure notification")
+		}
+		return
+	}
+
+	if err := client.SendConfigReloadSuccess(ntfyCtx); err != nil {
+		log.WithError(err).Warn("Failed to send ntfy config-reload-success notification")
+	}
 }

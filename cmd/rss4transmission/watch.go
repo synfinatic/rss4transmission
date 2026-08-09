@@ -44,6 +44,7 @@ type configReloader struct {
 	reload        func() error
 	registerWatch func(cb func(event any, err error)) error
 	retryInterval time.Duration
+	notifyReload  func(err error)
 }
 
 // onWatchEvent is the callback registered with the file watcher.
@@ -66,8 +67,12 @@ func (r *configReloader) onWatchEvent(event any, err error) {
 	defer r.mu.Unlock()
 
 	log.Infof("config changed. reloading...")
-	if err := r.reload(); err != nil {
-		log.WithError(err).Errorf("failed to reload config file")
+	reloadErr := r.reload()
+	if reloadErr != nil {
+		log.WithError(reloadErr).Errorf("failed to reload config file")
+	}
+	if r.notifyReload != nil {
+		r.notifyReload(reloadErr)
 	}
 }
 
@@ -82,6 +87,9 @@ func (r *configReloader) recover() {
 	}, r.retryInterval)
 
 	log.Infof("config reloaded after %d attempt(s), re-registering file watcher", attempt)
+	if r.notifyReload != nil {
+		r.notifyReload(nil)
+	}
 	if err := r.registerWatch(r.onWatchEvent); err != nil {
 		log.WithError(err).Errorf("failed to re-register config file watcher")
 	}
@@ -99,6 +107,9 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		},
 		registerWatch: ctx.Provider.Watch,
 		retryInterval: defaultRetryInterval,
+		notifyReload: func(err error) {
+			notifyConfigReload(ctx.Config.Ntfy, ctx.configFile, err)
+		},
 	}
 	_ = reloader.registerWatch(reloader.onWatchEvent)
 
@@ -162,8 +173,8 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	}
 
 	retryHistory := func(rec HistoryRecord) (int64, error) {
-		mu.Lock()
-		defer mu.Unlock()
+		reloader.mu.Lock()
+		defer reloader.mu.Unlock()
 		return retryHistoryItem(ctx, rec)
 	}
 
@@ -171,8 +182,8 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	// the history page's Torrent button reflects the config as it stands at
 	// render time, not as it was when the server started.
 	feedConfigured := func(name string) bool {
-		mu.Lock()
-		defer mu.Unlock()
+		reloader.mu.Lock()
+		defer reloader.mu.Unlock()
 		_, ok := findFeedByName(ctx.Config.Feeds, name)
 		return ok
 	}
