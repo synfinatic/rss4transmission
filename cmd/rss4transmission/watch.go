@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
@@ -36,59 +35,72 @@ func retryLoadConfig(tryLoad func() error, interval time.Duration) int {
 	}
 }
 
-func (cmd *WatchCmd) Run(ctx *RunContext) error {
-	mu := sync.Mutex{}
+// configReloader owns the live config-reload watch loop: reloading on file
+// change, and recovering when the underlying fsnotify watch dies. It's
+// factored out of WatchCmd.Run so the recovery behavior can be exercised
+// without spinning up tickers, web servers, or a Transmission client.
+type configReloader struct {
+	mu            sync.Mutex
+	reload        func() error
+	registerWatch func(cb func(event any, err error)) error
+	retryInterval time.Duration
+}
 
-	// watchCallback and retryWatch reference each other via closures.
-	var watchCallback func(event interface{}, err error)
-	var retryWatch func()
-
-	watchCallback = func(event interface{}, err error) {
-		if err != nil {
-			// Editors often save by deleting then recreating the file, which
-			// causes fsnotify to fire a remove event and stop watching.
-			// Retry loading and re-register the watcher once the file is back.
-			if strings.Contains(err.Error(), "was removed") {
-				log.Warnf("config file temporarily removed (editor save?), retrying reload...")
-				go retryWatch()
-				return
-			}
-			log.Errorf("watch error: %s", err)
-			return
-		}
-
-		// don't change the config while we are processing the feed
-		mu.Lock()
-		defer mu.Unlock()
-
-		log.Infof("config changed. reloading...")
-		konf, err := ctx.loadConfig(ctx.configFile)
-		if err != nil {
-			log.WithError(err).Errorf("failed to reload config file")
-			return
-		}
-		ctx.Konf = konf
+// onWatchEvent is the callback registered with the file watcher.
+//
+// koanf's file provider watch goroutine exits after calling back with ANY
+// error, not just when the file is removed (which is merely the common
+// case editors trigger on save) — see providers/file/file.go: every branch
+// that invokes cb(nil, err) is immediately followed by `break loop`. So
+// every error, not only a "was removed" one, must trigger recovery, or the
+// watcher dies permanently and silently and no further reload ever happens.
+func (r *configReloader) onWatchEvent(event any, err error) {
+	if err != nil {
+		log.Warnf("config file watcher stopped (%s); reloading and re-registering", err)
+		go r.recover()
+		return
 	}
 
-	retryWatch = func() {
-		attempt := retryLoadConfig(func() error {
-			mu.Lock()
-			defer mu.Unlock()
+	// don't change the config while we are processing the feed
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	log.Infof("config changed. reloading...")
+	if err := r.reload(); err != nil {
+		log.WithError(err).Errorf("failed to reload config file")
+	}
+}
+
+// recover retries reload until it succeeds, then re-registers the watch. It
+// blocks (via retryLoadConfig) until the config file is readable again, so
+// callers run it in its own goroutine.
+func (r *configReloader) recover() {
+	attempt := retryLoadConfig(func() error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return r.reload()
+	}, r.retryInterval)
+
+	log.Infof("config reloaded after %d attempt(s), re-registering file watcher", attempt)
+	if err := r.registerWatch(r.onWatchEvent); err != nil {
+		log.WithError(err).Errorf("failed to re-register config file watcher")
+	}
+}
+
+func (cmd *WatchCmd) Run(ctx *RunContext) error {
+	reloader := &configReloader{
+		reload: func() error {
 			konf, err := ctx.loadConfig(ctx.configFile)
 			if err != nil {
 				return err
 			}
 			ctx.Konf = konf
 			return nil
-		}, defaultRetryInterval)
-
-		log.Infof("config reloaded after %d attempt(s), re-registering file watcher", attempt)
-		if err := ctx.Provider.Watch(watchCallback); err != nil {
-			log.WithError(err).Errorf("failed to re-register config file watcher")
-		}
+		},
+		registerWatch: ctx.Provider.Watch,
+		retryInterval: defaultRetryInterval,
 	}
-
-	_ = ctx.Provider.Watch(watchCallback)
+	_ = reloader.registerWatch(reloader.onWatchEvent)
 
 	ticker := time.NewTicker(time.Duration(ctx.Cli.Watch.Sleep) * time.Second)
 
@@ -201,11 +213,11 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 
 	// Run once and then sleep between later runs...
 	for ; true; <-ticker.C {
-		mu.Lock()
+		reloader.mu.Lock()
 		if err := once.Run(ctx); err != nil {
 			return err
 		}
-		mu.Unlock()
+		reloader.mu.Unlock()
 		if g != nil {
 			g.CheckVpnTunnel()
 		}

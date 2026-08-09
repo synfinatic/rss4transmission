@@ -142,12 +142,6 @@ func main() {
 		log.WithError(err).Fatalf("Unable to load %s", rc.configFile)
 	}
 
-	for _, feedCfg := range rc.Config.Feeds {
-		if err = feedCfg.Validate(feedCfg.Name, rc.Config.Extractors); err != nil {
-			log.WithError(err).Fatalf("Invalid feed %q config", feedCfg.Name)
-		}
-	}
-
 	// use our SeenFile
 	seenFileName := rc.Konf.String("SeenFile")
 	if cli.SeenFile != "" {
@@ -232,6 +226,12 @@ func (rc *RunContext) loadConfig(configFile string) (*koanf.Koanf, error) {
 
 	if err := validateFeedNames(cfg.Feeds); err != nil {
 		return konf, fmt.Errorf("invalid feed configuration: %w", err)
+	}
+
+	for _, feedCfg := range cfg.Feeds {
+		if err := feedCfg.Validate(feedCfg.Name, cfg.Extractors); err != nil {
+			return konf, fmt.Errorf("invalid feed %q config: %w", feedCfg.Name, err)
+		}
 	}
 
 	// Only commit the newly parsed config once every check above has passed,
