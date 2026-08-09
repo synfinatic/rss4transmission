@@ -84,6 +84,14 @@ func (fi *FeedItem) fetchTorrent() ([]byte, error) {
 	if err != nil {
 		return []byte{}, err
 	}
+	return fetchTorrentBytes(torrentUrl)
+}
+
+// fetchTorrentBytes downloads the .torrent file at url. It is a standalone
+// function (rather than a FeedItem method) so callers with only a URL — such
+// as a history-page retry that has no live RSS entry to fetch through — can
+// use it directly.
+func fetchTorrentBytes(torrentUrl string) ([]byte, error) {
 	resp, err := http.Get(torrentUrl) //nolint:gosec
 	if err != nil {
 		return []byte{}, fmt.Errorf("unable to download %s: %s", torrentUrl, err)

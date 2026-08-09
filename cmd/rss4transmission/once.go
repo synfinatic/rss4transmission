@@ -371,6 +371,65 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 	return true
 }
 
+// retryHistoryItem re-submits a previously skipped/excluded/error history
+// record to Transmission. Unlike dispatch(), which works from a freshly
+// extracted candidate, this fetches the .torrent fresh from rec.TorrentURL
+// since the original bytes are never persisted to history. Cache and history
+// updates here are in-memory only (via AddItem/recordHistory) — persistence to
+// disk is left to the next scheduled once.Run() tick, same as every other
+// mutation dispatch() makes mid-run.
+func retryHistoryItem(ctx *RunContext, rec HistoryRecord) (int64, error) {
+	if rec.TorrentURL == "" {
+		return 0, fmt.Errorf("no torrent URL recorded for %q", rec.Title)
+	}
+	if rec.Outcome == "dispatched" || rec.Outcome == "downloaded" {
+		return 0, fmt.Errorf("%q was already %s", rec.Title, rec.Outcome)
+	}
+	feedCfg, ok := findFeedByName(ctx.Config.Feeds, rec.Feed)
+	if !ok {
+		return 0, fmt.Errorf("feed %q is no longer configured", rec.Feed)
+	}
+
+	torrentBytes, err := fetchTorrentBytes(rec.TorrentURL)
+	if err != nil {
+		return 0, fmt.Errorf("unable to fetch torrent data for %q: %w", rec.Title, err)
+	}
+
+	item := &gofeed.Item{Title: rec.Title, GUID: rec.GUID}
+	if !rec.Published.IsZero() {
+		item.PublishedParsed = &rec.Published
+	}
+	fi := &FeedItem{Feed: rec.Feed, Item: item}
+
+	torrentID, err := fi.TorrentWithBytes(ctx, feedCfg.DownloadPath, torrentBytes)
+	if err != nil {
+		return 0, fmt.Errorf("unable to torrent %q: %w", rec.Title, err)
+	}
+
+	// A bundle candidate can cover several identity keys at once (see
+	// candidate.coverages), but history only ever persists the single merged
+	// label set, so at most one key is recoverable here.
+	var keys []string
+	if key, ok := IdentityKey(rec.Labels, feedCfg.Identity); ok {
+		keys = []string{key}
+	}
+	ctx.Cache.AddItem(fi, rec.Labels, keys)
+
+	fileNames, _ := TorrentFileNames(torrentBytes)
+	meta := CancelMetadata{
+		Title:     rec.Title,
+		FeedName:  rec.Feed,
+		Labels:    rec.Labels,
+		Files:     fileNames,
+		SizeBytes: rec.SizeBytes,
+	}
+	sendNtfyStarted(ctx, feedCfg, torrentID, meta, item)
+
+	ctx.recordHistory(rec.Feed, item, "dispatched", "", rec.Labels)
+
+	return torrentID, nil
+}
+
 // dispatchInteractive prompts the user for what to do with a winner. Returns
 // true if processing should stop for the rest of this run — either because
 // the item was actually dispatched (torrented or downloaded), or the user

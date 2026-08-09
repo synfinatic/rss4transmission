@@ -5,7 +5,7 @@
 RSS4Transmission supports two kinds of push notifications via [ntfy](https://ntfy.sh):
 
 - **Torrent started** — sent by rss4transmission immediately after submitting a torrent to
-  Transmission. Includes a **Cancel Download** action button that opens a browser confirmation
+  Transmission. Includes a **More Info** action button that opens a browser confirmation
   page showing torrent details and live download progress. Confirming removes the torrent from
   Transmission.
 - **Torrent completed** — sent via the `POST /notify-complete` endpoint, which is called by
@@ -183,6 +183,15 @@ rss4transmission watch --config config.yaml \
 The history page shows each item's feed name, title, publication date, outcome, and extracted
 labels. Records are pruned on the same schedule as the seen cache (`SeenCacheDays`).
 
+Rows with outcome `skipped`, `excluded`, or `error` show a **Torrent** button when a `.torrent`
+URL was captured for that item, letting you manually re-submit it to Transmission without waiting
+for the feed to re-offer it. Clicking it re-fetches the `.torrent` fresh, submits it exactly like
+an automatic dispatch, and sends the normal "torrent started" ntfy notification (including a
+working Cancel link) on success. The button requires the item's feed to still be present in the
+config — it's hidden or fails with an error otherwise — and disappears once an item is
+successfully torrented. The action lives at `POST /torrent`, served only alongside the history
+page (`--private-listen`); it is never reachable on `--public-listen`.
+
 In Docker:
 
 ```yaml
@@ -197,6 +206,7 @@ environment:
 | Route | `--private-listen` (single) | `--private-listen` (split) | `--public-listen` (split) |
 |---|---|---|---|
 | `/` (history page) | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
+| `/torrent` | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
 | `/cancel` | ✓ | — | ✓ |
 | `/notify-complete` | ✓ | — | ✓ |
 | `/healthz` | ✓ | ✓ | ✓ |

@@ -149,6 +149,12 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		}
 	}
 
+	retryHistory := func(rec HistoryRecord) (int64, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return retryHistoryItem(ctx, rec)
+	}
+
 	accessLog := openAccessLog(cmd.AccessLog)
 
 	if cmd.PublicListen != "" {
@@ -174,7 +180,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			if ctx.History == nil {
 				log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 			}
-			go startWebServer("private", newWebMux(ctx.History), histAddr)
+			go startWebServer("private", newWebMux(ctx.History, retryHistory), histAddr)
 		}
 	} else if cmd.PrivateListen != "" {
 		// Single-listener mode: history + cancel on the same port.
@@ -185,7 +191,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		if ctx.History == nil {
 			log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 		}
-		mux := newWebMux(ctx.History)
+		mux := newWebMux(ctx.History, retryHistory)
 		if ctx.CancelStore != nil {
 			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress, accessLog)
 			ctx.CancelRoutesEnabled = true

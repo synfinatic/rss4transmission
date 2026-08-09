@@ -107,6 +107,60 @@ func TestNewHistoryRecord_WithPublished(t *testing.T) {
 	}
 }
 
+func TestNewHistoryRecord_CapturesTorrentURLAndSize(t *testing.T) {
+	item := makeGofeedItem("My Show S01E01", "guid1")
+	item.Enclosures = []*gofeed.Enclosure{
+		{URL: "https://example.com/my.torrent", Type: "application/x-bittorrent", Length: "12345"},
+	}
+	rec := NewHistoryRecord("feed", item, "skipped", "outranked", nil)
+
+	if rec.TorrentURL != "https://example.com/my.torrent" {
+		t.Errorf("TorrentURL = %q, want https://example.com/my.torrent", rec.TorrentURL)
+	}
+	if rec.SizeBytes != 12345 {
+		t.Errorf("SizeBytes = %d, want 12345", rec.SizeBytes)
+	}
+}
+
+func TestNewHistoryRecord_NoEnclosure_LeavesTorrentURLAndSizeZero(t *testing.T) {
+	item := makeGofeedItem("title", "guid")
+	rec := NewHistoryRecord("feed", item, "excluded", "", nil)
+
+	if rec.TorrentURL != "" {
+		t.Errorf("TorrentURL = %q, want empty", rec.TorrentURL)
+	}
+	if rec.SizeBytes != 0 {
+		t.Errorf("SizeBytes = %d, want 0", rec.SizeBytes)
+	}
+}
+
+// --- FindRecord ---
+
+func TestFindRecord_Found(t *testing.T) {
+	h := emptyHistory()
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", makeGofeedItem("Show", "guid1"), "skipped", "reason", nil))
+
+	rec, ok := h.FindRecord("feed", "guid1")
+	if !ok {
+		t.Fatal("expected to find record")
+	}
+	if rec.Title != "Show" {
+		t.Errorf("Title = %q, want Show", rec.Title)
+	}
+}
+
+func TestFindRecord_NotFound(t *testing.T) {
+	h := emptyHistory()
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", makeGofeedItem("Show", "guid1"), "skipped", "reason", nil))
+
+	if _, ok := h.FindRecord("feed", "guid-missing"); ok {
+		t.Error("expected not to find record with unknown GUID")
+	}
+	if _, ok := h.FindRecord("other-feed", "guid1"); ok {
+		t.Error("expected not to find record with unknown feed")
+	}
+}
+
 // --- AddOrUpdateRecord ---
 
 func TestAddOrUpdateRecord_NewGUID(t *testing.T) {

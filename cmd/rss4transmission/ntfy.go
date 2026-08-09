@@ -135,7 +135,7 @@ func (c *NtfyClient) SendTorrentStarted(ctx *NtfyTemplateContext) error {
 	}
 	var actions string
 	if ctx.CancelURL != "" {
-		actions = fmt.Sprintf("view, Cancel Download, %s", ctx.CancelURL)
+		actions = fmt.Sprintf("view, More Info, %s", ctx.CancelURL)
 	}
 	return c.post(title, body, actions, c.cfg.StartedPriority)
 }

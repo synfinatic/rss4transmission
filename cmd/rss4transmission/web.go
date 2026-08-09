@@ -49,6 +49,10 @@ type removeFunc func(ctx context.Context, ids []int64) error
 // should show "Unknown" rather than failing the request.
 type progressFunc func(ctx context.Context, torrentID int64) (downloadedBytes int64, percentDone float64, err error)
 
+// retryFunc re-submits a previously skipped/excluded/error history record to
+// Transmission. Returns the new Transmission torrent ID.
+type retryFunc func(rec HistoryRecord) (int64, error)
+
 // cancelPageData is passed to the cancel confirmation template.
 type cancelPageData struct {
 	Title         string
@@ -139,8 +143,10 @@ func parseListenAddr(s string) (string, error) {
 }
 
 // newWebMux builds the shared HTTP mux. If history is non-nil, the history
-// page is served at "/". The /healthz route is always registered.
-func newWebMux(history *HistoryFile) *http.ServeMux {
+// page is served at "/". When history and retry are both non-nil, POST /torrent
+// is also registered to re-submit a past skipped/excluded/error item. The
+// /healthz route is always registered.
+func newWebMux(history *HistoryFile, retry retryFunc) *http.ServeMux {
 	funcMap := template.FuncMap{
 		"outcomeClass": func(outcome string) string {
 			switch outcome {
@@ -158,7 +164,7 @@ func newWebMux(history *HistoryFile) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	if history != nil {
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 			records := history.GetRecords()
 			for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
 				records[i], records[j] = records[j], records[i]
@@ -170,11 +176,46 @@ func newWebMux(history *HistoryFile) *http.ServeMux {
 		})
 	}
 
+	if history != nil && retry != nil {
+		mux.HandleFunc("POST /torrent", makePostTorrentHandler(history, retry))
+	}
+
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
 	return mux
+}
+
+// makePostTorrentHandler processes a manual "torrent this" request from the
+// history page. It resolves feed+guid to a HistoryRecord and delegates the
+// actual re-submission to retry.
+func makePostTorrentHandler(history *HistoryFile, retry retryFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form body", http.StatusBadRequest)
+			return
+		}
+
+		feed := r.FormValue("feed")
+		guid := r.FormValue("guid")
+		rec, ok := history.FindRecord(feed, guid)
+		if !ok {
+			http.Error(w, "history record not found", http.StatusNotFound)
+			return
+		}
+
+		if _, err := retry(rec); err != nil {
+			log.WithError(err).Warnf("Failed to retry torrent for %q", rec.Title)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		log.Infof("Manually torrented %q from history page", rec.Title)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "Torrent submitted.") //nolint:errcheck
+	}
 }
 
 // newCancelMux builds a public-facing mux serving only GET /cancel, POST /cancel,
