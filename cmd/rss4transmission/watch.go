@@ -162,8 +162,8 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	}
 
 	retryHistory := func(rec HistoryRecord) (int64, error) {
-		mu.Lock()
-		defer mu.Unlock()
+		reloader.mu.Lock()
+		defer reloader.mu.Unlock()
 		return retryHistoryItem(ctx, rec)
 	}
 
@@ -171,8 +171,8 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	// the history page's Torrent button reflects the config as it stands at
 	// render time, not as it was when the server started.
 	feedConfigured := func(name string) bool {
-		mu.Lock()
-		defer mu.Unlock()
+		reloader.mu.Lock()
+		defer reloader.mu.Unlock()
 		_, ok := findFeedByName(ctx.Config.Feeds, name)
 		return ok
 	}
