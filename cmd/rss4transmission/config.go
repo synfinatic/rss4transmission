@@ -59,10 +59,22 @@ type NtfyConfig struct {
 	CompletedBody     string `koanf:"CompletedBody"`
 	CompletedPriority string `koanf:"CompletedPriority"`
 
-	startedTitleTmpl   *template.Template
-	startedBodyTmpl    *template.Template
-	completedTitleTmpl *template.Template
-	completedBodyTmpl  *template.Template
+	ConfigTopic            string `koanf:"ConfigTopic"`
+	ConfigReloadedTitle    string `koanf:"ConfigReloadedTitle"`
+	ConfigReloadedBody     string `koanf:"ConfigReloadedBody"`
+	ConfigReloadedPriority string `koanf:"ConfigReloadedPriority"`
+	ConfigFailedTitle      string `koanf:"ConfigFailedTitle"`
+	ConfigFailedBody       string `koanf:"ConfigFailedBody"`
+	ConfigFailedPriority   string `koanf:"ConfigFailedPriority"`
+
+	startedTitleTmpl        *template.Template
+	startedBodyTmpl         *template.Template
+	completedTitleTmpl      *template.Template
+	completedBodyTmpl       *template.Template
+	configReloadedTitleTmpl *template.Template
+	configReloadedBodyTmpl  *template.Template
+	configFailedTitleTmpl   *template.Template
+	configFailedBodyTmpl    *template.Template
 }
 
 type CancelConfig struct {

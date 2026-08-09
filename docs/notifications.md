@@ -2,7 +2,7 @@
 
 ## Overview
 
-RSS4Transmission supports two kinds of push notifications via [ntfy](https://ntfy.sh):
+RSS4Transmission supports three kinds of push notifications via [ntfy](https://ntfy.sh):
 
 - **Torrent started** — sent by rss4transmission immediately after submitting a torrent to
   Transmission. Includes a **More Info** action button that opens a browser confirmation
@@ -11,6 +11,10 @@ RSS4Transmission supports two kinds of push notifications via [ntfy](https://ntf
 - **Torrent completed** — sent via the `POST /notify-complete` endpoint, which is called by
   `bin/torrent-complete.sh` running as Transmission's "torrent done" hook. The endpoint renders
   your configured templates and sends the notification to ntfy.
+- **Config reloaded** — sent by `watch` whenever it picks up a change to the config file, to its
+  own `Ntfy.ConfigTopic` (separate from the torrent notifications' `Ntfy.Topic`). Reports whether
+  the reload succeeded or failed; on failure, the notification body includes the actual error
+  (e.g. a YAML parse error), so a bad edit is visible immediately without tailing logs.
 
 ## ntfy and Cancel Configuration
 
@@ -18,9 +22,10 @@ Add `Ntfy` and `Cancel` blocks to your config file:
 
 ```yaml
 Ntfy:
-  BaseURL: https://ntfy.sh              # your ntfy server
-  Topic:   <your-topic-name>            # ntfy topic to publish to
-  Token:   tk_<your-access-token>       # ntfy access token
+  BaseURL:     https://ntfy.sh              # your ntfy server
+  Topic:       <your-topic-name>            # ntfy topic to publish to (torrent notifications)
+  ConfigTopic: <your-config-topic-name>     # ntfy topic to publish to (config-reload notifications)
+  Token:       tk_<your-access-token>       # ntfy access token
 
 Cancel:
   HMACSecret: <random-32-byte-hex>                   # generate: openssl rand -hex 32
@@ -39,13 +44,23 @@ Cancel:
 | `Ntfy.CompletedTitle` | `"Torrent Complete"` | `text/template` string for the completed notification title |
 | `Ntfy.CompletedBody` | `"{{.Title}}\n{{.Dir}}"` | `text/template` string for the completed notification body |
 | `Ntfy.CompletedPriority` | `default` | ntfy priority for completed notifications |
+| `Ntfy.ConfigTopic` | — | ntfy topic to publish config-reload notifications to |
+| `Ntfy.ConfigReloadedTitle` | `"Config Reloaded"` | `text/template` string for the reload-success notification title |
+| `Ntfy.ConfigReloadedBody` | `"{{.ConfigFile}}"` | `text/template` string for the reload-success notification body |
+| `Ntfy.ConfigReloadedPriority` | `low` | ntfy priority for reload-success notifications |
+| `Ntfy.ConfigFailedTitle` | `"Config Reload FAILED"` | `text/template` string for the reload-failure notification title |
+| `Ntfy.ConfigFailedBody` | `"{{.ConfigFile}}\n{{.Error}}"` | `text/template` string for the reload-failure notification body |
+| `Ntfy.ConfigFailedPriority` | `high` | ntfy priority for reload-failure notifications |
 | `Cancel.HMACSecret` | — | Secret key for signing cancel URLs (HMAC-SHA256) |
 | `Cancel.BaseURL` | — | Public base URL of rss4transmission (used in cancel links) |
 | `Cancel.TokenTTLH` | `24` | Hours before a cancel link expires |
 
 Cancel links are omitted from notifications when `Cancel.HMACSecret` or `Cancel.BaseURL` is not
 configured — the torrent started notification is still sent, just without the cancel action.
-Ntfy notifications are entirely disabled when `Ntfy.BaseURL` is not set.
+Ntfy notifications are entirely disabled when `Ntfy.BaseURL` is not set. `Ntfy.Topic` and
+`Ntfy.ConfigTopic` gate their respective notification groups independently: torrent
+started/completed notifications require `Topic`, config-reload notifications require
+`ConfigTopic`, and either can be configured without the other.
 
 ## Notification Templates
 
@@ -109,6 +124,26 @@ Ntfy:
 > **Note:** Multiline template bodies in YAML require a block scalar (`|`). In a
 > double-quoted YAML string, use `\n` for a literal newline:
 > `StartedBody: "{{.Title}}\n{{.Size}}"`.
+
+## Config Reload Notification Context
+
+The `ConfigReloadedTitle`, `ConfigReloadedBody`, `ConfigFailedTitle`, and `ConfigFailedBody`
+fields also accept `text/template` strings, but with their own, smaller context — they do **not**
+have access to `{{.Title}}`, `{{.Size}}`, or any other torrent-notification field:
+
+| Field | Type | Description |
+|---|---|---|
+| `{{.ConfigFile}}` | `string` | Path to the config file that was (re)loaded |
+| `{{.Error}}` | `string` | Reload error text (e.g. a YAML parse error); empty on success |
+
+Include the parse error in the failure body:
+
+```yaml
+Ntfy:
+  ConfigFailedBody: |
+    Failed to reload {{.ConfigFile}}:
+    {{.Error}}
+```
 
 ## Cancel Endpoint
 

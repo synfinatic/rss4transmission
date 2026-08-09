@@ -44,6 +44,7 @@ type configReloader struct {
 	reload        func() error
 	registerWatch func(cb func(event any, err error)) error
 	retryInterval time.Duration
+	notifyReload  func(err error)
 }
 
 // onWatchEvent is the callback registered with the file watcher.
@@ -61,13 +62,23 @@ func (r *configReloader) onWatchEvent(event any, err error) {
 		return
 	}
 
-	// don't change the config while we are processing the feed
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	reloadErr := func() error {
+		// don't change the config while we are processing the feed
+		r.mu.Lock()
+		defer r.mu.Unlock()
 
-	log.Infof("config changed. reloading...")
-	if err := r.reload(); err != nil {
-		log.WithError(err).Errorf("failed to reload config file")
+		log.Infof("config changed. reloading...")
+		return r.reload()
+	}()
+
+	if reloadErr != nil {
+		log.WithError(reloadErr).Errorf("failed to reload config file")
+	}
+	// notify outside the lock: notifyConfigReload does a synchronous HTTP
+	// POST with a 30s timeout, and holding r.mu that long would block the
+	// ticker loop's once.Run and the web handlers that also take r.mu.
+	if r.notifyReload != nil {
+		r.notifyReload(reloadErr)
 	}
 }
 
@@ -75,13 +86,31 @@ func (r *configReloader) onWatchEvent(event any, err error) {
 // blocks (via retryLoadConfig) until the config file is readable again, so
 // callers run it in its own goroutine.
 func (r *configReloader) recover() {
+	notifiedFailure := false
 	attempt := retryLoadConfig(func() error {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		return r.reload()
+		reloadErr := func() error {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			return r.reload()
+		}()
+
+		// Report the first failure so a bad edit saved via atomic
+		// rename/replace (which routes through this recovery path rather
+		// than onWatchEvent's direct reload) is still visible, but don't
+		// spam a notification per retry attempt.
+		if reloadErr != nil && !notifiedFailure {
+			notifiedFailure = true
+			if r.notifyReload != nil {
+				r.notifyReload(reloadErr)
+			}
+		}
+		return reloadErr
 	}, r.retryInterval)
 
 	log.Infof("config reloaded after %d attempt(s), re-registering file watcher", attempt)
+	if r.notifyReload != nil {
+		r.notifyReload(nil)
+	}
 	if err := r.registerWatch(r.onWatchEvent); err != nil {
 		log.WithError(err).Errorf("failed to re-register config file watcher")
 	}
@@ -99,6 +128,9 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		},
 		registerWatch: ctx.Provider.Watch,
 		retryInterval: defaultRetryInterval,
+		notifyReload: func(err error) {
+			notifyConfigReload(ctx.Config.Ntfy, ctx.configFile, err)
+		},
 	}
 	_ = reloader.registerWatch(reloader.onWatchEvent)
 
