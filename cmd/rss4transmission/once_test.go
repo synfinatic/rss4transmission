@@ -370,6 +370,98 @@ func TestDispatch_RealSubmit_StopsProcessing(t *testing.T) {
 	assert.Equal(t, "dispatched", records[0].Outcome)
 }
 
+// --- retryHistoryItem ---
+
+func TestRetryHistoryItem_Success(t *testing.T) {
+	transmissionSrv := fakeTransmissionServer(t)
+	defer transmissionSrv.Close()
+	endpoint, err := url.Parse(transmissionSrv.URL)
+	require.NoError(t, err)
+	client, err := transmissionrpc.New(endpoint, nil)
+	require.NoError(t, err)
+
+	torrentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("fake torrent content"))
+	}))
+	defer torrentSrv.Close()
+
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil, nil)
+	feedCfg.Name = "testfeed"
+	feedCfg.DownloadPath = t.TempDir()
+
+	ctx := &RunContext{
+		Cache:        emptyCache(),
+		History:      &HistoryFile{guidIndex: map[string]int{}},
+		Transmission: client,
+		Config:       Config{Feeds: []Feed{feedCfg}},
+	}
+	ctx.History.AddOrUpdateRecord(NewHistoryRecord("testfeed",
+		&gofeed.Item{Title: "guid1", GUID: "guid1"}, "skipped", "outranked", nil))
+
+	rec := HistoryRecord{
+		Feed:       "testfeed",
+		Title:      "guid1",
+		GUID:       "guid1",
+		Outcome:    "skipped",
+		Labels:     map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
+		TorrentURL: torrentSrv.URL + "/my.torrent",
+	}
+
+	torrentID, err := retryHistoryItem(ctx, rec)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, torrentID)
+
+	assert.True(t, ctx.Cache.Exists("testfeed", &FeedItem{Feed: "testfeed", Item: &gofeed.Item{GUID: "guid1"}}),
+		"cache should record the manually-retried GUID")
+
+	updated, ok := ctx.History.FindRecord("testfeed", "guid1")
+	require.True(t, ok)
+	assert.Equal(t, "dispatched", updated.Outcome)
+}
+
+func TestRetryHistoryItem_NoTorrentURL(t *testing.T) {
+	ctx := &RunContext{Cache: emptyCache(), History: &HistoryFile{guidIndex: map[string]int{}}}
+	rec := HistoryRecord{Feed: "testfeed", GUID: "guid1", Outcome: "skipped"}
+
+	_, err := retryHistoryItem(ctx, rec)
+	assert.Error(t, err)
+	assert.Empty(t, ctx.Cache.Seen)
+}
+
+func TestRetryHistoryItem_UnknownFeed(t *testing.T) {
+	ctx := &RunContext{Cache: emptyCache(), History: &HistoryFile{guidIndex: map[string]int{}}}
+	rec := HistoryRecord{
+		Feed:       "no-such-feed",
+		GUID:       "guid1",
+		Outcome:    "skipped",
+		TorrentURL: "https://example.com/my.torrent",
+	}
+
+	_, err := retryHistoryItem(ctx, rec)
+	assert.Error(t, err)
+	assert.Empty(t, ctx.Cache.Seen)
+}
+
+func TestRetryHistoryItem_AlreadyDispatched(t *testing.T) {
+	feedCfg := makeFeed([]string{"series"}, nil, nil)
+	feedCfg.Name = "testfeed"
+	ctx := &RunContext{
+		Cache:   emptyCache(),
+		History: &HistoryFile{guidIndex: map[string]int{}},
+		Config:  Config{Feeds: []Feed{feedCfg}},
+	}
+	rec := HistoryRecord{
+		Feed:       "testfeed",
+		GUID:       "guid1",
+		Outcome:    "dispatched",
+		TorrentURL: "https://example.com/my.torrent",
+	}
+
+	_, err := retryHistoryItem(ctx, rec)
+	assert.Error(t, err)
+	assert.Empty(t, ctx.Cache.Seen)
+}
+
 // --- collectActiveGUIDs ---
 
 func TestCollectActiveGUIDs_FetchedFeed_ListsItsGUIDs(t *testing.T) {

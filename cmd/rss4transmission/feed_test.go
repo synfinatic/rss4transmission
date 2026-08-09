@@ -180,6 +180,41 @@ func TestGetTorrentContents_HTTPError(t *testing.T) {
 	}
 }
 
+// --- fetchTorrentBytes ---
+
+func TestFetchTorrentBytes_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-bittorrent")
+		w.Write(sentinelTorrent) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	got, err := fetchTorrentBytes(srv.URL + "/my.torrent")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(got, sentinelTorrent) {
+		t.Errorf("got %q, want sentinel bytes", got)
+	}
+}
+
+func TestFetchTorrentBytes_HTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	if _, err := fetchTorrentBytes(srv.URL + "/missing.torrent"); err == nil {
+		t.Error("expected error for non-2xx HTTP response, got nil")
+	}
+}
+
+func TestFetchTorrentBytes_ConnectionError(t *testing.T) {
+	if _, err := fetchTorrentBytes("http://127.0.0.1:1/unreachable"); err == nil {
+		t.Error("expected error for connection failure, got nil")
+	}
+}
+
 func TestIsComplete_False(t *testing.T) {
 	fi := &FeedItem{Complete: false}
 	if fi.IsComplete() {

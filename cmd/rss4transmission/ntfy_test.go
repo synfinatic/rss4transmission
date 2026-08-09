@@ -44,7 +44,7 @@ func TestSendTorrentStarted_Headers(t *testing.T) {
 	assert.Equal(t, "Torrent Started", captured.Header.Get("Title"))
 	assert.Equal(t, "default", captured.Header.Get("Priority"))
 
-	wantAction := "view, Cancel Download, https://example.com/cancel?id=x"
+	wantAction := "view, More Info, https://example.com/cancel?id=x"
 	assert.Equal(t, wantAction, captured.Header.Get("Actions"))
 
 	assert.Equal(t, "Bearer tk_testtoken", captured.Header.Get("Authorization"))

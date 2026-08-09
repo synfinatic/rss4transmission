@@ -64,6 +64,19 @@
         th:nth-child(2), td:nth-child(2) { width: 9em; }
         th:nth-child(4), td:nth-child(4) { width: 8em; }
         th:nth-child(5), td:nth-child(5) { width: 18em; }
+        th:nth-child(6), td:nth-child(6) { width: 7em; }
+
+        .btn-torrent {
+            background: #06c;
+            color: #fff;
+            border: none;
+            padding: 0.3em 0.9em;
+            font-family: monospace;
+            font-size: 0.85em;
+            cursor: pointer;
+        }
+        .btn-torrent:hover { background: #08e; }
+        .btn-torrent:disabled { background: #444; color: #888; cursor: default; }
     </style>
 </head>
 <body>
@@ -116,6 +129,7 @@
                 <th>Title</th>
                 <th>Outcome</th>
                 <th>Reason</th>
+                <th>Action</th>
             </tr>
         </thead>
         <tbody id="rows">
@@ -127,8 +141,13 @@
                     {{ if .GUID }}<a href="{{ .GUID }}" target="_blank" rel="noopener">{{ .Title }}</a>{{ else }}{{ .Title }}{{ end }}
                     {{ if .Labels }}<div class="labels">{{ range $k, $v := .Labels }}{{ $k }}={{ $v }} {{ end }}</div>{{ end }}
                 </td>
-                <td class="{{ outcomeClass .Outcome }}">{{ .Outcome }}</td>
+                <td class="outcome {{ outcomeClass .Outcome }}">{{ .Outcome }}</td>
                 <td>{{ .Reason }}</td>
+                <td class="action">
+                    {{ if and .TorrentURL (ne .Outcome "dispatched") (ne .Outcome "downloaded") (feedConfigured .Feed) }}
+                    <button class="btn-torrent" data-feed="{{ .Feed }}" data-guid="{{ .GUID }}">Torrent</button>
+                    {{ end }}
+                </td>
             </tr>
             {{ end }}
         </tbody>
@@ -219,6 +238,45 @@
         labelIn.addEventListener('input', apply);
         outcomeCheckboxes().forEach(function (cb) { cb.addEventListener('change', apply); });
         resetBtn.addEventListener('click', reset);
+
+        var rowsEl = document.getElementById('rows');
+        rowsEl.addEventListener('click', function (e) {
+            var btn = e.target.closest('.btn-torrent');
+            if (!btn) return;
+
+            var feed = btn.dataset.feed;
+            var guid = btn.dataset.guid;
+            var row  = btn.closest('tr');
+
+            btn.disabled = true;
+            btn.textContent = 'Torrenting…';
+
+            var body = new URLSearchParams();
+            body.set('feed', feed);
+            body.set('guid', guid);
+
+            fetch('/torrent', { method: 'POST', body: body }).then(function (resp) {
+                if (!resp.ok) {
+                    return resp.text().then(function (msg) { throw new Error(msg || resp.statusText); });
+                }
+                row.dataset.outcome = 'dispatched';
+                var outcomeCell = row.querySelector('.outcome');
+                outcomeCell.textContent = 'dispatched';
+                outcomeCell.className = 'outcome ' + outcomeClass('dispatched');
+                btn.remove();
+                apply();
+            }).catch(function (err) {
+                btn.disabled = false;
+                btn.textContent = 'Torrent';
+                alert('Failed to torrent: ' + err.message);
+            });
+        });
+
+        function outcomeClass(outcome) {
+            if (outcome === 'dispatched' || outcome === 'downloaded') return 'dispatched';
+            if (outcome === 'error') return 'error';
+            return 'skipped';
+        }
 
         apply();
 

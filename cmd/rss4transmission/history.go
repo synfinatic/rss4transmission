@@ -47,6 +47,8 @@ type HistoryRecord struct {
 	Outcome     string            `json:"Outcome"`
 	Reason      string            `json:"Reason,omitempty"`
 	Labels      map[string]string `json:"Labels,omitempty"`
+	TorrentURL  string            `json:"TorrentURL,omitempty"`
+	SizeBytes   int64             `json:"SizeBytes,omitempty"`
 }
 
 // outcomeRank returns a rank for dedup: lower is more interesting.
@@ -68,15 +70,21 @@ func historyKey(feedName, guid string) string {
 	return feedName + "|" + guid
 }
 
-// NewHistoryRecord builds a HistoryRecord from a gofeed.Item.
+// NewHistoryRecord builds a HistoryRecord from a gofeed.Item. TorrentURL and
+// SizeBytes are captured from the item's bittorrent enclosure (when present) so
+// a later "torrent this" retry can re-fetch the .torrent without the original
+// RSS entry — dispatch() never persists the .torrent bytes themselves.
 func NewHistoryRecord(feedName string, item *gofeed.Item, outcome, reason string, labels map[string]string) HistoryRecord {
+	torrentURL, _ := (&FeedItem{Item: item}).TorrentURL()
 	rec := HistoryRecord{
-		Feed:    feedName,
-		Title:   item.Title,
-		GUID:    item.GUID,
-		Outcome: outcome,
-		Reason:  reason,
-		Labels:  labels,
+		Feed:       feedName,
+		Title:      item.Title,
+		GUID:       item.GUID,
+		Outcome:    outcome,
+		Reason:     reason,
+		Labels:     labels,
+		TorrentURL: torrentURL,
+		SizeBytes:  extractSize(item),
 	}
 	if item.PublishedParsed != nil {
 		rec.Published = *item.PublishedParsed
@@ -161,6 +169,17 @@ func (ctx *RunContext) recordHistory(feedName string, item *gofeed.Item, outcome
 	if ctx.History != nil {
 		ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, item, outcome, reason, labels))
 	}
+}
+
+// FindRecord looks up a single record by feed name and GUID.
+func (h *HistoryFile) FindRecord(feedName, guid string) (HistoryRecord, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	idx, ok := h.guidIndex[historyKey(feedName, guid)]
+	if !ok {
+		return HistoryRecord{}, false
+	}
+	return h.Records[idx], true
 }
 
 // GetRecords returns a copy of all records for safe concurrent reads.
