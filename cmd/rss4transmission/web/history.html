@@ -144,7 +144,7 @@
                 <td class="outcome {{ outcomeClass .Outcome }}">{{ .Outcome }}</td>
                 <td>{{ .Reason }}</td>
                 <td class="action">
-                    {{ if and .TorrentURL (ne .Outcome "dispatched") (ne .Outcome "downloaded") }}
+                    {{ if and .TorrentURL (ne .Outcome "dispatched") (ne .Outcome "downloaded") (feedConfigured .Feed) }}
                     <button class="btn-torrent" data-feed="{{ .Feed }}" data-guid="{{ .GUID }}">Torrent</button>
                     {{ end }}
                 </td>

@@ -144,9 +144,16 @@ func parseListenAddr(s string) (string, error) {
 
 // newWebMux builds the shared HTTP mux. If history is non-nil, the history
 // page is served at "/". When history and retry are both non-nil, POST /torrent
-// is also registered to re-submit a past skipped/excluded/error item. The
-// /healthz route is always registered.
-func newWebMux(history *HistoryFile, retry retryFunc) *http.ServeMux {
+// is also registered to re-submit a past skipped/excluded/error item.
+// feedConfigured reports whether a feed name is still present in the live
+// config; the Torrent button is hidden on the history page for records whose
+// feed no longer exists, since retrying one always fails with "feed ... is no
+// longer configured". A nil feedConfigured shows the button unconditionally.
+// The /healthz route is always registered.
+func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name string) bool) *http.ServeMux {
+	if feedConfigured == nil {
+		feedConfigured = func(string) bool { return true }
+	}
 	funcMap := template.FuncMap{
 		"outcomeClass": func(outcome string) string {
 			switch outcome {
@@ -158,6 +165,7 @@ func newWebMux(history *HistoryFile, retry retryFunc) *http.ServeMux {
 				return "skipped"
 			}
 		},
+		"feedConfigured": feedConfigured,
 	}
 	tmpl := template.Must(template.New("history").Funcs(funcMap).Parse(historyTmpl))
 

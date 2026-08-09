@@ -155,6 +155,16 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		return retryHistoryItem(ctx, rec)
 	}
 
+	// feedConfigured checks against the live (possibly reloaded) config, so
+	// the history page's Torrent button reflects the config as it stands at
+	// render time, not as it was when the server started.
+	feedConfigured := func(name string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		_, ok := findFeedByName(ctx.Config.Feeds, name)
+		return ok
+	}
+
 	accessLog := openAccessLog(cmd.AccessLog)
 
 	if cmd.PublicListen != "" {
@@ -180,7 +190,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			if ctx.History == nil {
 				log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 			}
-			go startWebServer("private", newWebMux(ctx.History, retryHistory), histAddr)
+			go startWebServer("private", newWebMux(ctx.History, retryHistory, feedConfigured), histAddr)
 		}
 	} else if cmd.PrivateListen != "" {
 		// Single-listener mode: history + cancel on the same port.
@@ -191,7 +201,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		if ctx.History == nil {
 			log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 		}
-		mux := newWebMux(ctx.History, retryHistory)
+		mux := newWebMux(ctx.History, retryHistory, feedConfigured)
 		if ctx.CancelStore != nil {
 			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress, accessLog)
 			ctx.CancelRoutesEnabled = true
