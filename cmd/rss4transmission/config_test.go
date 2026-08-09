@@ -149,17 +149,40 @@ func TestValidateFeedNames_Duplicate(t *testing.T) {
 	}
 }
 
+const validExtractorYAML = `
+Extractors:
+  demo:
+    Labels:
+      series:
+        Regexp: '(.+)'
+`
+
 func TestLoadConfig_FeedsPreserveFileOrder(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
-	yamlContent := `
+	yamlContent := validExtractorYAML + `
 Feeds:
   - Name: Zzz
     URL: https://example.com/z
+    Extractor: demo
+    Identity: [series]
+    Groups:
+      - Require:
+          series: [X]
   - Name: Aaa
     URL: https://example.com/a
+    Extractor: demo
+    Identity: [series]
+    Groups:
+      - Require:
+          series: [X]
   - Name: Mmm
     URL: https://example.com/m
+    Extractor: demo
+    Identity: [series]
+    Groups:
+      - Require:
+          series: [X]
 `
 	if err := os.WriteFile(cfgPath, []byte(yamlContent), 0600); err != nil {
 		t.Fatalf("failed to write config: %v", err)
@@ -224,12 +247,22 @@ func TestLoadConfig_BadReload_KeepsPreviousGoodConfig(t *testing.T) {
 	// rejected without corrupting the already-running, valid config.
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
-	goodYAML := `
+	goodYAML := validExtractorYAML + `
 Feeds:
   - Name: Good1
     URL: https://example.com/1
+    Extractor: demo
+    Identity: [series]
+    Groups:
+      - Require:
+          series: [X]
   - Name: Good2
     URL: https://example.com/2
+    Extractor: demo
+    Identity: [series]
+    Groups:
+      - Require:
+          series: [Y]
 `
 	if err := os.WriteFile(cfgPath, []byte(goodYAML), 0600); err != nil {
 		t.Fatalf("failed to write config: %v", err)
@@ -267,5 +300,100 @@ Feeds:
 			t.Errorf("feed[%d].Name = %q, want %q (config should be unchanged after bad reload)",
 				i, rc.Config.Feeds[i].Name, name)
 		}
+	}
+}
+
+// TestLoadConfig_ReloadRejectsStructurallyInvalidFeed guards against a live
+// config-reload silently accepting a feed that is missing required
+// label-mode fields (Extractor/Identity/Groups). validateFeedNames alone
+// only checks name uniqueness and would let this through; loadConfig must
+// also run the same Feed.Validate() checks main.go used to run only once,
+// at startup, so a bad reload is rejected exactly like a bad initial load.
+func TestLoadConfig_ReloadRejectsStructurallyInvalidFeed(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	goodYAML := validExtractorYAML + `
+Feeds:
+  - Name: Good1
+    URL: https://example.com/1
+    Extractor: demo
+    Identity: [series]
+    Groups:
+      - Require:
+          series: [X]
+`
+	if err := os.WriteFile(cfgPath, []byte(goodYAML), 0600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	rc := &RunContext{}
+	if _, err := rc.loadConfig(cfgPath); err != nil {
+		t.Fatalf("initial loadConfig failed: %v", err)
+	}
+
+	// Missing Identity/Groups; unique name, so validateFeedNames alone
+	// would accept it.
+	badYAML := validExtractorYAML + `
+Feeds:
+  - Name: Good1
+    URL: https://example.com/1
+    Extractor: demo
+`
+	if err := os.WriteFile(cfgPath, []byte(badYAML), 0600); err != nil {
+		t.Fatalf("failed to overwrite config: %v", err)
+	}
+
+	if _, err := rc.loadConfig(cfgPath); err == nil {
+		t.Error("expected reload with a feed missing Identity/Groups to fail")
+	}
+	if len(rc.Config.Feeds[0].Groups) == 0 || len(rc.Config.Feeds[0].Identity) == 0 {
+		t.Error("expected previous config (with Identity/Groups) to survive a bad reload")
+	}
+}
+
+// TestLoadConfig_ReloadRejectsUnknownExtractor guards the same gap for a
+// feed whose Extractor no longer refers to a defined ExtractorSet (e.g. it
+// was renamed elsewhere in the same reload).
+func TestLoadConfig_ReloadRejectsUnknownExtractor(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	goodYAML := validExtractorYAML + `
+Feeds:
+  - Name: Good1
+    URL: https://example.com/1
+    Extractor: demo
+    Identity: [series]
+    Groups:
+      - Require:
+          series: [X]
+`
+	if err := os.WriteFile(cfgPath, []byte(goodYAML), 0600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	rc := &RunContext{}
+	if _, err := rc.loadConfig(cfgPath); err != nil {
+		t.Fatalf("initial loadConfig failed: %v", err)
+	}
+
+	badYAML := `
+Feeds:
+  - Name: Good1
+    URL: https://example.com/1
+    Extractor: renamed-away
+    Identity: [series]
+    Groups:
+      - Require:
+          series: [X]
+`
+	if err := os.WriteFile(cfgPath, []byte(badYAML), 0600); err != nil {
+		t.Fatalf("failed to overwrite config: %v", err)
+	}
+
+	if _, err := rc.loadConfig(cfgPath); err == nil {
+		t.Error("expected reload referencing an unknown Extractor to fail")
+	}
+	if rc.Config.Feeds[0].Extractor != "demo" {
+		t.Errorf("expected previous config to survive a bad reload, got Extractor=%q", rc.Config.Feeds[0].Extractor)
 	}
 }
