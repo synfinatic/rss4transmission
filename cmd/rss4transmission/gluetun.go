@@ -41,6 +41,8 @@ type Gluetun struct {
 	AuthUsername     string
 	AuthPassword     string
 	AuthAPIKey       string
+	retryAttempts    int
+	retryDelay       time.Duration
 }
 
 func NewGluetun(g GluetunConfig, t *transmissionrpc.Client) *Gluetun {
@@ -70,6 +72,8 @@ func NewGluetun(g GluetunConfig, t *transmissionrpc.Client) *Gluetun {
 		AuthUsername:     g.AuthUsername,
 		AuthPassword:     g.AuthPassword,
 		AuthAPIKey:       g.AuthAPIKey,
+		retryAttempts:    5,
+		retryDelay:       3 * time.Second,
 	}
 }
 
@@ -105,25 +109,30 @@ func (g *Gluetun) CheckVpnTunnel() {
 	ForceRotate = false
 
 	var open bool
-	for i := 0; i < 5; i++ {
+	for range g.retryAttempts {
 		open, err = g.isPortOpen()
 		if err == nil {
 			break
 		}
-		time.Sleep(3 * time.Second)
+		time.Sleep(g.retryDelay)
 	}
 	if err != nil {
-		log.WithError(err).Errorf("Unable to check IsPortOpen()")
-		return
+		// We couldn't determine whether the port is open (e.g. Transmission's
+		// port-test call to its external checker failed/timed out). Don't treat
+		// that as "closed" for rotation purposes, but still make sure Transmission
+		// has the latest port Gluetun is forwarding -- otherwise a persistently
+		// failing port-test would mean the port is never synced at all.
+		log.WithError(err).Warnf("Unable to check IsPortOpen(); syncing port with Gluetun anyway")
+		open = false
 	}
 
 	if !open {
-		for i := 0; i < 5; i++ {
+		for range g.retryAttempts {
 			err = g.updatePort()
 			if err == nil {
 				break
 			}
-			time.Sleep(3 * time.Second)
+			time.Sleep(g.retryDelay)
 		}
 		if err != nil {
 			log.WithError(err).Errorf("Unable to UpdatePort()")
