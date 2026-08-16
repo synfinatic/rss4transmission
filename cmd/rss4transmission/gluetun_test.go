@@ -2,11 +2,17 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hekmon/transmissionrpc/v3"
 )
 
 func newTestGluetun(url string) *Gluetun {
@@ -183,5 +189,85 @@ func TestNewRequest_NoAuth(t *testing.T) {
 	}
 	if req.Header.Get("X-API-Key") != "" {
 		t.Error("X-API-Key header should not be set when no API key configured")
+	}
+}
+
+// portTestFailingTransmissionServer simulates Transmission where the "port-test"
+// RPC method always fails (e.g. because it can't reach the external port checker
+// service), but records the peer-port set via "session-set".
+func portTestFailingTransmissionServer(t *testing.T, gotPeerPort *int64) *httptest.Server {
+	t.Helper()
+	const sessionID = "test-session-id"
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Transmission-Session-Id") != sessionID {
+			w.Header().Set("X-Transmission-Session-Id", sessionID)
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		var req struct {
+			Method    string `json:"method"`
+			Tag       int    `json:"tag"`
+			Arguments struct {
+				PeerPort int64 `json:"peer-port"`
+			} `json:"arguments"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("unmarshal body: %v", err)
+		}
+
+		resp := map[string]any{"tag": req.Tag}
+		switch req.Method {
+		case "port-test":
+			resp["result"] = "Couldn't test port: No Response (0)"
+		case "session-set":
+			atomic.StoreInt64(gotPeerPort, req.Arguments.PeerPort)
+			resp["result"] = "success"
+		default:
+			t.Fatalf("unexpected method: %s", req.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+}
+
+func TestCheckVpnTunnel_PortTestErrors_StillSyncsPort(t *testing.T) {
+	var gotPeerPort int64
+	transmissionSrv := portTestFailingTransmissionServer(t, &gotPeerPort)
+	defer transmissionSrv.Close()
+	endpoint, err := url.Parse(transmissionSrv.URL)
+	if err != nil {
+		t.Fatalf("parse transmission url: %v", err)
+	}
+	client, err := transmissionrpc.New(endpoint, nil)
+	if err != nil {
+		t.Fatalf("new transmission client: %v", err)
+	}
+
+	gluetunSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ports":[12345]}`))
+	}))
+	defer gluetunSrv.Close()
+
+	g := &Gluetun{
+		URL:           gluetunSrv.URL,
+		Transmission:  client,
+		lastRotate:    time.Now(),
+		peerPort:      -1,
+		retryAttempts: 1,
+		retryDelay:    time.Millisecond,
+	}
+
+	g.CheckVpnTunnel()
+
+	if got := atomic.LoadInt64(&gotPeerPort); got != 12345 {
+		t.Errorf("transmission peer port = %d, want 12345 (port-test errors must not block syncing the known Gluetun port)", got)
+	}
+	if g.peerPort != 12345 {
+		t.Errorf("g.peerPort = %d, want 12345", g.peerPort)
 	}
 }
