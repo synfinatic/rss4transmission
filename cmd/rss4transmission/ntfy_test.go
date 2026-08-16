@@ -18,6 +18,23 @@ func mustValidateNtfyConfig(t *testing.T, cfg NtfyConfig) NtfyConfig {
 	return cfg
 }
 
+// captureNtfyRequest spins up a stub ntfy server, sends a notification via
+// send, and returns the captured request for header assertions.
+func captureNtfyRequest(t *testing.T, alertTopic string, send func(*NtfyClient) error) *http.Request {
+	t.Helper()
+	var captured *http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: alertTopic})
+	require.NoError(t, send(NewNtfyClient(cfg)))
+	require.NotNil(t, captured)
+	return captured
+}
+
 func TestSendTorrentStarted_Headers(t *testing.T) {
 	var captured *http.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -362,8 +379,8 @@ func TestNtfyConfig_Validate_SkipsWhenDisabled(t *testing.T) {
 
 // --- Config-reload notification: NtfyConfig.Validate() ---
 
-func TestNtfyConfig_Validate_ConfigTopicDefaults(t *testing.T) {
-	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", ConfigTopic: "cfgtopic"}
+func TestNtfyConfig_Validate_AlertTopicDefaults(t *testing.T) {
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", AlertTopic: "cfgtopic"}
 	require.NoError(t, cfg.Validate())
 
 	assert.Equal(t, "Config Reloaded", cfg.ConfigReloadedTitle)
@@ -372,15 +389,25 @@ func TestNtfyConfig_Validate_ConfigTopicDefaults(t *testing.T) {
 	assert.Equal(t, "Config Reload FAILED", cfg.ConfigFailedTitle)
 	assert.Equal(t, "{{.ConfigFile}}\n{{.Error}}", cfg.ConfigFailedBody)
 	assert.Equal(t, "high", cfg.ConfigFailedPriority)
+	assert.Equal(t, "Transmission Port Closed", cfg.PortClosedTitle)
+	assert.Equal(t, "{{.Reason}}", cfg.PortClosedBody)
+	assert.Equal(t, "high", cfg.PortClosedPriority)
+	assert.Equal(t, "Transmission Port Open", cfg.PortOpenedTitle)
+	assert.Equal(t, "{{.Reason}}", cfg.PortOpenedBody)
+	assert.Equal(t, "default", cfg.PortOpenedPriority)
 
 	// Topic wasn't set, so the Started/Completed block must not have run.
 	assert.Nil(t, cfg.startedTitleTmpl)
 	assert.Nil(t, cfg.completedTitleTmpl)
 	assert.NotNil(t, cfg.configReloadedTitleTmpl)
 	assert.NotNil(t, cfg.configFailedBodyTmpl)
+	assert.NotNil(t, cfg.portClosedTitleTmpl)
+	assert.NotNil(t, cfg.portClosedBodyTmpl)
+	assert.NotNil(t, cfg.portOpenedTitleTmpl)
+	assert.NotNil(t, cfg.portOpenedBodyTmpl)
 }
 
-func TestNtfyConfig_Validate_TopicOnlyDoesNotRequireConfigTopic(t *testing.T) {
+func TestNtfyConfig_Validate_TopicOnlyDoesNotRequireAlertTopic(t *testing.T) {
 	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "t"}
 	require.NoError(t, cfg.Validate())
 
@@ -390,7 +417,7 @@ func TestNtfyConfig_Validate_TopicOnlyDoesNotRequireConfigTopic(t *testing.T) {
 }
 
 func TestNtfyConfig_Validate_BothTopicsIndependentlyConfigurable(t *testing.T) {
-	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "t", ConfigTopic: "cfgtopic"}
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "t", AlertTopic: "cfgtopic"}
 	require.NoError(t, cfg.Validate())
 
 	assert.NotNil(t, cfg.startedTitleTmpl)
@@ -403,38 +430,99 @@ func TestNtfyConfig_Validate_BothTopicsIndependentlyConfigurable(t *testing.T) {
 	assert.NotNil(t, cfg.configFailedBodyTmpl)
 }
 
-func TestNtfyConfig_Validate_SkipsConfigBlockWhenConfigTopicEmpty(t *testing.T) {
+func TestNtfyConfig_Validate_SkipsConfigBlockWhenAlertTopicEmpty(t *testing.T) {
 	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "t", ConfigReloadedTitle: "{{.Unclosed"}
-	require.NoError(t, cfg.Validate(), "invalid ConfigReloadedTitle should be ignored when ConfigTopic is unset")
+	require.NoError(t, cfg.Validate(), "invalid ConfigReloadedTitle should be ignored when AlertTopic is unset")
 }
 
 func TestNtfyConfig_Validate_InvalidConfigReloadedTemplate(t *testing.T) {
-	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", ConfigTopic: "cfgtopic", ConfigReloadedTitle: "{{.Unclosed"}
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", AlertTopic: "cfgtopic", ConfigReloadedTitle: "{{.Unclosed"}
 	err := cfg.Validate()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ConfigReloadedTitle")
 }
 
 func TestNtfyConfig_Validate_InvalidConfigFailedTemplate(t *testing.T) {
-	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", ConfigTopic: "cfgtopic", ConfigFailedBody: "{{.Unclosed"}
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", AlertTopic: "cfgtopic", ConfigFailedBody: "{{.Unclosed"}
 	err := cfg.Validate()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ConfigFailedBody")
 }
 
 func TestNtfyConfig_Validate_InvalidConfigReloadedPriority(t *testing.T) {
-	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", ConfigTopic: "cfgtopic", ConfigReloadedPriority: "urgent"}
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", AlertTopic: "cfgtopic", ConfigReloadedPriority: "urgent"}
 	require.Error(t, cfg.Validate())
 }
 
 func TestNtfyConfig_Validate_InvalidConfigFailedPriority(t *testing.T) {
-	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", ConfigTopic: "cfgtopic", ConfigFailedPriority: "urgent"}
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", AlertTopic: "cfgtopic", ConfigFailedPriority: "urgent"}
 	require.Error(t, cfg.Validate())
 }
 
-// --- Config-reload notification: NtfyClient.SendConfigReload{Success,Failure} ---
+func TestNtfyConfig_Validate_InvalidPortClosedTemplate(t *testing.T) {
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", AlertTopic: "cfgtopic", PortClosedBody: "{{.Unclosed"}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PortClosedBody")
+}
 
-func TestSendConfigReloadSuccess_Headers(t *testing.T) {
+func TestNtfyConfig_Validate_InvalidPortClosedPriority(t *testing.T) {
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", AlertTopic: "cfgtopic", PortClosedPriority: "urgent"}
+	require.Error(t, cfg.Validate())
+}
+
+func TestNtfyConfig_Validate_SkipsPortClosedBlockWhenAlertTopicEmpty(t *testing.T) {
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "t", PortClosedBody: "{{.Unclosed"}
+	require.NoError(t, cfg.Validate(), "invalid PortClosedBody should be ignored when AlertTopic is unset")
+}
+
+func TestNtfyConfig_Validate_InvalidPortOpenedTemplate(t *testing.T) {
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", AlertTopic: "cfgtopic", PortOpenedBody: "{{.Unclosed"}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PortOpenedBody")
+}
+
+func TestNtfyConfig_Validate_InvalidPortOpenedPriority(t *testing.T) {
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", AlertTopic: "cfgtopic", PortOpenedPriority: "urgent"}
+	require.Error(t, cfg.Validate())
+}
+
+func TestNtfyConfig_Validate_SkipsPortOpenedBlockWhenAlertTopicEmpty(t *testing.T) {
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "t", PortOpenedBody: "{{.Unclosed"}
+	require.NoError(t, cfg.Validate(), "invalid PortOpenedBody should be ignored when AlertTopic is unset")
+}
+
+// --- Port-closed notification: NtfyClient.SendPortClosed ---
+
+func TestSendPortClosed_Headers(t *testing.T) {
+	captured := captureNtfyRequest(t, "alerts", func(c *NtfyClient) error {
+		return c.SendPortClosed(&NtfyPortContext{Reason: "port closed"})
+	})
+
+	assert.Equal(t, "POST", captured.Method)
+	assert.Equal(t, "/alerts", captured.URL.Path)
+	assert.Equal(t, "Transmission Port Closed", captured.Header.Get("Title"))
+	assert.Equal(t, "high", captured.Header.Get("Priority"))
+}
+
+func TestSendPortClosed_BodyIncludesReason(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		require.NoError(t, err)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "alerts"})
+	c := NewNtfyClient(cfg)
+	require.NoError(t, c.SendPortClosed(&NtfyPortContext{Reason: "port not open 60s after startup"}))
+	assert.Equal(t, "port not open 60s after startup", string(body))
+}
+
+func TestSendPortClosed_CustomTemplate(t *testing.T) {
 	var captured *http.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured = r
@@ -442,10 +530,179 @@ func TestSendConfigReloadSuccess_Headers(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, ConfigTopic: "cfgtopic"})
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{
+		BaseURL:         srv.URL,
+		AlertTopic:      "alerts",
+		PortClosedTitle: "Peer port down: {{.Reason}}",
+	})
 	c := NewNtfyClient(cfg)
-	require.NoError(t, c.SendConfigReloadSuccess(&NtfyConfigContext{ConfigFile: "config.yaml"}))
+	require.NoError(t, c.SendPortClosed(&NtfyPortContext{Reason: "closed"}))
+	assert.Equal(t, "Peer port down: closed", captured.Header.Get("Title"))
+}
+
+// --- Port-reopened notification: NtfyClient.SendPortOpened ---
+
+func TestSendPortOpened_Headers(t *testing.T) {
+	captured := captureNtfyRequest(t, "alerts", func(c *NtfyClient) error {
+		return c.SendPortOpened(&NtfyPortContext{Reason: "port reopened"})
+	})
+
+	assert.Equal(t, "POST", captured.Method)
+	assert.Equal(t, "/alerts", captured.URL.Path)
+	assert.Equal(t, "Transmission Port Open", captured.Header.Get("Title"))
+	assert.Equal(t, "default", captured.Header.Get("Priority"))
+}
+
+func TestSendPortOpened_BodyIncludesReason(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		require.NoError(t, err)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "alerts"})
+	c := NewNtfyClient(cfg)
+	require.NoError(t, c.SendPortOpened(&NtfyPortContext{Reason: "port reopened"}))
+	assert.Equal(t, "port reopened", string(body))
+}
+
+func TestSendPortOpened_CustomTemplate(t *testing.T) {
+	var captured *http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{
+		BaseURL:         srv.URL,
+		AlertTopic:      "alerts",
+		PortOpenedTitle: "Peer port back up: {{.Reason}}",
+	})
+	c := NewNtfyClient(cfg)
+	require.NoError(t, c.SendPortOpened(&NtfyPortContext{Reason: "open"}))
+	assert.Equal(t, "Peer port back up: open", captured.Header.Get("Title"))
+}
+
+// --- notifyPortOpened ---
+
+func TestNotifyPortOpened_NoopWhenAlertTopicEmpty(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	notifyPortOpened(NtfyConfig{BaseURL: srv.URL}, "port reopened")
+	assert.Equal(t, 0, requests)
+}
+
+func TestNotifyPortOpened_NoopWhenBaseURLEmpty(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	notifyPortOpened(NtfyConfig{AlertTopic: "alerts"}, "port reopened")
+	assert.Equal(t, 0, requests)
+}
+
+func TestNotifyPortOpened_Sends(t *testing.T) {
+	var captured *http.Request
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		captured = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "alerts"})
+	notifyPortOpened(cfg, "port reopened")
+	assert.Equal(t, 1, requests)
 	require.NotNil(t, captured)
+	assert.Equal(t, "Transmission Port Open", captured.Header.Get("Title"))
+}
+
+func TestNotifyPortOpened_SendFailureIsNonFatal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "alerts"})
+	assert.NotPanics(t, func() {
+		notifyPortOpened(cfg, "port reopened")
+	})
+}
+
+// --- notifyPortClosed ---
+
+func TestNotifyPortClosed_NoopWhenAlertTopicEmpty(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	notifyPortClosed(NtfyConfig{BaseURL: srv.URL}, "port closed")
+	assert.Equal(t, 0, requests)
+}
+
+func TestNotifyPortClosed_NoopWhenBaseURLEmpty(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	notifyPortClosed(NtfyConfig{AlertTopic: "alerts"}, "port closed")
+	assert.Equal(t, 0, requests)
+}
+
+func TestNotifyPortClosed_Sends(t *testing.T) {
+	var captured *http.Request
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		captured = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "alerts"})
+	notifyPortClosed(cfg, "port not open 60s after startup")
+	assert.Equal(t, 1, requests)
+	require.NotNil(t, captured)
+	assert.Equal(t, "Transmission Port Closed", captured.Header.Get("Title"))
+}
+
+func TestNotifyPortClosed_SendFailureIsNonFatal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "alerts"})
+	assert.NotPanics(t, func() {
+		notifyPortClosed(cfg, "port closed")
+	})
+}
+
+// --- Config-reload notification: NtfyClient.SendConfigReload{Success,Failure} ---
+
+func TestSendConfigReloadSuccess_Headers(t *testing.T) {
+	captured := captureNtfyRequest(t, "cfgtopic", func(c *NtfyClient) error {
+		return c.SendConfigReloadSuccess(&NtfyConfigContext{ConfigFile: "config.yaml"})
+	})
 
 	assert.Equal(t, "POST", captured.Method)
 	assert.Equal(t, "/cfgtopic", captured.URL.Path)
@@ -463,7 +720,7 @@ func TestSendConfigReloadSuccess_Body(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, ConfigTopic: "cfgtopic"})
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "cfgtopic"})
 	c := NewNtfyClient(cfg)
 	require.NoError(t, c.SendConfigReloadSuccess(&NtfyConfigContext{ConfigFile: "/etc/rss4transmission/config.yaml"}))
 	assert.Equal(t, "/etc/rss4transmission/config.yaml", string(body))
@@ -477,7 +734,7 @@ func TestSendConfigReloadFailure_Headers(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, ConfigTopic: "cfgtopic"})
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "cfgtopic"})
 	c := NewNtfyClient(cfg)
 	require.NoError(t, c.SendConfigReloadFailure(&NtfyConfigContext{ConfigFile: "config.yaml", Error: "boom"}))
 	require.NotNil(t, captured)
@@ -497,7 +754,7 @@ func TestSendConfigReloadFailure_BodyIncludesError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, ConfigTopic: "cfgtopic"})
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "cfgtopic"})
 	c := NewNtfyClient(cfg)
 	wantErr := "yaml: line 4: did not find expected key"
 	require.NoError(t, c.SendConfigReloadFailure(&NtfyConfigContext{ConfigFile: "config.yaml", Error: wantErr}))
@@ -514,7 +771,7 @@ func TestSendConfigReloadSuccess_CustomTitleTemplate(t *testing.T) {
 
 	cfg := mustValidateNtfyConfig(t, NtfyConfig{
 		BaseURL:             srv.URL,
-		ConfigTopic:         "cfgtopic",
+		AlertTopic:          "cfgtopic",
 		ConfigReloadedTitle: "Reloaded: {{.ConfigFile}}",
 	})
 	c := NewNtfyClient(cfg)
@@ -534,7 +791,7 @@ func TestSendConfigReloadFailure_CustomBodyTemplate(t *testing.T) {
 
 	cfg := mustValidateNtfyConfig(t, NtfyConfig{
 		BaseURL:          srv.URL,
-		ConfigTopic:      "cfgtopic",
+		AlertTopic:       "cfgtopic",
 		ConfigFailedBody: "FAILED {{.ConfigFile}}: {{.Error}}",
 	})
 	c := NewNtfyClient(cfg)
@@ -542,7 +799,7 @@ func TestSendConfigReloadFailure_CustomBodyTemplate(t *testing.T) {
 	assert.Equal(t, "FAILED config.yaml: boom", string(body))
 }
 
-func TestSendConfigReload_UsesConfigTopicNotTopic(t *testing.T) {
+func TestSendConfigReload_UsesAlertTopicNotTopic(t *testing.T) {
 	var captured *http.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured = r
@@ -550,7 +807,7 @@ func TestSendConfigReload_UsesConfigTopicNotTopic(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, Topic: "torrents", ConfigTopic: "configevents"})
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, Topic: "torrents", AlertTopic: "configevents"})
 	c := NewNtfyClient(cfg)
 	require.NoError(t, c.SendConfigReloadSuccess(&NtfyConfigContext{ConfigFile: "config.yaml"}))
 	require.NotNil(t, captured)
@@ -559,7 +816,7 @@ func TestSendConfigReload_UsesConfigTopicNotTopic(t *testing.T) {
 
 // --- notifyConfigReload ---
 
-func TestNotifyConfigReload_NoopWhenConfigTopicEmpty(t *testing.T) {
+func TestNotifyConfigReload_NoopWhenAlertTopicEmpty(t *testing.T) {
 	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -579,7 +836,7 @@ func TestNotifyConfigReload_NoopWhenBaseURLEmpty(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	notifyConfigReload(NtfyConfig{ConfigTopic: "cfgtopic"}, "config.yaml", nil)
+	notifyConfigReload(NtfyConfig{AlertTopic: "cfgtopic"}, "config.yaml", nil)
 	assert.Equal(t, 0, requests)
 }
 
@@ -593,7 +850,7 @@ func TestNotifyConfigReload_SendsSuccessOnNilError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, ConfigTopic: "cfgtopic"})
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "cfgtopic"})
 	notifyConfigReload(cfg, "config.yaml", nil)
 	assert.Equal(t, 1, requests)
 	require.NotNil(t, captured)
@@ -612,7 +869,7 @@ func TestNotifyConfigReload_SendsFailureWithErrorTextOnNonNilError(t *testing.T)
 	}))
 	defer srv.Close()
 
-	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, ConfigTopic: "cfgtopic"})
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "cfgtopic"})
 	notifyConfigReload(cfg, "config.yaml",
 		fmt.Errorf("yaml: line 4: did not find expected key"))
 	assert.Equal(t, 1, requests)
@@ -629,7 +886,7 @@ func TestNotifyConfigReload_SendFailureIsNonFatal(t *testing.T) {
 		slow.Close()
 	}()
 
-	cfg := NtfyConfig{BaseURL: slow.URL, ConfigTopic: "cfgtopic"}
+	cfg := NtfyConfig{BaseURL: slow.URL, AlertTopic: "cfgtopic"}
 	require.NoError(t, cfg.Validate())
 
 	done := make(chan struct{})

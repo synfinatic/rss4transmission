@@ -44,6 +44,7 @@ type Config struct {
 	Gluetun       GluetunConfig            `koanf:"Gluetun"`
 	Ntfy          NtfyConfig               `koanf:"Ntfy"`
 	Cancel        CancelConfig             `koanf:"Cancel"`
+	PortCheck     PortCheckConfig          `koanf:"PortCheck"`
 	SeenFile      string                   `koanf:"SeenFile"`
 	SeenCacheDays int                      `koanf:"SeenCacheDays"`
 }
@@ -59,13 +60,19 @@ type NtfyConfig struct {
 	CompletedBody     string `koanf:"CompletedBody"`
 	CompletedPriority string `koanf:"CompletedPriority"`
 
-	ConfigTopic            string `koanf:"ConfigTopic"`
+	AlertTopic             string `koanf:"AlertTopic"`
 	ConfigReloadedTitle    string `koanf:"ConfigReloadedTitle"`
 	ConfigReloadedBody     string `koanf:"ConfigReloadedBody"`
 	ConfigReloadedPriority string `koanf:"ConfigReloadedPriority"`
 	ConfigFailedTitle      string `koanf:"ConfigFailedTitle"`
 	ConfigFailedBody       string `koanf:"ConfigFailedBody"`
 	ConfigFailedPriority   string `koanf:"ConfigFailedPriority"`
+	PortClosedTitle        string `koanf:"PortClosedTitle"`
+	PortClosedBody         string `koanf:"PortClosedBody"`
+	PortClosedPriority     string `koanf:"PortClosedPriority"`
+	PortOpenedTitle        string `koanf:"PortOpenedTitle"`
+	PortOpenedBody         string `koanf:"PortOpenedBody"`
+	PortOpenedPriority     string `koanf:"PortOpenedPriority"`
 
 	startedTitleTmpl        *template.Template
 	startedBodyTmpl         *template.Template
@@ -75,6 +82,14 @@ type NtfyConfig struct {
 	configReloadedBodyTmpl  *template.Template
 	configFailedTitleTmpl   *template.Template
 	configFailedBodyTmpl    *template.Template
+	portClosedTitleTmpl     *template.Template
+	portClosedBodyTmpl      *template.Template
+	portOpenedTitleTmpl     *template.Template
+	portOpenedBodyTmpl      *template.Template
+}
+
+type PortCheckConfig struct {
+	Enabled bool `koanf:"Enabled"`
 }
 
 type CancelConfig struct {

@@ -262,7 +262,13 @@ func TestCheckVpnTunnel_PortTestErrors_StillSyncsPort(t *testing.T) {
 		retryDelay:    time.Millisecond,
 	}
 
-	g.CheckVpnTunnel()
+	open, err := g.CheckVpnTunnel()
+	if err == nil {
+		t.Errorf("CheckVpnTunnel() err = nil, want non-nil (port-test failure must be reported to the caller)")
+	}
+	if open {
+		t.Errorf("CheckVpnTunnel() open = true, want false")
+	}
 
 	if got := atomic.LoadInt64(&gotPeerPort); got != 12345 {
 		t.Errorf("transmission peer port = %d, want 12345 (port-test errors must not block syncing the known Gluetun port)", got)

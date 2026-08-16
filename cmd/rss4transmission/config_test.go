@@ -204,6 +204,23 @@ Feeds:
 	}
 }
 
+func TestLoadConfig_PortCheckEnabledDefaultsFalse(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte(validExtractorYAML), 0600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	rc := &RunContext{}
+	if _, err := rc.loadConfig(cfgPath); err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+
+	if rc.Config.PortCheck.Enabled {
+		t.Error("PortCheck.Enabled should default to false when unset")
+	}
+}
+
 func TestLoadConfig_RejectsDuplicateFeedNames(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")

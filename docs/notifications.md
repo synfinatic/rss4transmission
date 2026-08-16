@@ -2,7 +2,7 @@
 
 ## Overview
 
-RSS4Transmission supports three kinds of push notifications via [ntfy](https://ntfy.sh):
+RSS4Transmission supports four kinds of push notifications via [ntfy](https://ntfy.sh):
 
 - **Torrent started** — sent by rss4transmission immediately after submitting a torrent to
   Transmission. Includes a **More Info** action button that opens a browser confirmation
@@ -12,9 +12,10 @@ RSS4Transmission supports three kinds of push notifications via [ntfy](https://n
   `bin/torrent-complete.sh` running as Transmission's "torrent done" hook. The endpoint renders
   your configured templates and sends the notification to ntfy.
 - **Config reloaded** — sent by `watch` whenever it picks up a change to the config file, to its
-  own `Ntfy.ConfigTopic` (separate from the torrent notifications' `Ntfy.Topic`). Reports whether
+  own `Ntfy.AlertTopic` (separate from the torrent notifications' `Ntfy.Topic`). Reports whether
   the reload succeeded or failed; on failure, the notification body includes the actual error
   (e.g. a YAML parse error), so a bad edit is visible immediately without tailing logs.
+- **Port closed / reopened** — see [Port Notifications](#port-notifications) below.
 
 ## ntfy and Cancel Configuration
 
@@ -22,15 +23,20 @@ Add `Ntfy` and `Cancel` blocks to your config file:
 
 ```yaml
 Ntfy:
-  BaseURL:     https://ntfy.sh              # your ntfy server
-  Topic:       <your-topic-name>            # ntfy topic to publish to (torrent notifications)
-  ConfigTopic: <your-config-topic-name>     # ntfy topic to publish to (config-reload notifications)
-  Token:       tk_<your-access-token>       # ntfy access token
+  BaseURL:    https://ntfy.sh              # your ntfy server
+  Topic:      <your-topic-name>            # ntfy topic to publish to (torrent notifications)
+  AlertTopic: <your-alert-topic-name>      # ntfy topic to publish to (config-reload / port alerts)
+  Token:      tk_<your-access-token>       # ntfy access token
 
 Cancel:
   HMACSecret: <random-32-byte-hex>                   # generate: openssl rand -hex 32
   BaseURL:    https://rss4transmission.yourdomain.com # externally reachable URL
   TokenTTLH:  24                                     # cancel link TTL in hours (default: 24)
+
+# Only needed to enable the port-open check/alerts when Gluetun is NOT configured
+# (with Gluetun configured, the check runs automatically). See Port Notifications below.
+PortCheck:
+  Enabled: true
 ```
 
 | Field | Default | Description |
@@ -44,13 +50,20 @@ Cancel:
 | `Ntfy.CompletedTitle` | `"Torrent Complete"` | `text/template` string for the completed notification title |
 | `Ntfy.CompletedBody` | `"{{.Title}}\n{{.Dir}}"` | `text/template` string for the completed notification body |
 | `Ntfy.CompletedPriority` | `default` | ntfy priority for completed notifications |
-| `Ntfy.ConfigTopic` | — | ntfy topic to publish config-reload notifications to |
+| `Ntfy.AlertTopic` | — | ntfy topic to publish config-reload and port-state notifications to |
 | `Ntfy.ConfigReloadedTitle` | `"Config Reloaded"` | `text/template` string for the reload-success notification title |
 | `Ntfy.ConfigReloadedBody` | `"{{.ConfigFile}}"` | `text/template` string for the reload-success notification body |
 | `Ntfy.ConfigReloadedPriority` | `low` | ntfy priority for reload-success notifications |
 | `Ntfy.ConfigFailedTitle` | `"Config Reload FAILED"` | `text/template` string for the reload-failure notification title |
 | `Ntfy.ConfigFailedBody` | `"{{.ConfigFile}}\n{{.Error}}"` | `text/template` string for the reload-failure notification body |
 | `Ntfy.ConfigFailedPriority` | `high` | ntfy priority for reload-failure notifications |
+| `Ntfy.PortClosedTitle` | `"Transmission Port Closed"` | `text/template` string for the port-closed notification title |
+| `Ntfy.PortClosedBody` | `"{{.Reason}}"` | `text/template` string for the port-closed notification body |
+| `Ntfy.PortClosedPriority` | `high` | ntfy priority for port-closed notifications |
+| `Ntfy.PortOpenedTitle` | `"Transmission Port Open"` | `text/template` string for the port-reopened notification title |
+| `Ntfy.PortOpenedBody` | `"{{.Reason}}"` | `text/template` string for the port-reopened notification body |
+| `Ntfy.PortOpenedPriority` | `default` | ntfy priority for port-reopened notifications |
+| `PortCheck.Enabled` | `false` | Enables the periodic port-open check when Gluetun is **not** configured (see [Port Notifications](#port-notifications)) |
 | `Cancel.HMACSecret` | — | Secret key for signing cancel URLs (HMAC-SHA256) |
 | `Cancel.BaseURL` | — | Public base URL of rss4transmission (used in cancel links) |
 | `Cancel.TokenTTLH` | `24` | Hours before a cancel link expires |
@@ -58,9 +71,13 @@ Cancel:
 Cancel links are omitted from notifications when `Cancel.HMACSecret` or `Cancel.BaseURL` is not
 configured — the torrent started notification is still sent, just without the cancel action.
 Ntfy notifications are entirely disabled when `Ntfy.BaseURL` is not set. `Ntfy.Topic` and
-`Ntfy.ConfigTopic` gate their respective notification groups independently: torrent
-started/completed notifications require `Topic`, config-reload notifications require
-`ConfigTopic`, and either can be configured without the other.
+`Ntfy.AlertTopic` gate their respective notification groups independently: torrent
+started/completed notifications require `Topic`, config-reload and port-state notifications
+require `AlertTopic`, and either can be configured without the other.
+
+> **Breaking rename:** `Ntfy.ConfigTopic` was renamed to `Ntfy.AlertTopic`. If your config sets
+> `ConfigTopic`, rename it to `AlertTopic` — it now gates both config-reload and port-state
+> notifications together.
 
 ## Notification Templates
 
@@ -144,6 +161,32 @@ Ntfy:
     Failed to reload {{.ConfigFile}}:
     {{.Error}}
 ```
+
+## Port Notifications
+
+`watch` periodically checks whether Transmission's peer port is reachable, on a fixed 5-minute
+interval (not configurable). Every check is logged — `debug` when open, `warn` when closed. Two
+ntfy alerts can fire, both to `Ntfy.AlertTopic`:
+
+- **Transition alerts** — sent the moment the port's state changes: open → closed sends
+  `PortClosedTitle`/`PortClosedBody`, closed → open sends `PortOpenedTitle`/`PortOpenedBody`.
+- **Startup alert** — if the port is still closed 60 seconds (fixed, not configurable) after
+  `watch` starts, `PortClosedTitle`/`PortClosedBody` is sent once, independent of the transition
+  alert above.
+
+The check runs automatically whenever `Gluetun.Host`/`Gluetun.Port` are configured — it's the
+same check Gluetun already performs for VPN rotation and peer-port sync, now also logged and
+alerted on. Without Gluetun, set `PortCheck.Enabled: true` to opt in to the periodic check on
+its own (no rotation/sync, just the open/closed poll, logging, and alerts).
+
+### Port Notification Context
+
+The `PortClosedTitle`, `PortClosedBody`, `PortOpenedTitle`, and `PortOpenedBody` fields also
+accept `text/template` strings, with their own small context:
+
+| Field | Type | Description |
+|---|---|---|
+| `{{.Reason}}` | `string` | Why the alert fired, e.g. `"port closed"`, `"port reopened"`, or `"port not open 60s after startup"` |
 
 ## Cancel Endpoint
 

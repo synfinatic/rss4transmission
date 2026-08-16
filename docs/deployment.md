@@ -173,6 +173,13 @@ When using Gluetun, add a `Gluetun` block to enable automatic VPN rotation and p
 forwarding. rss4transmission will restart the VPN when the peer port closes or after
 `RotateTime` elapses, then update Transmission with the new peer port.
 
+This check runs on its own fixed 5-minute cadence, independent of `--sleep` (the feed-scrape
+interval). Previously it ran once per feed-scrape iteration, so `RotateTime` and
+`ClosedPortChecks` were silently throttled by whatever `--sleep` value was configured; that
+coupling is now removed. For the default `--sleep 300` this is a no-op, but if you run a
+non-default `--sleep`, rotation/port-sync timing will now follow the 5-minute cadence instead.
+See [Port Notifications](notifications.md#port-notifications) for the accompanying ntfy alerts.
+
 ```yaml
 # When using Gluetun, Docker service networking changes the hostname
 Transmission:
