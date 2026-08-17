@@ -553,6 +553,149 @@ func TestHistoryPage_TorrentButtonShownWhenFeedStillConfigured(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), `class="btn-torrent"`)
 }
 
+// --- groupHistoryRows ---
+
+func TestGroupHistoryRows_DispatchedIsPrimaryOverSkipped(t *testing.T) {
+	records := []HistoryRecord{
+		NewHistoryRecord("WSBK", makeGofeedItem("BSB Title", "guid-1"), "skipped", "no group matched labels", nil),
+		NewHistoryRecord("WSS", makeGofeedItem("BSB Title", "guid-1"), "skipped", "no group matched labels", nil),
+		NewHistoryRecord("BSB", makeGofeedItem("BSB Title", "guid-1"), "dispatched", "", nil),
+		NewHistoryRecord("IOMTT", makeGofeedItem("BSB Title", "guid-1"), "skipped", "no group matched labels", nil),
+	}
+
+	rows := groupHistoryRows(records)
+
+	require.Len(t, rows, 4)
+	assert.True(t, rows[0].IsPrimary)
+	assert.Equal(t, "BSB", rows[0].Feed, "the dispatched record must be the primary row")
+	assert.Equal(t, 4, rows[0].GroupSize)
+
+	for _, r := range rows[1:] {
+		assert.False(t, r.IsPrimary)
+		assert.Equal(t, 4, r.GroupSize)
+	}
+	// Non-primary rows are sorted alphabetically by feed for deterministic rendering.
+	assert.Equal(t, "IOMTT", rows[1].Feed)
+	assert.Equal(t, "WSBK", rows[2].Feed)
+	assert.Equal(t, "WSS", rows[3].Feed)
+}
+
+func TestGroupHistoryRows_TieBreaksAlphabeticallyByFeed(t *testing.T) {
+	records := []HistoryRecord{
+		NewHistoryRecord("WSBK", makeGofeedItem("BSB Title", "guid-1"), "skipped", "no group matched labels", nil),
+		NewHistoryRecord("BSB", makeGofeedItem("BSB Title", "guid-1"), "skipped", "better version already in cache", nil),
+		NewHistoryRecord("IOMTT", makeGofeedItem("BSB Title", "guid-1"), "skipped", "no group matched labels", nil),
+	}
+
+	rows := groupHistoryRows(records)
+
+	require.Len(t, rows, 3)
+	assert.True(t, rows[0].IsPrimary)
+	assert.Equal(t, "BSB", rows[0].Feed, "equal outcomeRank ties break alphabetically by feed name")
+	assert.Equal(t, "IOMTT", rows[1].Feed)
+	assert.Equal(t, "WSBK", rows[2].Feed)
+}
+
+func TestGroupHistoryRows_EmptyGUIDNeverMerges(t *testing.T) {
+	records := []HistoryRecord{
+		NewHistoryRecord("feedA", makeGofeedItem("Title A", ""), "skipped", "no group matched labels", nil),
+		NewHistoryRecord("feedB", makeGofeedItem("Title B", ""), "skipped", "no group matched labels", nil),
+	}
+
+	rows := groupHistoryRows(records)
+
+	require.Len(t, rows, 2)
+	for _, r := range rows {
+		assert.True(t, r.IsPrimary)
+		assert.Equal(t, 1, r.GroupSize, "records with an empty GUID must never be grouped together")
+	}
+}
+
+func TestGroupHistoryRows_SingletonGroupIsPrimary(t *testing.T) {
+	records := []HistoryRecord{
+		NewHistoryRecord("onlyfeed", makeGofeedItem("Solo Title", "guid-solo"), "skipped", "excluded by regex", nil),
+	}
+
+	rows := groupHistoryRows(records)
+
+	require.Len(t, rows, 1)
+	assert.True(t, rows[0].IsPrimary)
+	assert.Equal(t, 1, rows[0].GroupSize)
+}
+
+func TestGroupHistoryRows_GroupsAreContiguousAtFirstAppearancePosition(t *testing.T) {
+	records := []HistoryRecord{
+		NewHistoryRecord("feedA", makeGofeedItem("First Title", "guid-1"), "skipped", "", nil),
+		NewHistoryRecord("feedB", makeGofeedItem("Second Title", "guid-2"), "skipped", "", nil),
+		NewHistoryRecord("feedC", makeGofeedItem("First Title", "guid-1"), "dispatched", "", nil),
+	}
+
+	rows := groupHistoryRows(records)
+
+	require.Len(t, rows, 3)
+	// guid-1 first appears at index 0, so both its records land contiguously
+	// there (dispatched primary first), pushing guid-2's single record last.
+	assert.Equal(t, "guid-1", rows[0].GUID)
+	assert.Equal(t, "feedC", rows[0].Feed)
+	assert.True(t, rows[0].IsPrimary)
+	assert.Equal(t, 2, rows[0].GroupSize)
+
+	assert.Equal(t, "guid-1", rows[1].GUID)
+	assert.Equal(t, "feedA", rows[1].Feed)
+	assert.False(t, rows[1].IsPrimary)
+	assert.Equal(t, 2, rows[1].GroupSize)
+
+	assert.Equal(t, "guid-2", rows[2].GUID)
+	assert.Equal(t, 1, rows[2].GroupSize)
+}
+
+func TestHistoryPage_GroupsRecordsSharingGUID(t *testing.T) {
+	h := emptyHistory()
+	h.AddOrUpdateRecord(NewHistoryRecord("BSB",
+		makeGofeedItemWithEnclosure("BSB Title", "guid-1", "https://example.com/bsb.torrent"),
+		"dispatched", "", nil))
+	h.AddOrUpdateRecord(NewHistoryRecord("WSS",
+		makeGofeedItemWithEnclosure("BSB Title", "guid-1", "https://example.com/bsb.torrent"),
+		"skipped", "no group matched labels", nil))
+	h.AddOrUpdateRecord(NewHistoryRecord("WSBK",
+		makeGofeedItemWithEnclosure("BSB Title", "guid-1", "https://example.com/bsb.torrent"),
+		"skipped", "no group matched labels", nil))
+	h.AddOrUpdateRecord(NewHistoryRecord("IOMTT",
+		makeGofeedItemWithEnclosure("BSB Title", "guid-1", "https://example.com/bsb.torrent"),
+		"skipped", "no group matched labels", nil))
+
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil)
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+
+	assert.Equal(t, 1, strings.Count(body, `class="group-toggle"`),
+		"exactly one primary row should carry the expand toggle")
+	assert.Contains(t, body, "+3")
+	assert.Equal(t, 3, strings.Count(body, `class="group-child"`),
+		"the three skipped records must render as hidden-by-default child rows")
+	assert.Equal(t, 3, strings.Count(body, `class="btn-torrent"`),
+		"each skipped child keeps its own retry button; the dispatched primary has none")
+}
+
+func TestHistoryPage_UniqueGUIDRendersUngrouped(t *testing.T) {
+	h := emptyHistory()
+	h.AddOrUpdateRecord(NewHistoryRecord("myfeed", makeGofeedItem("Solo Title", "guid-solo"), "skipped", "excluded by regex", nil))
+
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil)
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.NotContains(t, body, `class="group-toggle"`)
+	assert.NotContains(t, body, `class="group-child"`)
+}
+
 // --- POST /torrent ---
 
 func makeRetryFunc(called *bool, gotRec *HistoryRecord, id int64, err error) retryFunc {
