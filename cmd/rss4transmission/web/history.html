@@ -237,9 +237,18 @@
             // feed's primary row, e.g. filtering Feed=WSBK when the BSB
             // feed's dispatched record is the group's primary). Auto-expand
             // its group so the matching row is still reachable instead of
-            // silently vanishing.
+            // silently vanishing — but only when the primary itself is
+            // filtered out; with the default "show everything" filter every
+            // child row trivially matches too, and that must not force every
+            // group open.
+            var primaryShow = {};
             rows.forEach(function (row, i) {
-                if (rawShow[i] && isChild(row)) expandedGroups.add(row.dataset.guid);
+                if (!isChild(row)) primaryShow[row.dataset.guid] = rawShow[i];
+            });
+            rows.forEach(function (row, i) {
+                if (rawShow[i] && isChild(row) && !primaryShow[row.dataset.guid]) {
+                    expandedGroups.add(row.dataset.guid);
+                }
             });
 
             var visible = 0;
