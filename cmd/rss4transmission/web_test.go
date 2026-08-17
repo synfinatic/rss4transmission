@@ -614,6 +614,22 @@ func TestGroupHistoryRows_PrefersInformativeReasonOverNoGroupMatched(t *testing.
 	assert.Equal(t, "Moto3", rows[2].Feed)
 }
 
+func TestGroupHistoryRows_NoGroupMatchedIsLowestPriorityAcrossOutcomes(t *testing.T) {
+	records := []HistoryRecord{
+		NewHistoryRecord("BSB", makeGofeedItem("BSB Title", "guid-1"), "skipped", skipReasonNoGroupMatched, nil),
+		NewHistoryRecord("WSBK", makeGofeedItem("BSB Title", "guid-1"), "excluded", "matched exclude filter", nil),
+	}
+
+	rows := groupHistoryRows(records)
+
+	require.Len(t, rows, 2)
+	assert.True(t, rows[0].IsPrimary)
+	assert.Equal(t, "WSBK", rows[0].Feed,
+		"\"no group matched labels\" must be the lowest priority of all, even below an excluded outcome "+
+			"which normally ranks worse than skipped per outcomeRank")
+	assert.Equal(t, "BSB", rows[1].Feed)
+}
+
 func TestGroupHistoryRows_EmptyGUIDNeverMerges(t *testing.T) {
 	records := []HistoryRecord{
 		NewHistoryRecord("feedA", makeGofeedItem("Title A", ""), "skipped", "no group matched labels", nil),

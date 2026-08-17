@@ -154,24 +154,23 @@ type historyRow struct {
 	GroupSize int // total records sharing this GUID; 1 = ungrouped
 }
 
-// skipReasonRank ranks "no group matched labels" below every other reason: it
-// means this feed's Groups never applied to the item at all, whereas any other
-// skip reason (outranked, cache already has a better version, etc.) means the
-// item did match this feed's groups and is therefore more informative to show
-// as a group's primary row.
-func skipReasonRank(reason string) int {
-	if reason == skipReasonNoGroupMatched {
-		return 1
-	}
-	return 0
+// isNoGroupMatched reports whether a record's feed never applied to the item
+// at all (its Groups never matched the item's labels). This is the least
+// informative reason a record can carry — even below an excluded or errored
+// record, which at least mean the feed engaged with the item — so it's
+// checked before outcomeRank when picking a group's primary row.
+func isNoGroupMatched(r HistoryRecord) bool {
+	return r.Outcome == "skipped" && r.Reason == skipReasonNoGroupMatched
 }
 
 // groupHistoryRows reorders records so rows sharing a GUID are contiguous.
-// Within a group, the record with the most interesting outcome (per
-// outcomeRank, then skipReasonRank, ties broken alphabetically by Feed) is
-// marked IsPrimary and placed first; the rest follow sorted by Feed name.
-// Group order follows first appearance in the input. Records with an empty
-// GUID are never grouped with each other or anything else.
+// Within a group, the primary row is chosen by: "no group matched labels"
+// records always sort last (see isNoGroupMatched); among the rest, the most
+// interesting outcome wins (outcomeRank); ties break alphabetically by Feed.
+// The chosen record is marked IsPrimary and placed first; the rest follow
+// sorted the same way. Group order follows first appearance in the input.
+// Records with an empty GUID are never grouped with each other or anything
+// else.
 func groupHistoryRows(records []HistoryRecord) []historyRow {
 	type group struct {
 		key     string
@@ -205,13 +204,13 @@ func groupHistoryRows(records []HistoryRecord) []historyRow {
 		g := groups[key]
 		recs := append([]HistoryRecord(nil), g.records...)
 		sort.SliceStable(recs, func(i, j int) bool {
+			ni, nj := isNoGroupMatched(recs[i]), isNoGroupMatched(recs[j])
+			if ni != nj {
+				return nj // i sorts first when i is NOT a no-group-matched record
+			}
 			ri, rj := outcomeRank(recs[i].Outcome), outcomeRank(recs[j].Outcome)
 			if ri != rj {
 				return ri < rj
-			}
-			si, sj := skipReasonRank(recs[i].Reason), skipReasonRank(recs[j].Reason)
-			if si != sj {
-				return si < sj
 			}
 			return recs[i].Feed < recs[j].Feed
 		})
