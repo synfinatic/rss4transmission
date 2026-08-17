@@ -596,6 +596,24 @@ func TestGroupHistoryRows_TieBreaksAlphabeticallyByFeed(t *testing.T) {
 	assert.Equal(t, "WSBK", rows[2].Feed)
 }
 
+func TestGroupHistoryRows_PrefersInformativeReasonOverNoGroupMatched(t *testing.T) {
+	records := []HistoryRecord{
+		NewHistoryRecord("Moto2", makeGofeedItem("MotoGP Title", "guid-1"), "skipped", skipReasonNoGroupMatched, nil),
+		NewHistoryRecord("Moto3", makeGofeedItem("MotoGP Title", "guid-1"), "skipped", skipReasonNoGroupMatched, nil),
+		NewHistoryRecord("MotoGP", makeGofeedItem("MotoGP Title", "guid-1"), "skipped", skipReasonCacheBetter, nil),
+	}
+
+	rows := groupHistoryRows(records)
+
+	require.Len(t, rows, 3)
+	assert.True(t, rows[0].IsPrimary)
+	assert.Equal(t, "MotoGP", rows[0].Feed,
+		"a record that actually matched this feed's groups but lost a preference contest is more "+
+			"informative than a sibling feed that never matched at all, even though it sorts later alphabetically")
+	assert.Equal(t, "Moto2", rows[1].Feed)
+	assert.Equal(t, "Moto3", rows[2].Feed)
+}
+
 func TestGroupHistoryRows_EmptyGUIDNeverMerges(t *testing.T) {
 	records := []HistoryRecord{
 		NewHistoryRecord("feedA", makeGofeedItem("Title A", ""), "skipped", "no group matched labels", nil),

@@ -493,6 +493,12 @@ func ensureTorrentBytes(item *FeedItem, cacheDir string, existing []byte) ([]byt
 // keys. Referenced in markCacheRejectedSeen to avoid string duplication.
 const skipReasonCacheBetter = "better version already in cache"
 
+// skipReasonNoGroupMatched is the reason string used when a candidate's labels
+// never matched any of the feed's Groups — i.e. this feed config never applied
+// to the item at all. Also referenced by groupHistoryRows in web.go, which
+// treats it as the least informative skip reason among siblings in a group.
+const skipReasonNoGroupMatched = "no group matched labels"
+
 // markCacheRejectedSeen adds the GUID of each cache-rejected candidate to the
 // seen cache. On the next run, Exists() catches these GUIDs in Phase 1, before
 // the torrent disk read, eliminating redundant I/O for items that will never
@@ -545,7 +551,7 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) ([]*
 	skipReasons := map[*candidate]string{}
 	for _, c := range candidates {
 		if !matchedCands[c] {
-			skipReasons[c] = "no group matched labels"
+			skipReasons[c] = skipReasonNoGroupMatched
 		} else if !inBest[c] {
 			skipReasons[c] = "outranked by better candidate in this run"
 		}
@@ -582,7 +588,7 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) ([]*
 		}
 	}
 	for c, reason := range skipReasons {
-		if reason != "no group matched labels" {
+		if reason != skipReasonNoGroupMatched {
 			continue
 		}
 		if key, ok := titleOnlyKey(c); ok {
