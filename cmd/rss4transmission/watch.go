@@ -258,6 +258,9 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	if ctx.Config.Gluetun.Host != "" && ctx.Config.Gluetun.Port != 0 {
 		g = NewGluetun(ctx.Config.Gluetun, ctx.Transmission)
 	}
+	if g != nil || ctx.Config.PortCheck.Enabled {
+		go NewPortMonitor(ctx.Transmission, g, ctx.Config.Ntfy).Run()
+	}
 
 	// Run once and then sleep between later runs...
 	for ; true; <-ticker.C {
@@ -266,9 +269,6 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			return err
 		}
 		reloader.mu.Unlock()
-		if g != nil {
-			g.CheckVpnTunnel()
-		}
 	}
 	return nil
 }

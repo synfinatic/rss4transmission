@@ -17,6 +17,11 @@ type NtfyConfigContext struct {
 	Error      string // empty on success
 }
 
+// NtfyPortContext holds the data available to port-closed notification templates.
+type NtfyPortContext struct {
+	Reason string
+}
+
 // NtfyTemplateContext holds all torrent data available to notification templates.
 type NtfyTemplateContext struct {
 	Title     string
@@ -70,9 +75,10 @@ func compileNotificationTemplates(title, body, priority *string, titleDefault, b
 // Validate applies template defaults and compiles notification templates. It
 // also validates that priority fields contain ntfy-accepted values.
 // Returns nil immediately when ntfy is disabled (BaseURL not set). The
-// Started/Completed (torrent) and ConfigReloaded/ConfigFailed (config-reload)
-// notification groups are independently opt-in, gated by Topic and
-// ConfigTopic respectively, so either can be enabled without the other.
+// Started/Completed (torrent) and ConfigReloaded/ConfigFailed/PortClosed/
+// PortOpened (alert) notification groups are independently opt-in, gated by
+// Topic and AlertTopic respectively, so either can be enabled without the
+// other.
 func (c *NtfyConfig) Validate() error {
 	if c.BaseURL == "" {
 		return nil
@@ -96,7 +102,7 @@ func (c *NtfyConfig) Validate() error {
 		}
 	}
 
-	if c.ConfigTopic != "" {
+	if c.AlertTopic != "" {
 		var err error
 		c.configReloadedTitleTmpl, c.configReloadedBodyTmpl, err = compileNotificationTemplates(
 			&c.ConfigReloadedTitle, &c.ConfigReloadedBody, &c.ConfigReloadedPriority,
@@ -109,6 +115,20 @@ func (c *NtfyConfig) Validate() error {
 			&c.ConfigFailedTitle, &c.ConfigFailedBody, &c.ConfigFailedPriority,
 			"Config Reload FAILED", "{{.ConfigFile}}\n{{.Error}}", "high",
 			"ConfigFailedTitle", "ConfigFailedBody", "ConfigFailedPriority")
+		if err != nil {
+			return err
+		}
+		c.portClosedTitleTmpl, c.portClosedBodyTmpl, err = compileNotificationTemplates(
+			&c.PortClosedTitle, &c.PortClosedBody, &c.PortClosedPriority,
+			"Transmission Port Closed", "{{.Reason}}", "high",
+			"PortClosedTitle", "PortClosedBody", "PortClosedPriority")
+		if err != nil {
+			return err
+		}
+		c.portOpenedTitleTmpl, c.portOpenedBodyTmpl, err = compileNotificationTemplates(
+			&c.PortOpenedTitle, &c.PortOpenedBody, &c.PortOpenedPriority,
+			"Transmission Port Open", "{{.Reason}}", "default",
+			"PortOpenedTitle", "PortOpenedBody", "PortOpenedPriority")
 		if err != nil {
 			return err
 		}
@@ -198,7 +218,7 @@ func (c *NtfyClient) SendConfigReloadSuccess(ctx *NtfyConfigContext) error {
 	if err != nil {
 		return err
 	}
-	return c.post(c.cfg.ConfigTopic, title, body, "", c.cfg.ConfigReloadedPriority)
+	return c.post(c.cfg.AlertTopic, title, body, "", c.cfg.ConfigReloadedPriority)
 }
 
 func (c *NtfyClient) SendConfigReloadFailure(ctx *NtfyConfigContext) error {
@@ -210,15 +230,39 @@ func (c *NtfyClient) SendConfigReloadFailure(ctx *NtfyConfigContext) error {
 	if err != nil {
 		return err
 	}
-	return c.post(c.cfg.ConfigTopic, title, body, "", c.cfg.ConfigFailedPriority)
+	return c.post(c.cfg.AlertTopic, title, body, "", c.cfg.ConfigFailedPriority)
+}
+
+func (c *NtfyClient) SendPortClosed(ctx *NtfyPortContext) error {
+	title, err := renderTemplate(c.cfg.portClosedTitleTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	body, err := renderTemplate(c.cfg.portClosedBodyTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	return c.post(c.cfg.AlertTopic, title, body, "", c.cfg.PortClosedPriority)
+}
+
+func (c *NtfyClient) SendPortOpened(ctx *NtfyPortContext) error {
+	title, err := renderTemplate(c.cfg.portOpenedTitleTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	body, err := renderTemplate(c.cfg.portOpenedBodyTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	return c.post(c.cfg.AlertTopic, title, body, "", c.cfg.PortOpenedPriority)
 }
 
 // notifyConfigReload sends a config-reload outcome notification to ntfy's
-// ConfigTopic. No-op when BaseURL or ConfigTopic is unset. Send failures are
+// AlertTopic. No-op when BaseURL or AlertTopic is unset. Send failures are
 // logged as warnings, never fatal — a broken notification channel must not
 // block the config-reload feature itself.
 func notifyConfigReload(cfg NtfyConfig, configFile string, reloadErr error) {
-	if cfg.BaseURL == "" || cfg.ConfigTopic == "" {
+	if cfg.BaseURL == "" || cfg.AlertTopic == "" {
 		return
 	}
 
@@ -235,5 +279,33 @@ func notifyConfigReload(cfg NtfyConfig, configFile string, reloadErr error) {
 
 	if err := client.SendConfigReloadSuccess(ntfyCtx); err != nil {
 		log.WithError(err).Warn("Failed to send ntfy config-reload-success notification")
+	}
+}
+
+// notifyPortClosed sends a port-closed alert to ntfy's AlertTopic. No-op when
+// BaseURL or AlertTopic is unset. Send failures are logged as warnings, never
+// fatal — a broken notification channel must not block port monitoring.
+func notifyPortClosed(cfg NtfyConfig, reason string) {
+	if cfg.BaseURL == "" || cfg.AlertTopic == "" {
+		return
+	}
+
+	client := NewNtfyClient(cfg)
+	if err := client.SendPortClosed(&NtfyPortContext{Reason: reason}); err != nil {
+		log.WithError(err).Warn("Failed to send ntfy port-closed notification")
+	}
+}
+
+// notifyPortOpened sends a port-reopened alert to ntfy's AlertTopic. No-op when
+// BaseURL or AlertTopic is unset. Send failures are logged as warnings, never
+// fatal — a broken notification channel must not block port monitoring.
+func notifyPortOpened(cfg NtfyConfig, reason string) {
+	if cfg.BaseURL == "" || cfg.AlertTopic == "" {
+		return
+	}
+
+	client := NewNtfyClient(cfg)
+	if err := client.SendPortOpened(&NtfyPortContext{Reason: reason}); err != nil {
+		log.WithError(err).Warn("Failed to send ntfy port-opened notification")
 	}
 }

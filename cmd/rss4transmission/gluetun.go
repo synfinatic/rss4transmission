@@ -93,51 +93,58 @@ func (g *Gluetun) newRequest(method, url string, body io.Reader) (*http.Request,
 
 var ForceRotate bool // flag to force rotation again due to failure
 
-// checkVpnTunnel restarts / rotates the VPN tunnel as necessary
-func (g *Gluetun) CheckVpnTunnel() {
-	var err error
-
+// checkVpnTunnel restarts / rotates the VPN tunnel as necessary. It returns
+// the observed port-open state and whether the port-test itself succeeded --
+// callers use this to distinguish "confirmed closed" from "couldn't tell"
+// (e.g. a flaky port-test), which the internal sync-below logic deliberately
+// collapses into "sync defensively either way".
+func (g *Gluetun) CheckVpnTunnel() (bool, error) {
 	if g.rotateNow() || ForceRotate {
-		err = g.rotate()
-		if err != nil {
+		if err := g.rotate(); err != nil {
 			log.WithError(err).Errorf("Rotate() failed")
 			ForceRotate = true
-			return
+			return false, err
 		}
 		time.Sleep(15 * time.Second) // let things settle down
 	}
 	ForceRotate = false
 
 	var open bool
+	var checkErr error
 	for range g.retryAttempts {
-		open, err = g.isPortOpen()
-		if err == nil {
+		open, checkErr = g.isPortOpen()
+		if checkErr == nil {
 			break
 		}
 		time.Sleep(g.retryDelay)
 	}
-	if err != nil {
+
+	syncOpen := open
+	if checkErr != nil {
 		// We couldn't determine whether the port is open (e.g. Transmission's
 		// port-test call to its external checker failed/timed out). Don't treat
 		// that as "closed" for rotation purposes, but still make sure Transmission
 		// has the latest port Gluetun is forwarding -- otherwise a persistently
 		// failing port-test would mean the port is never synced at all.
-		log.WithError(err).Warnf("Unable to check IsPortOpen(); syncing port with Gluetun anyway")
-		open = false
+		log.WithError(checkErr).Warnf("Unable to check IsPortOpen(); syncing port with Gluetun anyway")
+		syncOpen = false
 	}
 
-	if !open {
+	if !syncOpen {
+		var updateErr error
 		for range g.retryAttempts {
-			err = g.updatePort()
-			if err == nil {
+			updateErr = g.updatePort()
+			if updateErr == nil {
 				break
 			}
 			time.Sleep(g.retryDelay)
 		}
-		if err != nil {
-			log.WithError(err).Errorf("Unable to UpdatePort()")
+		if updateErr != nil {
+			log.WithError(updateErr).Errorf("Unable to UpdatePort()")
 		}
 	}
+
+	return open, checkErr
 }
 
 type VPNStatus bool

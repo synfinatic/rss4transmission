@@ -32,15 +32,18 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
   resolution, etc.) from torrent titles and file names; deduplicate by identity key; prefer
   higher-quality versions automatically
 - **[ntfy](https://ntfy.sh) push notifications** — receive a notification when a torrent starts
-  (with a More Info button), when it completes, and when `watch` reloads its config file
-  (reporting success or failure, with the error text on failure); notification title, body, and
+  (with a More Info button), when it completes, when `watch` reloads its config file (reporting
+  success or failure, with the error text on failure), and when Transmission's peer port
+  transitions open/closed or is still closed 60s after startup; notification title, body, and
   priority are user-defined via `text/template` strings in the config file, with full access to
   torrent metadata (labels, size, feed name, GUID, and more)
 - **History web UI** — browsable record of every processed feed item with outcome and extracted
   labels; skipped, excluded, and error items can be re-submitted to Transmission with a Torrent
   button
 - **Gluetun VPN integration** — automatically restarts the VPN and syncs the peer port into
-  Transmission when running behind [Gluetun](https://github.com/qdm12/gluetun)
+  Transmission when running behind [Gluetun](https://github.com/qdm12/gluetun); port state is
+  polled every 5 minutes and logged/alerted on (also available without Gluetun via
+  `PortCheck.Enabled`)
 - **Torrent file cache** — avoids re-fetching `.torrent` files on every watch-loop iteration;
   pruned automatically
 - **Ordered, stop-after-dispatch processing** — feeds are processed in the order they're listed

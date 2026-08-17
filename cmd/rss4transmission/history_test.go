@@ -449,6 +449,7 @@ func TestOpenHistory_NewFile(t *testing.T) {
 	}
 	if h == nil {
 		t.Fatal("expected non-nil HistoryFile")
+		return
 	}
 	if len(h.Records) != 0 {
 		t.Errorf("expected 0 records for new file, got %d", len(h.Records))
