@@ -29,6 +29,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -142,6 +143,73 @@ func parseListenAddr(s string) (string, error) {
 	return fmt.Sprintf("127.0.0.1:%d", p), nil
 }
 
+// historyRow decorates a HistoryRecord with grouping metadata for template
+// rendering: rows sharing a GUID (the same RSS item seen by multiple feed
+// configs that share an RSS URL) are grouped into one expandable entry so a
+// torrent that only matches one of several sibling feeds doesn't produce a
+// wall of "no group matched labels" rows.
+type historyRow struct {
+	HistoryRecord
+	IsPrimary bool
+	GroupSize int // total records sharing this GUID; 1 = ungrouped
+}
+
+// groupHistoryRows reorders records so rows sharing a GUID are contiguous.
+// Within a group, the record with the most interesting outcome (per
+// outcomeRank; ties broken alphabetically by Feed) is marked IsPrimary and
+// placed first; the rest follow sorted by Feed name. Group order follows
+// first appearance in the input. Records with an empty GUID are never
+// grouped with each other or anything else.
+func groupHistoryRows(records []HistoryRecord) []historyRow {
+	type group struct {
+		key     string
+		records []HistoryRecord
+	}
+
+	order := make([]string, 0, len(records))
+	groups := make(map[string]*group, len(records))
+	empties := 0
+	for _, r := range records {
+		var key string
+		if r.GUID == "" {
+			// Each empty-GUID record is its own singleton group.
+			empties++
+			key = fmt.Sprintf("\x00empty-%d", empties)
+		} else {
+			key = r.GUID
+		}
+
+		g, ok := groups[key]
+		if !ok {
+			g = &group{key: key}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.records = append(g.records, r)
+	}
+
+	rows := make([]historyRow, 0, len(records))
+	for _, key := range order {
+		g := groups[key]
+		recs := append([]HistoryRecord(nil), g.records...)
+		sort.SliceStable(recs, func(i, j int) bool {
+			ri, rj := outcomeRank(recs[i].Outcome), outcomeRank(recs[j].Outcome)
+			if ri != rj {
+				return ri < rj
+			}
+			return recs[i].Feed < recs[j].Feed
+		})
+		for i, r := range recs {
+			rows = append(rows, historyRow{
+				HistoryRecord: r,
+				IsPrimary:     i == 0,
+				GroupSize:     len(recs),
+			})
+		}
+	}
+	return rows
+}
+
 // newWebMux builds the shared HTTP mux. If history is non-nil, the history
 // page is served at "/". When history and retry are both non-nil, POST /torrent
 // is also registered to re-submit a past skipped/excluded/error item.
@@ -166,6 +234,7 @@ func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name s
 			}
 		},
 		"feedConfigured": feedConfigured,
+		"sub":            func(a, b int) int { return a - b },
 	}
 	tmpl := template.Must(template.New("history").Funcs(funcMap).Parse(historyTmpl))
 
@@ -177,8 +246,9 @@ func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name s
 			for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
 				records[i], records[j] = records[j], records[i]
 			}
+			rows := groupHistoryRows(records)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if err := tmpl.Execute(w, records); err != nil {
+			if err := tmpl.Execute(w, rows); err != nil {
 				log.WithError(err).Error("Failed to render history template")
 			}
 		})

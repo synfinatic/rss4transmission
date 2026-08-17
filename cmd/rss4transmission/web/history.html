@@ -77,6 +77,11 @@
         }
         .btn-torrent:hover { background: #08e; }
         .btn-torrent:disabled { background: #444; color: #888; cursor: default; }
+
+        .group-toggle { cursor: pointer; color: #888; user-select: none; display: inline-block; width: 1em; }
+        .group-badge { color: #666; font-size: 0.82em; }
+        tr.group-child td { background: #202020; }
+        tr.group-child td:nth-child(2) { padding-left: 1.8em; }
     </style>
 </head>
 <body>
@@ -134,9 +139,11 @@
         </thead>
         <tbody id="rows">
             {{ range . }}
-            <tr data-feed="{{ .Feed }}" data-outcome="{{ .Outcome }}" data-labels="{{ range $k, $v := .Labels }}{{ $k }}={{ $v }} {{ end }}">
+            <tr data-guid="{{ .GUID }}" data-feed="{{ .Feed }}" data-outcome="{{ .Outcome }}" data-labels="{{ range $k, $v := .Labels }}{{ $k }}={{ $v }} {{ end }}"{{ if not .IsPrimary }} class="group-child" style="display:none"{{ end }}>
                 <td>{{ .ProcessedAt.Format "2006-01-02 15:04:05.000" }}</td>
-                <td>{{ .Feed }}</td>
+                <td>
+                    {{ if and .IsPrimary (gt .GroupSize 1) }}<span class="group-toggle" data-guid="{{ .GUID }}">&#9656;</span> {{ end }}{{ .Feed }}{{ if and .IsPrimary (gt .GroupSize 1) }} <span class="group-badge">+{{ sub .GroupSize 1 }}</span>{{ end }}
+                </td>
                 <td>
                     {{ if .GUID }}<a href="{{ .GUID }}" target="_blank" rel="noopener">{{ .Title }}</a>{{ else }}{{ .Title }}{{ end }}
                     {{ if .Labels }}<div class="labels">{{ range $k, $v := .Labels }}{{ $k }}={{ $v }} {{ end }}</div>{{ end }}
@@ -164,6 +171,19 @@
         var resetBtn = document.getElementById('reset');
         var rows     = Array.from(document.querySelectorAll('#rows tr'));
 
+        // GUIDs of groups the user has manually expanded (or that were
+        // auto-expanded because a filter matched one of their hidden child
+        // rows — see apply() below). Reset on page load/reload.
+        var expandedGroups = new Set();
+
+        function isChild(row) { return row.classList.contains('group-child'); }
+
+        function syncToggleGlyphs() {
+            Array.from(document.querySelectorAll('.group-toggle')).forEach(function (t) {
+                t.textContent = expandedGroups.has(t.dataset.guid) ? '▾' : '▸';
+            });
+        }
+
         // Populate feed dropdown from rendered data.
         var feeds = Array.from(new Set(rows.map(function (r) { return r.dataset.feed; }).filter(Boolean))).sort();
         feeds.forEach(function (f) {
@@ -186,6 +206,23 @@
             outcomeCheckboxes().forEach(function (cb) { cb.checked = enabled.has(cb.value); });
         }
 
+        function computeShow(row, feed, checked, labelPairs) {
+            var show = true;
+
+            if (feed && row.dataset.feed !== feed) show = false;
+
+            if (show && !checked.has(row.dataset.outcome)) show = false;
+
+            if (show && labelPairs.length > 0) {
+                var rl = row.dataset.labels || '';
+                for (var i = 0; i < labelPairs.length; i++) {
+                    if (rl.indexOf(labelPairs[i]) === -1) { show = false; break; }
+                }
+            }
+
+            return show;
+        }
+
         function apply() {
             var feed       = feedSel.value;
             var labelText  = labelIn.value.trim();
@@ -193,24 +230,26 @@
             var checked    = new Set();
             outcomeCheckboxes().forEach(function (cb) { if (cb.checked) checked.add(cb.value); });
 
+            var rawShow = rows.map(function (row) { return computeShow(row, feed, checked, labelPairs); });
+
+            // A filter can match a row that's collapsed by default (a
+            // "no group matched labels" record hiding under a different
+            // feed's primary row, e.g. filtering Feed=WSBK when the BSB
+            // feed's dispatched record is the group's primary). Auto-expand
+            // its group so the matching row is still reachable instead of
+            // silently vanishing.
+            rows.forEach(function (row, i) {
+                if (rawShow[i] && isChild(row)) expandedGroups.add(row.dataset.guid);
+            });
+
             var visible = 0;
-            rows.forEach(function (row) {
-                var show = true;
-
-                if (feed && row.dataset.feed !== feed) show = false;
-
-                if (show && !checked.has(row.dataset.outcome)) show = false;
-
-                if (show && labelPairs.length > 0) {
-                    var rl = row.dataset.labels || '';
-                    for (var i = 0; i < labelPairs.length; i++) {
-                        if (rl.indexOf(labelPairs[i]) === -1) { show = false; break; }
-                    }
-                }
-
+            rows.forEach(function (row, i) {
+                var show = rawShow[i] && (!isChild(row) || expandedGroups.has(row.dataset.guid));
                 row.style.display = show ? '' : 'none';
                 if (show) visible++;
             });
+
+            syncToggleGlyphs();
 
             // Update URL params so the 60-second meta-refresh preserves state.
             var p = new URLSearchParams();
@@ -241,6 +280,14 @@
 
         var rowsEl = document.getElementById('rows');
         rowsEl.addEventListener('click', function (e) {
+            var toggle = e.target.closest('.group-toggle');
+            if (toggle) {
+                var guid = toggle.dataset.guid;
+                if (expandedGroups.has(guid)) expandedGroups.delete(guid); else expandedGroups.add(guid);
+                apply();
+                return;
+            }
+
             var btn = e.target.closest('.btn-torrent');
             if (!btn) return;
 
