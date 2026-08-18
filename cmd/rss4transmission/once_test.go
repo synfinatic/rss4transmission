@@ -283,6 +283,171 @@ func TestProcessFeed_ExcludedItemsRecordExtractedTitleLabels(t *testing.T) {
 		"excluded records should carry title-extracted labels, same as skipped/dispatched records")
 }
 
+// realMotoGPExtractor mirrors the production "motogp" Extractor's Regexp
+// patterns closely enough to reproduce the extraction quirks real release
+// titles hit (e.g. multiple sibling feeds extracting an identical "class"
+// value from one shared RSS item's title).
+func realMotoGPExtractor() *ExtractorSet {
+	return &ExtractorSet{Labels: map[string]LabelDef{
+		"network": {
+			Regexp: `(?i)\.(TNT\.|Pack\.TNT|Eurosport|ITV4|ZiggoSport|WEB(?:-Rip)?)`,
+		},
+		"resolution": {
+			Regexp: `(?i)(2160p|1080p|720p|540p|400p)`,
+		},
+		"year": {
+			Regexp: `\.(20\d{2})\.`,
+		},
+		"round": {
+			Regexp: `(?i)\.(?:Round|20\d\dx)(\d{1,2}|\w)\.`,
+		},
+		"language": {
+			Regexp:  `(?i)(?:H\.?264|H\.?265|X\.?264|HEVC|AVC)(?:\.[^.]+)*\.(English|German|French|Italian|Spanish|Portuguese|Dutch|Polish|Czech|Hungarian|Multi)(?:[.\-]|$)`,
+			Default: "English",
+		},
+		"class": {
+			Regexp: `(?i)(Moto[23]|MotoGP)`,
+		},
+		"session": {
+			Regexp:  `(?i)\.(Sprint(?:\.?Race)?|Qual\w*|FP[12]?|(?:Free\.?)?Practice|Race|Full\.Event|All\.Day|Warm\.Up)\.`,
+			Default: "Race",
+		},
+	}}
+}
+
+// realMotoGPFeeds mirrors the production MotoGP/Moto2/Moto3 Feed definitions
+// (Exclude + Groups.Require only — no URL/DownloadPath), which share one RSS
+// URL and one Extractor in production.
+func realMotoGPFeeds() []Feed {
+	sharedExclude := []string{
+		`(?i).*Final.5.*`,
+		`(?i).*Highlights.*`,
+		`(?i).*Samsung\.?TV.*`,
+	}
+	return []Feed{
+		{
+			Name:      "MotoGP",
+			Extractor: "motogp",
+			Identity:  []string{"network", "year", "round", "session", "language", "class"},
+			Exclude:   sharedExclude,
+			Groups: []Group{{Require: map[string][]string{
+				"class": {"MotoGP"}, "session": {"Race", "Sprint", "Qualifying", "FP1", "FP", "FP2"},
+				"language": {"English"}, "year": {"2026"}, "network": {"TNT", "WEB"}, "resolution": {"1080p"},
+			}}},
+		},
+		{
+			Name:      "Moto2",
+			Extractor: "motogp",
+			Identity:  []string{"network", "year", "round", "session", "language", "class"},
+			Exclude:   sharedExclude,
+			Groups: []Group{{Require: map[string][]string{
+				"class": {"Moto2"}, "session": {"Race", "Qualifying"},
+				"language": {"English"}, "year": {"2026"}, "network": {"TNT", "WEB"}, "resolution": {"1080p"},
+			}}},
+		},
+		{
+			Name:      "Moto3",
+			Extractor: "motogp",
+			Identity:  []string{"network", "year", "round", "session", "language", "class"},
+			Exclude:   sharedExclude,
+			Groups: []Group{{Require: map[string][]string{
+				"class": {"Moto3"}, "session": {"Race", "Qualifying"},
+				"language": {"English"}, "year": {"2026"}, "network": {"TNT", "WEB"}, "resolution": {"1080p"},
+			}}},
+		},
+	}
+}
+
+func TestRealMotoGPFeeds_ExcludedHighlightsShowsLabelsAndMotoGPWinsPrimary(t *testing.T) {
+	extractor := realMotoGPExtractor()
+	feeds := realMotoGPFeeds()
+	rss := &gofeed.Feed{Items: []*gofeed.Item{
+		{Title: "MotoGP.All.Classes.2026.Round06.Great.Britain.Race.Highlights.WEB.1080p.H264.English", GUID: "guid-highlights"},
+	}}
+
+	ctx := &RunContext{Cache: emptyCache(), History: &HistoryFile{guidIndex: map[string]int{}}}
+	cmd := &OnceCmd{}
+	for _, f := range feeds {
+		cmd.processFeed(ctx, f.Name, f, rss, extractor)
+	}
+
+	records := ctx.History.GetRecords()
+	require.Len(t, records, 3)
+	for _, r := range records {
+		assert.Equal(t, "excluded", r.Outcome)
+		assert.Equal(t, "matched exclude filter", r.Reason)
+		assert.Equal(t, "MotoGP", r.Labels["class"],
+			"excluded records must carry extracted labels for the group tie-break to use")
+	}
+
+	feedGroups := func(name string) []Group {
+		for _, f := range feeds {
+			if f.Name == name {
+				return f.Groups
+			}
+		}
+		return nil
+	}
+	rows := groupHistoryRows(records, feedGroups)
+	require.Len(t, rows, 3)
+	assert.True(t, rows[0].IsPrimary)
+	assert.Equal(t, "MotoGP", rows[0].Feed,
+		"MotoGP's own Require is the only one satisfied by class=MotoGP, so it must win primary "+
+			"over its Moto2/Moto3 siblings despite the shared Extractor giving them the same label")
+}
+
+func TestRealMotoGPFeeds_DispatchedSiblingSuppressesReprocessingAfterHistoryReset(t *testing.T) {
+	extractor := realMotoGPExtractor()
+	feeds := realMotoGPFeeds()
+	rss := &gofeed.Feed{Items: []*gofeed.Item{
+		{Title: "Moto3.2026.Round12.Great.Britain.Race.WEB.1080p.X264.English", GUID: "guid-moto3-race"},
+	}}
+	cache := emptyCache()
+
+	// Run 1: Moto3's own Group matches this item (it's genuinely Moto3
+	// content), so it wins selection. cmd.Skip populates the cache exactly
+	// like a real dispatch would, without needing a Transmission mock.
+	run1 := &RunContext{Cache: cache, History: &HistoryFile{guidIndex: map[string]int{}}}
+	skipCmd := &OnceCmd{Skip: true}
+	for _, f := range feeds {
+		skipCmd.processFeed(run1, f.Name, f, rss, extractor)
+	}
+	run1Records := run1.History.GetRecords()
+	require.Len(t, run1Records, 3, "all three siblings should evaluate the item on a first run")
+
+	// Run 2: same cache (as if only the history file, not the seen-cache, was
+	// deleted and the process restarted), fresh empty history.
+	run2 := &RunContext{Cache: cache, History: &HistoryFile{guidIndex: map[string]int{}}}
+	noopCmd := &OnceCmd{}
+	for _, f := range feeds {
+		noopCmd.processFeed(run2, f.Name, f, rss, extractor)
+	}
+
+	run2Records := run2.History.GetRecords()
+	require.Len(t, run2Records, 2,
+		"Moto3 already exists in the cache from run 1 and must be silently skipped in Phase 1, "+
+			"leaving only Moto2 and MotoGP to re-record 'no group matched labels' every run")
+	for _, r := range run2Records {
+		assert.NotEqual(t, "Moto3", r.Feed)
+		assert.Equal(t, skipReasonNoGroupMatched, r.Reason)
+	}
+
+	feedGroups := func(name string) []Group {
+		for _, f := range feeds {
+			if f.Name == name {
+				return f.Groups
+			}
+		}
+		return nil
+	}
+	rows := groupHistoryRows(run2Records, feedGroups)
+	require.Len(t, rows, 2)
+	assert.True(t, rows[0].IsPrimary)
+	assert.Equal(t, "Moto2", rows[0].Feed,
+		"with Moto3's record missing, Moto2 and MotoGP both score 0 (their own Require is contradicted "+
+			"by class=Moto3, not merely silent on it), so the tie falls back to alphabetical order")
+}
+
 // --- dispatch stop-processing semantics ---
 
 // fakeTransmissionServer emulates just enough of Transmission's RPC protocol
