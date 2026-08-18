@@ -60,11 +60,17 @@
         a { color: inherit; text-decoration: none; }
         a:hover { text-decoration: underline; }
         .labels { font-size: 0.82em; color: #666; margin-top: 3px; }
-        th:nth-child(1), td:nth-child(1) { width: 14em; white-space: nowrap; }
+        th:nth-child(1), td:nth-child(1) { width: 10em; white-space: nowrap; }
         th:nth-child(2), td:nth-child(2) { width: 9em; }
         th:nth-child(4), td:nth-child(4) { width: 8em; }
         th:nth-child(5), td:nth-child(5) { width: 18em; }
         th:nth-child(6), td:nth-child(6) { width: 7em; }
+
+        td.action {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5em;
+        }
 
         .btn-torrent, .btn-forget {
             color: #fff;
@@ -92,7 +98,6 @@
         .btn-forget {
             background: #3a3a3a;
             color: #ccc;
-            margin-left: 0.6em;
         }
         .btn-forget:hover:not(:disabled) { background: #4d4d4d; color: #fff; }
 
@@ -160,7 +165,7 @@
         <tbody id="rows">
             {{ range . }}
             <tr data-guid="{{ .GUID }}" data-feed="{{ .Feed }}" data-outcome="{{ .Outcome }}" data-labels="{{ range $k, $v := .Labels }}{{ $k }}={{ $v }} {{ end }}"{{ if not .IsPrimary }} class="group-child" style="display:none"{{ end }}>
-                <td>{{ .ProcessedAt.Format "2006-01-02 15:04:05.000" }}</td>
+                <td>{{ .ProcessedAt.Format "2006-01-02 15:04" }}</td>
                 <td>
                     {{ if and .IsPrimary (gt .GroupSize 1) }}<span class="group-toggle" data-guid="{{ .GUID }}">&#9656;</span> {{ end }}{{ .Feed }}{{ if and .IsPrimary (gt .GroupSize 1) }} <span class="group-badge">+{{ sub .GroupSize 1 }}</span>{{ end }}
                 </td>
