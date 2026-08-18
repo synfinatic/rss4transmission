@@ -255,6 +255,34 @@ func TestDispatch_Skip_RecordsFileDerivedLabelsInHistory(t *testing.T) {
 		"history record should include the file-derived resolution label, matching what was cached")
 }
 
+// --- processFeed excluded-item labeling ---
+
+func TestProcessFeed_ExcludedItemsRecordExtractedTitleLabels(t *testing.T) {
+	extractor := &ExtractorSet{Labels: map[string]LabelDef{
+		"series": {Regexp: `(?i)(MotoGP|Moto2|Moto3)`},
+	}}
+	feedCfg := Feed{
+		Name:    "testfeed",
+		Exclude: []string{"Highlights"},
+	}
+	rss := &gofeed.Feed{Items: []*gofeed.Item{
+		{Title: "MotoGP.Round06.Highlights", GUID: "guid1"},
+	}}
+
+	ctx := &RunContext{
+		Cache:   emptyCache(),
+		History: &HistoryFile{guidIndex: map[string]int{}},
+	}
+	cmd := &OnceCmd{}
+	cmd.processFeed(ctx, "testfeed", feedCfg, rss, extractor)
+
+	records := ctx.History.GetRecords()
+	require.Len(t, records, 1)
+	assert.Equal(t, "excluded", records[0].Outcome)
+	assert.Equal(t, "MotoGP", records[0].Labels["series"],
+		"excluded records should carry title-extracted labels, same as skipped/dispatched records")
+}
+
 // --- dispatch stop-processing semantics ---
 
 // fakeTransmissionServer emulates just enough of Transmission's RPC protocol

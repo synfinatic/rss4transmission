@@ -170,21 +170,27 @@ func (cmd *OnceCmd) feedAllowed(feedName string) bool {
 // should stop processing further feeds this run — either a torrent was
 // dispatched/downloaded, or the user selected Quit interactively.
 func (cmd *OnceCmd) processFeed(ctx *RunContext, feedName string, feedCfg Feed, rss *gofeed.Feed, extractor *ExtractorSet) bool {
-	// Phase 1: Pre-filter candidates via Exclude + size, then extract title labels.
+	// Phase 1: Extract title labels for every item, then pre-filter candidates via
+	// Exclude + size. Labels are extracted before the Check() filter runs so that
+	// excluded items still carry their labels into history — matching what
+	// skipped/dispatched records show, and giving the history page's group
+	// primary-row tie-break (bestGroupScore) evidence to work with even when every
+	// sibling feed excludes the same item.
 	var candidates []*candidate
 	for _, item := range rss.Items {
 		fi := &FeedItem{Feed: feedName, Item: item}
 		if ctx.Cache.Exists(feedName, fi) {
 			continue
 		}
+		titleLabels := extractor.ExtractLabels(item.Title)
 		ok, reason := feedCfg.Check(item)
 		if !ok {
-			ctx.recordHistory(feedName, item, "excluded", reason, nil)
+			ctx.recordHistory(feedName, item, "excluded", reason, titleLabels)
 			continue
 		}
 		candidates = append(candidates, &candidate{
 			item:        fi,
-			titleLabels: extractor.ExtractLabels(item.Title),
+			titleLabels: titleLabels,
 			defaults:    extractor.Defaults(),
 		})
 	}
