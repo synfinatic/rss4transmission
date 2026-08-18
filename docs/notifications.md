@@ -282,6 +282,15 @@ config — it's hidden or fails with an error otherwise — and disappears once 
 successfully torrented. The action lives at `POST /torrent`, served only alongside the history
 page (`--private-listen`); it is never reachable on `--public-listen`.
 
+Every row also shows a **Forget** button, which removes that item's `(feed, guid)` pair from
+both the seen cache and the history page. Use it to retest a config change — for example after
+loosening a `Group.Require` or fixing an `Exclude` regex — without hand-editing `cache.json`.
+Unlike Torrent, Forget is available for every outcome, including `dispatched`, since you may
+deliberately want to allow a re-download. On success the row disappears from the history page;
+the change is persisted to `cache.json` and `history.json` on the next scheduled run. The action
+lives at `POST /forget`, served only alongside the history page (`--private-listen`); it is never
+reachable on `--public-listen`.
+
 In Docker:
 
 ```yaml
@@ -297,6 +306,7 @@ environment:
 |---|---|---|---|
 | `/` (history page) | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
 | `/torrent` | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
+| `/forget` | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
 | `/cancel` | ✓ | — | ✓ |
 | `/notify-complete` | ✓ | — | ✓ |
 | `/healthz` | ✓ | ✓ | ✓ |

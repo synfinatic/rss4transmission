@@ -283,6 +283,37 @@ func TestProcessFeed_ExcludedItemsRecordExtractedTitleLabels(t *testing.T) {
 		"excluded records should carry title-extracted labels, same as skipped/dispatched records")
 }
 
+// Regression: excluded items were never added to the seen cache, so an item
+// that stays in the RSS feed (e.g. a perpetual "Highlights" upload) got
+// re-evaluated and re-recorded to history on every single run. That's
+// invisible when history.json persists (AddOrUpdateRecord dedupes by GUID
+// against records already on disk), but floods history.json with the
+// feed's entire non-actionable backlog the moment history starts empty
+// (deleted file, or a fresh restart with no prior history).
+func TestProcessFeed_ExcludedItems_CachedSoSecondRunDoesNotReRecord(t *testing.T) {
+	extractor := &ExtractorSet{Labels: map[string]LabelDef{
+		"series": {Regexp: `(?i)(MotoGP|Moto2|Moto3)`},
+	}}
+	feedCfg := Feed{
+		Name:    "testfeed",
+		Exclude: []string{"Highlights"},
+	}
+	rss := &gofeed.Feed{Items: []*gofeed.Item{
+		{Title: "MotoGP.Round06.Highlights", GUID: "guid1"},
+	}}
+	cache := emptyCache()
+
+	run1 := &RunContext{Cache: cache, History: &HistoryFile{guidIndex: map[string]int{}}}
+	cmd := &OnceCmd{}
+	cmd.processFeed(run1, "testfeed", feedCfg, rss, extractor)
+	require.Len(t, run1.History.GetRecords(), 1, "first run should record the excluded item")
+
+	run2 := &RunContext{Cache: cache, History: &HistoryFile{guidIndex: map[string]int{}}}
+	cmd.processFeed(run2, "testfeed", feedCfg, rss, extractor)
+	assert.Empty(t, run2.History.GetRecords(),
+		"excluded items must be cached in run 1 so a fresh/empty history in run 2 doesn't re-record them")
+}
+
 // realMotoGPExtractor mirrors the production "motogp" Extractor's Regexp
 // patterns closely enough to reproduce the extraction quirks real release
 // titles hit (e.g. multiple sibling feeds extracting an identical "class"
@@ -396,7 +427,34 @@ func TestRealMotoGPFeeds_ExcludedHighlightsShowsLabelsAndMotoGPWinsPrimary(t *te
 			"over its Moto2/Moto3 siblings despite the shared Extractor giving them the same label")
 }
 
-func TestRealMotoGPFeeds_DispatchedSiblingSuppressesReprocessingAfterHistoryReset(t *testing.T) {
+// Regression: Phase-3 skipped candidates were only cached when the reason was
+// skipReasonCacheBetter, so a candidate skipped for "no group matched labels"
+// (this feed's config simply never applies to this content) got re-evaluated
+// and re-recorded to history on every run, same root cause as the Phase-1
+// excluded-item bug above.
+func TestProcessFeed_NoGroupMatched_CachedSoSecondRunDoesNotReRecord(t *testing.T) {
+	extractor := realMotoGPExtractor()
+	feeds := realMotoGPFeeds()
+	motoGP := feeds[0] // Require class=MotoGP; this item is Moto3 content, so it never matches.
+	rss := &gofeed.Feed{Items: []*gofeed.Item{
+		{Title: "Moto3.2026.Round12.Great.Britain.Race.WEB.1080p.X264.English", GUID: "guid-moto3-race"},
+	}}
+	cache := emptyCache()
+
+	run1 := &RunContext{Cache: cache, History: &HistoryFile{guidIndex: map[string]int{}}}
+	cmd := &OnceCmd{}
+	cmd.processFeed(run1, motoGP.Name, motoGP, rss, extractor)
+	run1Records := run1.History.GetRecords()
+	require.Len(t, run1Records, 1)
+	assert.Equal(t, skipReasonNoGroupMatched, run1Records[0].Reason)
+
+	run2 := &RunContext{Cache: cache, History: &HistoryFile{guidIndex: map[string]int{}}}
+	cmd.processFeed(run2, motoGP.Name, motoGP, rss, extractor)
+	assert.Empty(t, run2.History.GetRecords(),
+		"no-group-matched candidates must be cached in run 1 so a fresh/empty history in run 2 doesn't re-record them")
+}
+
+func TestRealMotoGPFeeds_AllSiblingsSuppressReprocessingAfterHistoryReset(t *testing.T) {
 	extractor := realMotoGPExtractor()
 	feeds := realMotoGPFeeds()
 	rss := &gofeed.Feed{Items: []*gofeed.Item{
@@ -406,7 +464,10 @@ func TestRealMotoGPFeeds_DispatchedSiblingSuppressesReprocessingAfterHistoryRese
 
 	// Run 1: Moto3's own Group matches this item (it's genuinely Moto3
 	// content), so it wins selection. cmd.Skip populates the cache exactly
-	// like a real dispatch would, without needing a Transmission mock.
+	// like a real dispatch would, without needing a Transmission mock. Moto2
+	// and MotoGP evaluate the same item but never match their own Group, so
+	// they're skipped for skipReasonNoGroupMatched — which is now cached too
+	// (markSkippedSeen caches every skip reason, not just cache-rejected).
 	run1 := &RunContext{Cache: cache, History: &HistoryFile{guidIndex: map[string]int{}}}
 	skipCmd := &OnceCmd{Skip: true}
 	for _, f := range feeds {
@@ -416,36 +477,20 @@ func TestRealMotoGPFeeds_DispatchedSiblingSuppressesReprocessingAfterHistoryRese
 	require.Len(t, run1Records, 3, "all three siblings should evaluate the item on a first run")
 
 	// Run 2: same cache (as if only the history file, not the seen-cache, was
-	// deleted and the process restarted), fresh empty history.
+	// deleted and the process restarted), fresh empty history. All three
+	// siblings' GUIDs are already cached from run 1 (Moto3 as dispatched,
+	// Moto2/MotoGP as no-group-matched), so Exists() short-circuits Phase 1
+	// for all of them and nothing gets re-recorded — this is the fix for the
+	// "delete history.json and restart floods the page" bug.
 	run2 := &RunContext{Cache: cache, History: &HistoryFile{guidIndex: map[string]int{}}}
 	noopCmd := &OnceCmd{}
 	for _, f := range feeds {
 		noopCmd.processFeed(run2, f.Name, f, rss, extractor)
 	}
 
-	run2Records := run2.History.GetRecords()
-	require.Len(t, run2Records, 2,
-		"Moto3 already exists in the cache from run 1 and must be silently skipped in Phase 1, "+
-			"leaving only Moto2 and MotoGP to re-record 'no group matched labels' every run")
-	for _, r := range run2Records {
-		assert.NotEqual(t, "Moto3", r.Feed)
-		assert.Equal(t, skipReasonNoGroupMatched, r.Reason)
-	}
-
-	feedGroups := func(name string) []Group {
-		for _, f := range feeds {
-			if f.Name == name {
-				return f.Groups
-			}
-		}
-		return nil
-	}
-	rows := groupHistoryRows(run2Records, feedGroups)
-	require.Len(t, rows, 2)
-	assert.True(t, rows[0].IsPrimary)
-	assert.Equal(t, "Moto2", rows[0].Feed,
-		"with Moto3's record missing, Moto2 and MotoGP both score 0 (their own Require is contradicted "+
-			"by class=Moto3, not merely silent on it), so the tie falls back to alphabetical order")
+	assert.Empty(t, run2.History.GetRecords(),
+		"every sibling's verdict from run 1 must be cached, so a fresh/empty history in run 2 "+
+			"re-records nothing for content that was already fully evaluated")
 }
 
 // --- dispatch stop-processing semantics ---
@@ -960,9 +1005,9 @@ func TestEnsureTorrentBytes_FetchesWhenEmpty(t *testing.T) {
 	}
 }
 
-// --- markCacheRejectedSeen ---
+// --- markSkippedSeen ---
 
-func TestMarkCacheRejectedSeen_AddsCacheRejected(t *testing.T) {
+func TestMarkSkippedSeen_AddsCacheRejected(t *testing.T) {
 	c := makeCandidate("guid-rej",
 		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
 		nil,
@@ -976,14 +1021,18 @@ func TestMarkCacheRejectedSeen_AddsCacheRejected(t *testing.T) {
 	skipped := []skippedCandidate{
 		{cand: c, reason: skipReasonCacheBetter},
 	}
-	markCacheRejectedSeen(skipped, cache)
+	markSkippedSeen(skipped, cache)
 
 	if !cache.Exists("testfeed", c.item) {
-		t.Error("expected GUID to be in Seen after markCacheRejectedSeen")
+		t.Error("expected GUID to be in Seen after markSkippedSeen")
 	}
 }
 
-func TestMarkCacheRejectedSeen_IgnoresOtherReasons(t *testing.T) {
+// Regression: every skip reason must be cached, not just cache-rejected —
+// otherwise items skipped for "no group matched labels" or "outranked" get
+// re-evaluated and re-recorded to history forever (see
+// TestProcessFeed_NoGroupMatched_CachedSoSecondRunDoesNotReRecord).
+func TestMarkSkippedSeen_AddsAllReasons(t *testing.T) {
 	c := makeCandidate("guid-other",
 		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
 		nil,
@@ -998,10 +1047,10 @@ func TestMarkCacheRejectedSeen_IgnoresOtherReasons(t *testing.T) {
 		{cand: c, reason: "no group matched labels"},
 		{cand: c, reason: "outranked by better candidate in this run"},
 	}
-	markCacheRejectedSeen(skipped, cache)
+	markSkippedSeen(skipped, cache)
 
-	if len(cache.Seen) != 0 {
-		t.Errorf("expected no Seen entries for non-cache-rejection reasons, got %d", len(cache.Seen))
+	if len(cache.Seen) != 2 {
+		t.Errorf("expected a Seen entry for every skipped candidate regardless of reason, got %d", len(cache.Seen))
 	}
 }
 

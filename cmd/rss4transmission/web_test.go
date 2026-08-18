@@ -23,7 +23,7 @@ import (
 // --- /healthz ---
 
 func TestHealthzHandler(t *testing.T) {
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -78,7 +78,7 @@ func TestGetCancelHandler_RendersForm(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	req := httptest.NewRequest("GET",
@@ -103,7 +103,7 @@ func TestGetCancelHandler_RendersProgress(t *testing.T) {
 	// 2.5 GiB downloaded, 25% done
 	getProgress := makeProgressFunc(int64(2.5*float64(1<<30)), 0.25)
 
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), getProgress, nil)
 
 	req := httptest.NewRequest("GET",
@@ -128,7 +128,7 @@ func TestGetCancelHandler_ProgressUnknownOnError(t *testing.T) {
 		return 0, 0, fmt.Errorf("transmission unavailable")
 	}
 
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), errProgress, nil)
 
 	req := httptest.NewRequest("GET",
@@ -143,7 +143,7 @@ func TestGetCancelHandler_ProgressUnknownOnError(t *testing.T) {
 func TestGetCancelHandler_MissingParams(t *testing.T) {
 	store := NewStore(time.Hour)
 	cfg := makeCancelCfg("secret", "https://example.com")
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	req := httptest.NewRequest("GET", "/cancel?id=test-id", nil)
@@ -159,7 +159,7 @@ func TestGetCancelHandler_BadSignature(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, _ := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	req := httptest.NewRequest("GET",
@@ -176,7 +176,7 @@ func TestGetCancelHandler_Expired(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "test-id", -time.Second)
 
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	req := httptest.NewRequest("GET",
@@ -192,7 +192,7 @@ func TestGetCancelHandler_NotFound(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "ghost-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	req := httptest.NewRequest("GET",
@@ -210,7 +210,7 @@ func TestGetCancelHandler_DoesNotConsumeEntry(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	removed := false
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(&removed), noProgressFunc(), nil)
 
@@ -237,7 +237,7 @@ func TestPostCancelHandler_Valid(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
 	removed := false
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(&removed), noProgressFunc(), nil)
 
 	body := makeCancelFormBody("test-id", expires, sig)
@@ -253,7 +253,7 @@ func TestPostCancelHandler_Valid(t *testing.T) {
 func TestPostCancelHandler_MissingParams(t *testing.T) {
 	store := NewStore(time.Hour)
 	cfg := makeCancelCfg("secret", "https://example.com")
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	body := strings.NewReader("id=test-id") // missing expires and sig
@@ -271,7 +271,7 @@ func TestPostCancelHandler_BadSignature(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, _ := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	body := makeCancelFormBody("test-id", expires, "badsig")
@@ -289,7 +289,7 @@ func TestPostCancelHandler_Expired(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "test-id", -time.Second)
 
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	body := makeCancelFormBody("test-id", expires, sig)
@@ -306,7 +306,7 @@ func TestPostCancelHandler_NotFound(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "ghost-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	body := makeCancelFormBody("ghost-id", expires, sig)
@@ -387,7 +387,7 @@ func TestPostCancelHandler_RemoveErrorPreservesStoreEntry(t *testing.T) {
 	failRemove := func(_ context.Context, _ []int64) error {
 		return fmt.Errorf("transmission unreachable")
 	}
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, failRemove, noProgressFunc(), nil)
 
 	body := makeCancelFormBody("test-id", expires, sig)
@@ -408,7 +408,7 @@ func TestGetCancelHandler_ZeroBytesProgressBothUnknown(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
 	// brand-new torrent: 0 bytes downloaded, 0% done
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), makeProgressFunc(0, 0.0), nil)
 
 	req := httptest.NewRequest("GET",
@@ -458,7 +458,7 @@ func TestHistoryPage_RendersTorrentButtonForSkippedWithURL(t *testing.T) {
 		"skipped", "lost preference contest", nil)
 	h.AddOrUpdateRecord(rec)
 
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -470,12 +470,49 @@ func TestHistoryPage_RendersTorrentButtonForSkippedWithURL(t *testing.T) {
 	assert.Contains(t, body, `data-guid="guid-1"`)
 }
 
+func TestHistoryPage_RendersForgetButtonForSkipped(t *testing.T) {
+	h := emptyHistory()
+	rec := NewHistoryRecord("myfeed",
+		makeGofeedItemWithEnclosure("My Title", "guid-1", "https://example.com/my.torrent"),
+		"skipped", "lost preference contest", nil)
+	h.AddOrUpdateRecord(rec)
+
+	mux := newWebMux(h, nil, nil, nil, makeForgetFunc(new(bool), nil, nil, true, nil))
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, `class="btn-forget"`)
+	assert.Contains(t, body, `data-feed="myfeed"`)
+	assert.Contains(t, body, `data-guid="guid-1"`)
+}
+
+func TestHistoryPage_RendersForgetButtonForDispatched(t *testing.T) {
+	h := emptyHistory()
+	rec := NewHistoryRecord("myfeed",
+		makeGofeedItemWithEnclosure("Already Dispatched", "guid-3", "https://example.com/my.torrent"),
+		"dispatched", "", nil)
+	h.AddOrUpdateRecord(rec)
+
+	// Unlike Torrent, Forget makes sense for dispatched/downloaded items too —
+	// a user may deliberately want to allow a re-download.
+	mux := newWebMux(h, nil, nil, nil, makeForgetFunc(new(bool), nil, nil, true, nil))
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), `class="btn-forget"`)
+}
+
 func TestHistoryPage_NoTorrentButtonWithoutURL(t *testing.T) {
 	h := emptyHistory()
 	rec := NewHistoryRecord("myfeed", makeGofeedItem("No Enclosure", "guid-2"), "excluded", "matched exclude", nil)
 	h.AddOrUpdateRecord(rec)
 
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -491,7 +528,7 @@ func TestHistoryPage_NoTorrentButtonForDispatched(t *testing.T) {
 		"dispatched", "", nil)
 	h.AddOrUpdateRecord(rec)
 
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -509,7 +546,7 @@ func TestHistoryPage_TorrentButtonShownWhenFeedConfiguredNil(t *testing.T) {
 
 	// A nil feedConfigured means "no filter" — button shows unconditionally,
 	// matching every existing caller that doesn't care about live config.
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -526,7 +563,7 @@ func TestHistoryPage_TorrentButtonHiddenWhenFeedNotConfigured(t *testing.T) {
 	h.AddOrUpdateRecord(rec)
 
 	feedConfigured := func(name string) bool { return name == "still-here" }
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), feedConfigured, nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), feedConfigured, nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -544,7 +581,7 @@ func TestHistoryPage_TorrentButtonShownWhenFeedStillConfigured(t *testing.T) {
 	h.AddOrUpdateRecord(rec)
 
 	feedConfigured := func(name string) bool { return name == "still-here" }
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), feedConfigured, nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), feedConfigured, nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -781,7 +818,7 @@ func TestHistoryPage_GroupsRecordsSharingGUID(t *testing.T) {
 		makeGofeedItemWithEnclosure("BSB Title", "guid-1", "https://example.com/bsb.torrent"),
 		"skipped", "no group matched labels", nil))
 
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -822,7 +859,7 @@ func TestHistoryPage_FeedGroupsBreaksNoGroupMatchedTie(t *testing.T) {
 		return nil
 	}
 
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, feedGroups)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, feedGroups, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -844,7 +881,7 @@ func TestHistoryPage_UniqueGUIDRendersUngrouped(t *testing.T) {
 	h := emptyHistory()
 	h.AddOrUpdateRecord(NewHistoryRecord("myfeed", makeGofeedItem("Solo Title", "guid-solo"), "skipped", "excluded by regex", nil))
 
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -881,7 +918,7 @@ func TestPostTorrentHandler_Success(t *testing.T) {
 
 	called := false
 	var gotRec HistoryRecord
-	mux := newWebMux(h, makeRetryFunc(&called, &gotRec, 7, nil), nil, nil)
+	mux := newWebMux(h, makeRetryFunc(&called, &gotRec, 7, nil), nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/torrent", makeTorrentFormBody("myfeed", "guid-1"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -897,7 +934,7 @@ func TestPostTorrentHandler_Success(t *testing.T) {
 func TestPostTorrentHandler_UnknownRecord(t *testing.T) {
 	h := emptyHistory()
 	called := false
-	mux := newWebMux(h, makeRetryFunc(&called, nil, 0, nil), nil, nil)
+	mux := newWebMux(h, makeRetryFunc(&called, nil, 0, nil), nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/torrent", makeTorrentFormBody("ghost-feed", "ghost-guid"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -914,7 +951,7 @@ func TestPostTorrentHandler_RetryError(t *testing.T) {
 	h.AddOrUpdateRecord(rec)
 
 	called := false
-	mux := newWebMux(h, makeRetryFunc(&called, nil, 0, fmt.Errorf("boom: no torrent URL")), nil, nil)
+	mux := newWebMux(h, makeRetryFunc(&called, nil, 0, fmt.Errorf("boom: no torrent URL")), nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/torrent", makeTorrentFormBody("myfeed", "guid-1"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -931,7 +968,7 @@ func TestPostTorrentHandler_NotRegisteredWhenRetryNil(t *testing.T) {
 	rec := NewHistoryRecord("myfeed", makeGofeedItem("My Title", "guid-1"), "skipped", "", nil)
 	h.AddOrUpdateRecord(rec)
 
-	mux := newWebMux(h, nil, nil, nil)
+	mux := newWebMux(h, nil, nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/torrent", makeTorrentFormBody("myfeed", "guid-1"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -956,6 +993,103 @@ func TestPostTorrentHandler_NotRegisteredOnCancelMux(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
+// --- POST /forget ---
+
+func makeForgetFunc(called *bool, gotFeed, gotGUID *string, ok bool, err error) forgetFunc {
+	return func(feed, guid string) (bool, error) {
+		*called = true
+		if gotFeed != nil {
+			*gotFeed = feed
+		}
+		if gotGUID != nil {
+			*gotGUID = guid
+		}
+		return ok, err
+	}
+}
+
+func TestPostForgetHandler_Success(t *testing.T) {
+	h := emptyHistory()
+	rec := NewHistoryRecord("myfeed", makeGofeedItem("My Title", "guid-1"), "skipped", "", nil)
+	h.AddOrUpdateRecord(rec)
+
+	called := false
+	var gotFeed, gotGUID string
+	mux := newWebMux(h, nil, nil, nil, makeForgetFunc(&called, &gotFeed, &gotGUID, true, nil))
+
+	req := httptest.NewRequest("POST", "/forget", makeTorrentFormBody("myfeed", "guid-1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.True(t, called, "forget should have been invoked")
+	assert.Equal(t, "myfeed", gotFeed)
+	assert.Equal(t, "guid-1", gotGUID)
+}
+
+func TestPostForgetHandler_UnknownRecord(t *testing.T) {
+	h := emptyHistory()
+	called := false
+	mux := newWebMux(h, nil, nil, nil, makeForgetFunc(&called, nil, nil, false, nil))
+
+	req := httptest.NewRequest("POST", "/forget", makeTorrentFormBody("ghost-feed", "ghost-guid"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+	assert.False(t, called, "forget must not be called for an unknown record")
+}
+
+func TestPostForgetHandler_ForgetError(t *testing.T) {
+	h := emptyHistory()
+	rec := NewHistoryRecord("myfeed", makeGofeedItem("My Title", "guid-1"), "skipped", "", nil)
+	h.AddOrUpdateRecord(rec)
+
+	called := false
+	mux := newWebMux(h, nil, nil, nil, makeForgetFunc(&called, nil, nil, false, fmt.Errorf("boom: cache write failed")))
+
+	req := httptest.NewRequest("POST", "/forget", makeTorrentFormBody("myfeed", "guid-1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.True(t, called)
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "boom: cache write failed")
+}
+
+func TestPostForgetHandler_NotRegisteredWhenForgetNil(t *testing.T) {
+	h := emptyHistory()
+	rec := NewHistoryRecord("myfeed", makeGofeedItem("My Title", "guid-1"), "skipped", "", nil)
+	h.AddOrUpdateRecord(rec)
+
+	mux := newWebMux(h, nil, nil, nil, nil)
+
+	req := httptest.NewRequest("POST", "/forget", makeTorrentFormBody("myfeed", "guid-1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	// Go's mux returns 405 (path only registered for GET /) rather than 404 — safe, not a panic.
+	assert.Equal(t, http.StatusMethodNotAllowed, rr.Code,
+		"POST /forget must not be registered when forget is nil")
+}
+
+func TestPostForgetHandler_NotRegisteredOnCancelMux(t *testing.T) {
+	store := NewStore(time.Hour)
+	cfg := makeCancelCfg("secret", "https://example.com")
+	mux := newCancelMux(store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
+
+	req := httptest.NewRequest("POST", "/forget", makeTorrentFormBody("myfeed", "guid-1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
 // --- access log behavioral tests ---
 
 func TestGetCancelHandler_AccessLog_InvalidToken(t *testing.T) {
@@ -964,7 +1098,7 @@ func TestGetCancelHandler_AccessLog_InvalidToken(t *testing.T) {
 	expires, _ := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	req := httptest.NewRequest("GET",
@@ -984,7 +1118,7 @@ func TestGetCancelHandler_AccessLog_MissingParams(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	req := httptest.NewRequest("GET", "/cancel?id=test-id", nil)
@@ -1004,7 +1138,7 @@ func TestGetCancelHandler_AccessLog_Expired(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "test-id", -time.Second)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	req := httptest.NewRequest("GET",
@@ -1025,7 +1159,7 @@ func TestGetCancelHandler_AccessLog_NotFound(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "ghost-id", time.Hour)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	req := httptest.NewRequest("GET",
@@ -1047,7 +1181,7 @@ func TestGetCancelHandler_AccessLog_Success(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	req := httptest.NewRequest("GET",
@@ -1068,7 +1202,7 @@ func TestGetCancelHandler_AccessLog_NilNoOp(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	req := httptest.NewRequest("GET",
@@ -1087,7 +1221,7 @@ func TestPostCancelHandler_AccessLog_InvalidToken(t *testing.T) {
 	expires, _ := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	body := makeCancelFormBody("test-id", expires, "badsig")
@@ -1110,7 +1244,7 @@ func TestPostCancelHandler_AccessLog_Expired(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "test-id", -time.Second)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	body := makeCancelFormBody("test-id", expires, sig)
@@ -1132,7 +1266,7 @@ func TestPostCancelHandler_AccessLog_NotFound(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "ghost-id", time.Hour)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	body := makeCancelFormBody("ghost-id", expires, sig)
@@ -1156,7 +1290,7 @@ func TestPostCancelHandler_AccessLog_Success(t *testing.T) {
 
 	lg, buf := makeTestAccessLogger()
 	removed := false
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(&removed), noProgressFunc(), lg)
 
 	body := makeCancelFormBody("test-id", expires, sig)
@@ -1183,7 +1317,7 @@ func TestPostCancelHandler_AccessLog_TransmissionError(t *testing.T) {
 	failRemove2 := func(_ context.Context, _ []int64) error {
 		return fmt.Errorf("transmission unreachable")
 	}
-	mux := newWebMux(nil, nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, failRemove2, noProgressFunc(), lg)
 
 	body := makeCancelFormBody("test-id", expires, sig)

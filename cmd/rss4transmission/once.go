@@ -186,6 +186,7 @@ func (cmd *OnceCmd) processFeed(ctx *RunContext, feedName string, feedCfg Feed, 
 		ok, reason := feedCfg.Check(item)
 		if !ok {
 			ctx.recordHistory(feedName, item, "excluded", reason, titleLabels)
+			ctx.Cache.AddSkippedItem(fi)
 			continue
 		}
 		candidates = append(candidates, &candidate{
@@ -216,7 +217,7 @@ func (cmd *OnceCmd) processFeed(ctx *RunContext, feedName string, feedCfg Feed, 
 
 	// Phase 3: Select highest-preference winner per identity key.
 	winners, skipped := selectWinners(candidates, feedCfg, ctx.Cache)
-	markCacheRejectedSeen(skipped, ctx.Cache)
+	markSkippedSeen(skipped, ctx.Cache)
 	for _, s := range skipped {
 		ctx.recordHistory(feedName, s.cand.item.Item, "skipped", s.reason, s.cand.titleLabels)
 	}
@@ -505,15 +506,16 @@ const skipReasonCacheBetter = "better version already in cache"
 // treats it as the least informative skip reason among siblings in a group.
 const skipReasonNoGroupMatched = "no group matched labels"
 
-// markCacheRejectedSeen adds the GUID of each cache-rejected candidate to the
-// seen cache. On the next run, Exists() catches these GUIDs in Phase 1, before
-// the torrent disk read, eliminating redundant I/O for items that will never
-// be dispatched again.
-func markCacheRejectedSeen(skipped []skippedCandidate, cache *CacheFile) {
+// markSkippedSeen adds the GUID of every skipped candidate to the seen cache,
+// regardless of reason (no group matched, outranked this run, covered by a
+// winner, or cache-rejected). On the next run, Exists() catches these GUIDs in
+// Phase 1, before the torrent disk read or any label/group evaluation,
+// eliminating redundant work for items that will never be dispatched again —
+// and, importantly, keeping history.json from being flooded with the same
+// non-actionable items over and over whenever it starts out empty.
+func markSkippedSeen(skipped []skippedCandidate, cache *CacheFile) {
 	for _, s := range skipped {
-		if s.reason == skipReasonCacheBetter {
-			cache.AddSkippedItem(s.cand.item)
-		}
+		cache.AddSkippedItem(s.cand.item)
 	}
 }
 

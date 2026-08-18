@@ -124,6 +124,72 @@ func TestAddSkippedItem_DoesNotUpdateIdentityIndex(t *testing.T) {
 	}
 }
 
+func TestRemoveEntry_RemovesExisting(t *testing.T) {
+	fi := makeFeedItem("guid-remove")
+	c := &CacheFile{
+		Version:       CACHE_VERSION,
+		Errors:        map[string]int64{},
+		Seen:          []CacheRecord{},
+		identityIndex: map[string][]map[string]string{},
+	}
+	c.AddSkippedItem(fi)
+	c.needSave = false
+
+	removed := c.RemoveEntry("testfeed", "guid-remove")
+
+	if !removed {
+		t.Error("expected RemoveEntry to report true for an existing entry")
+	}
+	if c.Exists("testfeed", fi) {
+		t.Error("expected GUID to no longer be in Seen after RemoveEntry")
+	}
+	if !c.needSave {
+		t.Error("needSave should be true after RemoveEntry")
+	}
+}
+
+func TestRemoveEntry_RebuildsIdentityIndex(t *testing.T) {
+	fi := makeFeedItem("guid-remove-identity")
+	c := &CacheFile{
+		Version:       CACHE_VERSION,
+		Errors:        map[string]int64{},
+		Seen:          []CacheRecord{},
+		identityIndex: map[string][]map[string]string{},
+	}
+	labels := map[string]string{"series": "MotoGP"}
+	c.AddItem(fi, labels, []string{"series=MotoGP"})
+
+	c.RemoveEntry("testfeed", "guid-remove-identity")
+
+	if _, ok := c.identityIndex["series=MotoGP"]; ok {
+		t.Errorf("expected identityIndex to no longer contain the removed entry's key, got %v", c.identityIndex)
+	}
+}
+
+func TestRemoveEntry_UnknownPair_NoOp(t *testing.T) {
+	fi := makeFeedItem("guid-keep")
+	c := &CacheFile{
+		Version:       CACHE_VERSION,
+		Errors:        map[string]int64{},
+		Seen:          []CacheRecord{},
+		identityIndex: map[string][]map[string]string{},
+	}
+	c.AddSkippedItem(fi)
+	c.needSave = false
+
+	removed := c.RemoveEntry("testfeed", "guid-does-not-exist")
+
+	if removed {
+		t.Error("expected RemoveEntry to report false for an unknown (feed, guid) pair")
+	}
+	if len(c.Seen) != 1 {
+		t.Errorf("expected existing entries to be untouched, got %d", len(c.Seen))
+	}
+	if c.needSave {
+		t.Error("needSave should remain false when nothing was removed")
+	}
+}
+
 func TestAddItem(t *testing.T) {
 	c := &CacheFile{
 		Version:       CACHE_VERSION,
