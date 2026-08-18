@@ -91,7 +91,7 @@ func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, meta Cancel
 // Notifications config fields are set; otherwise a plain notification is
 // sent. No NoNotify guard is needed here: Feed.Validate() already forbids
 // combining Action: notify with NoNotify.
-func sendNtfySeen(ctx *RunContext, feedCfg Feed, feedName, guid string, meta CancelMetadata, item *gofeed.Item) {
+func sendNtfySeen(ctx *RunContext, feedName, guid string, meta CancelMetadata, item *gofeed.Item) {
 	if ctx.Config.Ntfy.BaseURL == "" || ctx.Config.Ntfy.Topic == "" {
 		return
 	}
@@ -414,7 +414,7 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 			Files:     w.fileNames,
 			SizeBytes: extractSize(w.item.Item),
 		}
-		sendNtfySeen(ctx, feedCfg, feedName, w.item.Item.GUID, meta, w.item.Item)
+		sendNtfySeen(ctx, feedName, w.item.Item.GUID, meta, w.item.Item)
 		ctx.recordHistory(feedName, w.item.Item, "notified", "", labels)
 	} else {
 		torrentBytes, err := ensureTorrentBytes(w.item, cmd.TorrentCacheDir, w.torrentBytes)

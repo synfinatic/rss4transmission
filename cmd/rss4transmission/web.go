@@ -529,12 +529,13 @@ func makeNotifyCompleteHandler(ntfyCfg NtfyConfig, cancelCfg NotificationsConfig
 	}
 }
 
-// tokenErrorResponse translates a parseCancelToken error into the appropriate HTTP response.
+// tokenErrorResponse translates a parseCancelToken error into the appropriate
+// HTTP response. Shared by /cancel and /start, so the wording stays generic.
 func tokenErrorResponse(w http.ResponseWriter, err error) {
 	if errors.Is(err, ErrMissingCancelParams) {
 		http.Error(w, "missing required parameters", http.StatusBadRequest)
 	} else if errors.Is(err, ErrTokenExpired) {
-		http.Error(w, "cancel link has expired", http.StatusGone)
+		http.Error(w, "link has expired", http.StatusGone)
 	} else {
 		http.Error(w, "invalid token", http.StatusBadRequest)
 	}
