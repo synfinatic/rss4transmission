@@ -78,6 +78,19 @@
         .btn-torrent:hover { background: #08e; }
         .btn-torrent:disabled { background: #444; color: #888; cursor: default; }
 
+        .btn-forget {
+            background: #555;
+            color: #fff;
+            border: none;
+            padding: 0.3em 0.9em;
+            font-family: monospace;
+            font-size: 0.85em;
+            cursor: pointer;
+            margin-left: 0.4em;
+        }
+        .btn-forget:hover { background: #777; }
+        .btn-forget:disabled { background: #444; color: #888; cursor: default; }
+
         .group-toggle { cursor: pointer; color: #888; user-select: none; display: inline-block; width: 1em; }
         .group-badge { color: #666; font-size: 0.82em; }
         tr.group-child td { background: #232a33; }
@@ -156,6 +169,7 @@
                     {{ if and .TorrentURL (ne .Outcome "dispatched") (ne .Outcome "downloaded") (feedConfigured .Feed) }}
                     <button class="btn-torrent" data-feed="{{ .Feed }}" data-guid="{{ .GUID }}">Torrent</button>
                     {{ end }}
+                    <button class="btn-forget" data-feed="{{ .Feed }}" data-guid="{{ .GUID }}">Forget</button>
                 </td>
             </tr>
             {{ end }}
@@ -296,6 +310,34 @@
                 var guid = toggle.dataset.guid;
                 if (expandedGroups.has(guid)) expandedGroups.delete(guid); else expandedGroups.add(guid);
                 apply();
+                return;
+            }
+
+            var forgetBtn = e.target.closest('.btn-forget');
+            if (forgetBtn) {
+                var fFeed = forgetBtn.dataset.feed;
+                var fGuid = forgetBtn.dataset.guid;
+                var fRow  = forgetBtn.closest('tr');
+
+                forgetBtn.disabled = true;
+                forgetBtn.textContent = 'Forgetting…';
+
+                var fBody = new URLSearchParams();
+                fBody.set('feed', fFeed);
+                fBody.set('guid', fGuid);
+
+                fetch('/forget', { method: 'POST', body: fBody }).then(function (resp) {
+                    if (!resp.ok) {
+                        return resp.text().then(function (msg) { throw new Error(msg || resp.statusText); });
+                    }
+                    fRow.remove();
+                    rows = rows.filter(function (r) { return r !== fRow; });
+                    apply();
+                }).catch(function (err) {
+                    forgetBtn.disabled = false;
+                    forgetBtn.textContent = 'Forget';
+                    alert('Failed to forget: ' + err.message);
+                });
                 return;
             }
 

@@ -182,6 +182,24 @@ func (h *HistoryFile) FindRecord(feedName, guid string) (HistoryRecord, bool) {
 	return h.Records[idx], true
 }
 
+// RemoveRecord removes the record matching feedName+guid, if any, so it stops
+// showing in the history page and can be freshly re-evaluated on the next
+// run (paired with CacheFile.RemoveEntry via the "Forget" web action).
+// Returns true if a record was removed.
+func (h *HistoryFile) RemoveRecord(feedName, guid string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	key := historyKey(feedName, guid)
+	idx, ok := h.guidIndex[key]
+	if !ok {
+		return false
+	}
+	h.Records = append(h.Records[:idx], h.Records[idx+1:]...)
+	h.rebuildGUIDIndex()
+	return true
+}
+
 // GetRecords returns a copy of all records for safe concurrent reads.
 func (h *HistoryFile) GetRecords() []HistoryRecord {
 	h.mu.RLock()

@@ -199,6 +199,17 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		return retryHistoryItem(ctx, rec)
 	}
 
+	// forgetHistory removes a (feed, guid) pair from both the seen cache and
+	// history, so it can be freshly re-evaluated (e.g. after a config change).
+	// Neither file is saved immediately; the next scheduled once.Run() tick's
+	// SaveCache/SaveHistory calls persist the removal.
+	forgetHistory := func(feed, guid string) (bool, error) {
+		reloader.mu.Lock()
+		defer reloader.mu.Unlock()
+		ctx.Cache.RemoveEntry(feed, guid)
+		return ctx.History.RemoveRecord(feed, guid), nil
+	}
+
 	// feedConfigured checks against the live (possibly reloaded) config, so
 	// the history page's Torrent button reflects the config as it stands at
 	// render time, not as it was when the server started.
@@ -247,7 +258,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			if ctx.History == nil {
 				log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 			}
-			go startWebServer("private", newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups), histAddr)
+			go startWebServer("private", newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory), histAddr)
 		}
 	} else if cmd.PrivateListen != "" {
 		// Single-listener mode: history + cancel on the same port.
@@ -258,7 +269,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		if ctx.History == nil {
 			log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 		}
-		mux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups)
+		mux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory)
 		if ctx.CancelStore != nil {
 			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress, accessLog)
 			ctx.CancelRoutesEnabled = true

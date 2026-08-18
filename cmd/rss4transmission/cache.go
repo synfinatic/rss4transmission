@@ -197,6 +197,34 @@ func (c *CacheFile) AddItem(item *FeedItem, labels map[string]string, identityKe
 	c.needSave = true
 }
 
+// RemoveEntry removes the Seen record(s) matching feedName+guid, letting the
+// item be re-evaluated on the next run (e.g. after a config change). Returns
+// true if anything was removed.
+func (c *CacheFile) RemoveEntry(feedName, guid string) bool {
+	removed := false
+	rebuildIndex := false
+	newSeen := make([]CacheRecord, 0, len(c.Seen))
+	for _, s := range c.Seen {
+		if s.Feed == feedName && s.GUID == guid {
+			removed = true
+			if len(s.Labels) > 0 {
+				rebuildIndex = true
+			}
+			continue
+		}
+		newSeen = append(newSeen, s)
+	}
+	if !removed {
+		return false
+	}
+	c.Seen = newSeen
+	if rebuildIndex {
+		c.rebuildIdentityIndex()
+	}
+	c.needSave = true
+	return true
+}
+
 // Exists checks to see if the given FeedItem already exists in the Seen cache
 // by GUID and feed name (legacy compatibility check).
 func (c *CacheFile) Exists(feedName string, item *FeedItem) bool {

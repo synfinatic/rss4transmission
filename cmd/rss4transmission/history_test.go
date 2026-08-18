@@ -161,6 +161,58 @@ func TestFindRecord_NotFound(t *testing.T) {
 	}
 }
 
+// --- RemoveRecord ---
+
+func TestRemoveRecord_RemovesExisting(t *testing.T) {
+	h := emptyHistory()
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", makeGofeedItem("Show", "guid1"), "skipped", "reason", nil))
+
+	removed := h.RemoveRecord("feed", "guid1")
+
+	if !removed {
+		t.Error("expected RemoveRecord to report true for an existing record")
+	}
+	if _, ok := h.FindRecord("feed", "guid1"); ok {
+		t.Error("expected record to no longer be found after RemoveRecord")
+	}
+	if len(h.GetRecords()) != 0 {
+		t.Errorf("expected Records to be empty after RemoveRecord, got %d", len(h.GetRecords()))
+	}
+}
+
+func TestRemoveRecord_UnknownPair_NoOp(t *testing.T) {
+	h := emptyHistory()
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", makeGofeedItem("Show", "guid1"), "skipped", "reason", nil))
+
+	removed := h.RemoveRecord("feed", "guid-missing")
+
+	if removed {
+		t.Error("expected RemoveRecord to report false for an unknown (feed, guid) pair")
+	}
+	if len(h.GetRecords()) != 1 {
+		t.Errorf("expected existing records to be untouched, got %d", len(h.GetRecords()))
+	}
+}
+
+func TestRemoveRecord_IndexAllowsReAdd(t *testing.T) {
+	h := emptyHistory()
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", makeGofeedItem("Show", "guid1"), "excluded", "old reason", nil))
+	h.RemoveRecord("feed", "guid1")
+
+	// After removal, re-adding the same GUID with a "worse" outcome rank
+	// (excluded) must not be blocked by AddOrUpdateRecord's stale guidIndex
+	// entry — proving rebuildGUIDIndex ran.
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", makeGofeedItem("Show", "guid1"), "excluded", "new reason", nil))
+
+	rec, ok := h.FindRecord("feed", "guid1")
+	if !ok {
+		t.Fatal("expected re-added record to be found")
+	}
+	if rec.Reason != "new reason" {
+		t.Errorf("Reason = %q, want %q", rec.Reason, "new reason")
+	}
+}
+
 // --- AddOrUpdateRecord ---
 
 func TestAddOrUpdateRecord_NewGUID(t *testing.T) {

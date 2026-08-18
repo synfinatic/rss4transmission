@@ -54,6 +54,11 @@ type progressFunc func(ctx context.Context, torrentID int64) (downloadedBytes in
 // Transmission. Returns the new Transmission torrent ID.
 type retryFunc func(rec HistoryRecord) (int64, error)
 
+// forgetFunc removes a (feed, guid) pair from both the seen cache and history,
+// so the item can be freshly re-evaluated on the next run. Returns whether a
+// history record was found and removed.
+type forgetFunc func(feed, guid string) (bool, error)
+
 // cancelPageData is passed to the cancel confirmation template.
 type cancelPageData struct {
 	Title         string
@@ -253,7 +258,9 @@ func groupHistoryRows(records []HistoryRecord, feedGroups func(name string) []Gr
 
 // newWebMux builds the shared HTTP mux. If history is non-nil, the history
 // page is served at "/". When history and retry are both non-nil, POST /torrent
-// is also registered to re-submit a past skipped/excluded/error item.
+// is also registered to re-submit a past skipped/excluded/error item. When
+// history and forget are both non-nil, POST /forget is also registered to
+// remove a (feed, guid) pair from the seen cache and history.
 // feedConfigured reports whether a feed name is still present in the live
 // config; the Torrent button is hidden on the history page for records whose
 // feed no longer exists, since retrying one always fails with "feed ... is no
@@ -262,7 +269,7 @@ func groupHistoryRows(records []HistoryRecord, feedGroups func(name string) []Gr
 // ties in groupHistoryRows; a nil feedGroups falls back to alphabetical
 // ordering, same as if every feed had no groups.
 // The /healthz route is always registered.
-func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name string) bool, feedGroups func(name string) []Group) *http.ServeMux {
+func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name string) bool, feedGroups func(name string) []Group, forget forgetFunc) *http.ServeMux {
 	if feedConfigured == nil {
 		feedConfigured = func(string) bool { return true }
 	}
@@ -302,6 +309,10 @@ func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name s
 		mux.HandleFunc("POST /torrent", makePostTorrentHandler(history, retry))
 	}
 
+	if history != nil && forget != nil {
+		mux.HandleFunc("POST /forget", makePostForgetHandler(history, forget))
+	}
+
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -337,6 +348,38 @@ func makePostTorrentHandler(history *HistoryFile, retry retryFunc) http.HandlerF
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "Torrent submitted.") //nolint:errcheck
+	}
+}
+
+// makePostForgetHandler processes a "forget this" request from the history
+// page. It resolves feed+guid to a HistoryRecord (so an unknown pair 404s the
+// same way makePostTorrentHandler does) and delegates the actual removal from
+// the seen cache and history to forget.
+func makePostForgetHandler(history *HistoryFile, forget forgetFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form body", http.StatusBadRequest)
+			return
+		}
+
+		feed := r.FormValue("feed")
+		guid := r.FormValue("guid")
+		rec, ok := history.FindRecord(feed, guid)
+		if !ok {
+			http.Error(w, "history record not found", http.StatusNotFound)
+			return
+		}
+
+		if _, err := forget(feed, guid); err != nil {
+			log.WithError(err).Warnf("Failed to forget %q", rec.Title)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		log.Infof("Forgot %q from history page", rec.Title)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "Forgotten.") //nolint:errcheck
 	}
 }
 
