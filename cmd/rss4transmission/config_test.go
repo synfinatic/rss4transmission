@@ -204,6 +204,47 @@ Feeds:
 	}
 }
 
+func TestLoadConfig_FeedHistoryPriority(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	yamlContent := validExtractorYAML + `
+Feeds:
+  - Name: MotoGP
+    URL: https://example.com/motogp
+    Extractor: demo
+    Identity: [series]
+    HistoryPriority: -1
+    Groups:
+      - Require:
+          series: [X]
+  - Name: Moto2
+    URL: https://example.com/moto2
+    Extractor: demo
+    Identity: [series]
+    Groups:
+      - Require:
+          series: [X]
+`
+	if err := os.WriteFile(cfgPath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	rc := &RunContext{}
+	if _, err := rc.loadConfig(cfgPath); err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+
+	if len(rc.Config.Feeds) != 2 {
+		t.Fatalf("expected 2 feeds, got %d", len(rc.Config.Feeds))
+	}
+	if rc.Config.Feeds[0].HistoryPriority != -1 {
+		t.Errorf("explicit HistoryPriority = %d, want -1", rc.Config.Feeds[0].HistoryPriority)
+	}
+	if rc.Config.Feeds[1].HistoryPriority != 0 {
+		t.Errorf("unset HistoryPriority = %d, want default 0", rc.Config.Feeds[1].HistoryPriority)
+	}
+}
+
 func TestLoadConfig_PortCheckEnabledDefaultsFalse(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")

@@ -16,6 +16,7 @@ All feeds support these options:
 | `NoValidateCert` | Skip TLS certificate validation for this feed's URL |
 | `NoSubmit` | Dry-run: log matches but do not send to Transmission |
 | `NoNotify` | Skip ntfy notifications for this feed (see [Notifications](notifications.md)) |
+| `HistoryPriority` | History page group tie-break; lower wins (default `0`) — see [History Web UI](notifications.md#history-web-ui) |
 
 `Feeds` is a list, so feeds are always processed in the order they appear in the config file. As
 soon as one item is actually dispatched (submitted to Transmission or downloaded to disk with

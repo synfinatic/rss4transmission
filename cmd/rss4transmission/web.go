@@ -166,12 +166,14 @@ func isNoGroupMatched(r HistoryRecord) bool {
 // groupHistoryRows reorders records so rows sharing a GUID are contiguous.
 // Within a group, the primary row is chosen by: "no group matched labels"
 // records always sort last (see isNoGroupMatched); among the rest, the most
-// interesting outcome wins (outcomeRank); ties break alphabetically by Feed.
-// The chosen record is marked IsPrimary and placed first; the rest follow
-// sorted the same way. Group order follows first appearance in the input.
-// Records with an empty GUID are never grouped with each other or anything
-// else.
-func groupHistoryRows(records []HistoryRecord) []historyRow {
+// interesting outcome wins (outcomeRank); ties then break by feedPriority
+// (lower wins — see Feed.HistoryPriority), letting a user explicitly declare
+// which sibling feed should win a full tie; any remaining tie breaks
+// alphabetically by Feed. The chosen record is marked IsPrimary and placed
+// first; the rest follow sorted the same way. Group order follows first
+// appearance in the input. Records with an empty GUID are never grouped with
+// each other or anything else.
+func groupHistoryRows(records []HistoryRecord, feedPriority func(name string) int) []historyRow {
 	type group struct {
 		key     string
 		records []HistoryRecord
@@ -212,6 +214,10 @@ func groupHistoryRows(records []HistoryRecord) []historyRow {
 			if ri != rj {
 				return ri < rj
 			}
+			pi, pj := feedPriority(recs[i].Feed), feedPriority(recs[j].Feed)
+			if pi != pj {
+				return pi < pj
+			}
 			return recs[i].Feed < recs[j].Feed
 		})
 		for i, r := range recs {
@@ -232,10 +238,15 @@ func groupHistoryRows(records []HistoryRecord) []historyRow {
 // config; the Torrent button is hidden on the history page for records whose
 // feed no longer exists, since retrying one always fails with "feed ... is no
 // longer configured". A nil feedConfigured shows the button unconditionally.
+// feedPriority reports a feed's Feed.HistoryPriority, used by groupHistoryRows
+// to break primary-row ties; a nil feedPriority treats every feed as priority 0.
 // The /healthz route is always registered.
-func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name string) bool) *http.ServeMux {
+func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name string) bool, feedPriority func(name string) int) *http.ServeMux {
 	if feedConfigured == nil {
 		feedConfigured = func(string) bool { return true }
+	}
+	if feedPriority == nil {
+		feedPriority = func(string) int { return 0 }
 	}
 	funcMap := template.FuncMap{
 		"outcomeClass": func(outcome string) string {
@@ -261,7 +272,7 @@ func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name s
 			for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
 				records[i], records[j] = records[j], records[i]
 			}
-			rows := groupHistoryRows(records)
+			rows := groupHistoryRows(records, feedPriority)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			if err := tmpl.Execute(w, rows); err != nil {
 				log.WithError(err).Error("Failed to render history template")

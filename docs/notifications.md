@@ -261,6 +261,19 @@ rss4transmission watch --config config.yaml \
 The history page shows each item's feed name, title, publication date, outcome, and extracted
 labels. Records are pruned on the same schedule as the seen cache (`SeenCacheDays`).
 
+When multiple feed configs share the same RSS URL (e.g. separate `MotoGP`, `Moto2`, and `Moto3`
+feeds subscribed to one feed URL), each processes every item independently, so the same item can
+produce several history records that share a GUID. The history page collapses these into one
+expandable row: a **primary** row is shown collapsed with a `+N` badge, and the rest render as
+hidden child rows revealed by clicking the toggle. The primary row is chosen by whichever record
+is most informative — a dispatched/downloaded outcome beats skipped, which beats excluded/error;
+among records that are all "no group matched labels" (none of a feed's `Groups` matched), that's
+treated as the least informative reason and always loses. If every record on a GUID is still
+tied after that, the tie breaks by each feed's `HistoryPriority` (lower wins; default `0`), and
+finally alphabetically by feed name. Set `HistoryPriority: -1` on the `MotoGP` feed, for example,
+to make it the parent row over `Moto2`/`Moto3` whenever a bundle release matches none of the
+three feeds' groups and would otherwise fall back to whichever feed name sorts first.
+
 Rows with outcome `skipped`, `excluded`, or `error` show a **Torrent** button when a `.torrent`
 URL was captured for that item, letting you manually re-submit it to Transmission without waiting
 for the feed to re-offer it. Clicking it re-fetches the `.torrent` fresh, submits it exactly like

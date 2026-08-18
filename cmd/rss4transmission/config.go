@@ -119,15 +119,16 @@ type GluetunConfig struct {
 }
 
 type Feed struct {
-	Name           string   `koanf:"Name"`
-	URL            string   `koanf:"URL"`
-	Exclude        []string `koanf:"Exclude"`
-	DownloadPath   string   `koanf:"DownloadPath"`
-	NoValidateCert bool     `koanf:"NoValidateCert"`
-	NoSubmit       bool     `koanf:"NoSubmit"`
-	NoNotify       bool     `koanf:"NoNotify"`
-	MaxSize        string   `koanf:"MaxSize"`
-	MinSize        string   `koanf:"MinSize"`
+	Name            string   `koanf:"Name"`
+	URL             string   `koanf:"URL"`
+	Exclude         []string `koanf:"Exclude"`
+	DownloadPath    string   `koanf:"DownloadPath"`
+	NoValidateCert  bool     `koanf:"NoValidateCert"`
+	NoSubmit        bool     `koanf:"NoSubmit"`
+	NoNotify        bool     `koanf:"NoNotify"`
+	MaxSize         string   `koanf:"MaxSize"`
+	MinSize         string   `koanf:"MinSize"`
+	HistoryPriority int      `koanf:"HistoryPriority"`
 
 	// Label-mode fields
 	Extractor string            `koanf:"Extractor"`

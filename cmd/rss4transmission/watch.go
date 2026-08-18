@@ -209,6 +209,18 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		return ok
 	}
 
+	// feedPriority mirrors feedConfigured's live-config lookup, reporting a
+	// feed's HistoryPriority so groupHistoryRows can break primary-row ties.
+	feedPriority := func(name string) int {
+		reloader.mu.Lock()
+		defer reloader.mu.Unlock()
+		f, ok := findFeedByName(ctx.Config.Feeds, name)
+		if !ok {
+			return 0
+		}
+		return f.HistoryPriority
+	}
+
 	accessLog := openAccessLog(cmd.AccessLog)
 
 	if cmd.PublicListen != "" {
@@ -234,7 +246,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			if ctx.History == nil {
 				log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 			}
-			go startWebServer("private", newWebMux(ctx.History, retryHistory, feedConfigured), histAddr)
+			go startWebServer("private", newWebMux(ctx.History, retryHistory, feedConfigured, feedPriority), histAddr)
 		}
 	} else if cmd.PrivateListen != "" {
 		// Single-listener mode: history + cancel on the same port.
@@ -245,7 +257,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		if ctx.History == nil {
 			log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 		}
-		mux := newWebMux(ctx.History, retryHistory, feedConfigured)
+		mux := newWebMux(ctx.History, retryHistory, feedConfigured, feedPriority)
 		if ctx.CancelStore != nil {
 			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress, accessLog)
 			ctx.CancelRoutesEnabled = true
