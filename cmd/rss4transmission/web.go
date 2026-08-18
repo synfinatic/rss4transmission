@@ -163,15 +163,36 @@ func isNoGroupMatched(r HistoryRecord) bool {
 	return r.Outcome == "skipped" && r.Reason == skipReasonNoGroupMatched
 }
 
+// bestGroupScore returns the highest Group.MatchScore across groups for the
+// given labels, treating a feed with no groups — or whose every group is
+// disqualified (contradicted) or simply uninformative (no positive evidence)
+// — as 0, the same as a feed with no distinguishing evidence at all.
+func bestGroupScore(groups []Group, labels map[string]string) int {
+	best := 0
+	for _, g := range groups {
+		if s := g.MatchScore(labels); s > best {
+			best = s
+		}
+	}
+	return best
+}
+
 // groupHistoryRows reorders records so rows sharing a GUID are contiguous.
 // Within a group, the primary row is chosen by: "no group matched labels"
 // records always sort last (see isNoGroupMatched); among the rest, the most
-// interesting outcome wins (outcomeRank); ties break alphabetically by Feed.
-// The chosen record is marked IsPrimary and placed first; the rest follow
-// sorted the same way. Group order follows first appearance in the input.
-// Records with an empty GUID are never grouped with each other or anything
-// else.
-func groupHistoryRows(records []HistoryRecord) []historyRow {
+// interesting outcome wins (outcomeRank); ties then prefer the record whose
+// own extracted labels give the strongest positive match against its own
+// feed's Groups (see bestGroupScore) — this matters because sibling feeds
+// sharing an Extractor can extract identical labels for an item that isn't
+// theirs, so only labels that actually satisfy a feed's own Require count as
+// evidence; any remaining tie breaks alphabetically by Feed. The chosen
+// record is marked IsPrimary and placed first; the rest follow sorted the
+// same way. Group order follows first appearance in the input. Records with
+// an empty GUID are never grouped with each other or anything else.
+func groupHistoryRows(records []HistoryRecord, feedGroups func(name string) []Group) []historyRow {
+	if feedGroups == nil {
+		feedGroups = func(string) []Group { return nil }
+	}
 	type group struct {
 		key     string
 		records []HistoryRecord
@@ -212,6 +233,11 @@ func groupHistoryRows(records []HistoryRecord) []historyRow {
 			if ri != rj {
 				return ri < rj
 			}
+			si := bestGroupScore(feedGroups(recs[i].Feed), recs[i].Labels)
+			sj := bestGroupScore(feedGroups(recs[j].Feed), recs[j].Labels)
+			if si != sj {
+				return si > sj // higher score sorts first
+			}
 			return recs[i].Feed < recs[j].Feed
 		})
 		for i, r := range recs {
@@ -232,8 +258,11 @@ func groupHistoryRows(records []HistoryRecord) []historyRow {
 // config; the Torrent button is hidden on the history page for records whose
 // feed no longer exists, since retrying one always fails with "feed ... is no
 // longer configured". A nil feedConfigured shows the button unconditionally.
+// feedGroups reports a feed's own configured Groups, used to break primary-row
+// ties in groupHistoryRows; a nil feedGroups falls back to alphabetical
+// ordering, same as if every feed had no groups.
 // The /healthz route is always registered.
-func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name string) bool) *http.ServeMux {
+func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name string) bool, feedGroups func(name string) []Group) *http.ServeMux {
 	if feedConfigured == nil {
 		feedConfigured = func(string) bool { return true }
 	}
@@ -261,7 +290,7 @@ func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name s
 			for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
 				records[i], records[j] = records[j], records[i]
 			}
-			rows := groupHistoryRows(records)
+			rows := groupHistoryRows(records, feedGroups)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			if err := tmpl.Execute(w, rows); err != nil {
 				log.WithError(err).Error("Failed to render history template")

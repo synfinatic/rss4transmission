@@ -23,7 +23,7 @@ import (
 // --- /healthz ---
 
 func TestHealthzHandler(t *testing.T) {
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -78,7 +78,7 @@ func TestGetCancelHandler_RendersForm(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	req := httptest.NewRequest("GET",
@@ -103,7 +103,7 @@ func TestGetCancelHandler_RendersProgress(t *testing.T) {
 	// 2.5 GiB downloaded, 25% done
 	getProgress := makeProgressFunc(int64(2.5*float64(1<<30)), 0.25)
 
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), getProgress, nil)
 
 	req := httptest.NewRequest("GET",
@@ -128,7 +128,7 @@ func TestGetCancelHandler_ProgressUnknownOnError(t *testing.T) {
 		return 0, 0, fmt.Errorf("transmission unavailable")
 	}
 
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), errProgress, nil)
 
 	req := httptest.NewRequest("GET",
@@ -143,7 +143,7 @@ func TestGetCancelHandler_ProgressUnknownOnError(t *testing.T) {
 func TestGetCancelHandler_MissingParams(t *testing.T) {
 	store := NewStore(time.Hour)
 	cfg := makeCancelCfg("secret", "https://example.com")
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	req := httptest.NewRequest("GET", "/cancel?id=test-id", nil)
@@ -159,7 +159,7 @@ func TestGetCancelHandler_BadSignature(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, _ := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	req := httptest.NewRequest("GET",
@@ -176,7 +176,7 @@ func TestGetCancelHandler_Expired(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "test-id", -time.Second)
 
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	req := httptest.NewRequest("GET",
@@ -192,7 +192,7 @@ func TestGetCancelHandler_NotFound(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "ghost-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	req := httptest.NewRequest("GET",
@@ -210,7 +210,7 @@ func TestGetCancelHandler_DoesNotConsumeEntry(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	removed := false
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(&removed), noProgressFunc(), nil)
 
@@ -237,7 +237,7 @@ func TestPostCancelHandler_Valid(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
 	removed := false
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(&removed), noProgressFunc(), nil)
 
 	body := makeCancelFormBody("test-id", expires, sig)
@@ -253,7 +253,7 @@ func TestPostCancelHandler_Valid(t *testing.T) {
 func TestPostCancelHandler_MissingParams(t *testing.T) {
 	store := NewStore(time.Hour)
 	cfg := makeCancelCfg("secret", "https://example.com")
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	body := strings.NewReader("id=test-id") // missing expires and sig
@@ -271,7 +271,7 @@ func TestPostCancelHandler_BadSignature(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, _ := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	body := makeCancelFormBody("test-id", expires, "badsig")
@@ -289,7 +289,7 @@ func TestPostCancelHandler_Expired(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "test-id", -time.Second)
 
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	body := makeCancelFormBody("test-id", expires, sig)
@@ -306,7 +306,7 @@ func TestPostCancelHandler_NotFound(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "ghost-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	body := makeCancelFormBody("ghost-id", expires, sig)
@@ -387,7 +387,7 @@ func TestPostCancelHandler_RemoveErrorPreservesStoreEntry(t *testing.T) {
 	failRemove := func(_ context.Context, _ []int64) error {
 		return fmt.Errorf("transmission unreachable")
 	}
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, failRemove, noProgressFunc(), nil)
 
 	body := makeCancelFormBody("test-id", expires, sig)
@@ -408,7 +408,7 @@ func TestGetCancelHandler_ZeroBytesProgressBothUnknown(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
 	// brand-new torrent: 0 bytes downloaded, 0% done
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), makeProgressFunc(0, 0.0), nil)
 
 	req := httptest.NewRequest("GET",
@@ -458,7 +458,7 @@ func TestHistoryPage_RendersTorrentButtonForSkippedWithURL(t *testing.T) {
 		"skipped", "lost preference contest", nil)
 	h.AddOrUpdateRecord(rec)
 
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -475,7 +475,7 @@ func TestHistoryPage_NoTorrentButtonWithoutURL(t *testing.T) {
 	rec := NewHistoryRecord("myfeed", makeGofeedItem("No Enclosure", "guid-2"), "excluded", "matched exclude", nil)
 	h.AddOrUpdateRecord(rec)
 
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -491,7 +491,7 @@ func TestHistoryPage_NoTorrentButtonForDispatched(t *testing.T) {
 		"dispatched", "", nil)
 	h.AddOrUpdateRecord(rec)
 
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -509,7 +509,7 @@ func TestHistoryPage_TorrentButtonShownWhenFeedConfiguredNil(t *testing.T) {
 
 	// A nil feedConfigured means "no filter" — button shows unconditionally,
 	// matching every existing caller that doesn't care about live config.
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -526,7 +526,7 @@ func TestHistoryPage_TorrentButtonHiddenWhenFeedNotConfigured(t *testing.T) {
 	h.AddOrUpdateRecord(rec)
 
 	feedConfigured := func(name string) bool { return name == "still-here" }
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), feedConfigured)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), feedConfigured, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -544,7 +544,7 @@ func TestHistoryPage_TorrentButtonShownWhenFeedStillConfigured(t *testing.T) {
 	h.AddOrUpdateRecord(rec)
 
 	feedConfigured := func(name string) bool { return name == "still-here" }
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), feedConfigured)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), feedConfigured, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -563,7 +563,7 @@ func TestGroupHistoryRows_DispatchedIsPrimaryOverSkipped(t *testing.T) {
 		NewHistoryRecord("IOMTT", makeGofeedItem("BSB Title", "guid-1"), "skipped", "no group matched labels", nil),
 	}
 
-	rows := groupHistoryRows(records)
+	rows := groupHistoryRows(records, nil)
 
 	require.Len(t, rows, 4)
 	assert.True(t, rows[0].IsPrimary)
@@ -587,7 +587,7 @@ func TestGroupHistoryRows_TieBreaksAlphabeticallyByFeed(t *testing.T) {
 		NewHistoryRecord("IOMTT", makeGofeedItem("BSB Title", "guid-1"), "skipped", "no group matched labels", nil),
 	}
 
-	rows := groupHistoryRows(records)
+	rows := groupHistoryRows(records, nil)
 
 	require.Len(t, rows, 3)
 	assert.True(t, rows[0].IsPrimary)
@@ -603,7 +603,7 @@ func TestGroupHistoryRows_PrefersInformativeReasonOverNoGroupMatched(t *testing.
 		NewHistoryRecord("MotoGP", makeGofeedItem("MotoGP Title", "guid-1"), "skipped", skipReasonCacheBetter, nil),
 	}
 
-	rows := groupHistoryRows(records)
+	rows := groupHistoryRows(records, nil)
 
 	require.Len(t, rows, 3)
 	assert.True(t, rows[0].IsPrimary)
@@ -620,7 +620,7 @@ func TestGroupHistoryRows_NoGroupMatchedIsLowestPriorityAcrossOutcomes(t *testin
 		NewHistoryRecord("WSBK", makeGofeedItem("BSB Title", "guid-1"), "excluded", "matched exclude filter", nil),
 	}
 
-	rows := groupHistoryRows(records)
+	rows := groupHistoryRows(records, nil)
 
 	require.Len(t, rows, 2)
 	assert.True(t, rows[0].IsPrimary)
@@ -636,7 +636,7 @@ func TestGroupHistoryRows_EmptyGUIDNeverMerges(t *testing.T) {
 		NewHistoryRecord("feedB", makeGofeedItem("Title B", ""), "skipped", "no group matched labels", nil),
 	}
 
-	rows := groupHistoryRows(records)
+	rows := groupHistoryRows(records, nil)
 
 	require.Len(t, rows, 2)
 	for _, r := range rows {
@@ -650,7 +650,7 @@ func TestGroupHistoryRows_SingletonGroupIsPrimary(t *testing.T) {
 		NewHistoryRecord("onlyfeed", makeGofeedItem("Solo Title", "guid-solo"), "skipped", "excluded by regex", nil),
 	}
 
-	rows := groupHistoryRows(records)
+	rows := groupHistoryRows(records, nil)
 
 	require.Len(t, rows, 1)
 	assert.True(t, rows[0].IsPrimary)
@@ -664,7 +664,7 @@ func TestGroupHistoryRows_GroupsAreContiguousAtFirstAppearancePosition(t *testin
 		NewHistoryRecord("feedC", makeGofeedItem("First Title", "guid-1"), "dispatched", "", nil),
 	}
 
-	rows := groupHistoryRows(records)
+	rows := groupHistoryRows(records, nil)
 
 	require.Len(t, rows, 3)
 	// guid-1 first appears at index 0, so both its records land contiguously
@@ -683,6 +683,89 @@ func TestGroupHistoryRows_GroupsAreContiguousAtFirstAppearancePosition(t *testin
 	assert.Equal(t, 1, rows[2].GroupSize)
 }
 
+func TestGroupHistoryRows_MatchScoreBreaksNoGroupMatchedTie(t *testing.T) {
+	// All three records are fully tied through isNoGroupMatched and outcomeRank.
+	// MotoGP/Moto2/Moto3 share one Extractor, so every sibling extracted the
+	// same class=MotoGP label from this genuinely-MotoGP-titled item. Only
+	// MotoGP's own Require is actually satisfied by that value; Moto2 and
+	// Moto3's own Require values are contradicted by it, so they must score
+	// no better than a plain alphabetical tie.
+	records := []HistoryRecord{
+		NewHistoryRecord("Moto2", makeGofeedItem("MotoGP Title", "guid-1"), "skipped", skipReasonNoGroupMatched,
+			map[string]string{"class": "MotoGP"}),
+		NewHistoryRecord("Moto3", makeGofeedItem("MotoGP Title", "guid-1"), "skipped", skipReasonNoGroupMatched,
+			map[string]string{"class": "MotoGP"}),
+		NewHistoryRecord("MotoGP", makeGofeedItem("MotoGP Title", "guid-1"), "skipped", skipReasonNoGroupMatched,
+			map[string]string{"class": "MotoGP"}),
+	}
+	feedGroups := func(name string) []Group {
+		switch name {
+		case "MotoGP":
+			return []Group{{Require: map[string][]string{"class": {"MotoGP"}}}}
+		case "Moto2":
+			return []Group{{Require: map[string][]string{"class": {"Moto2"}}}}
+		case "Moto3":
+			return []Group{{Require: map[string][]string{"class": {"Moto3"}}}}
+		}
+		return nil
+	}
+
+	rows := groupHistoryRows(records, feedGroups)
+
+	require.Len(t, rows, 3)
+	assert.True(t, rows[0].IsPrimary)
+	assert.Equal(t, "MotoGP", rows[0].Feed,
+		"the record whose own group Require is actually satisfied by its labels must win, even though "+
+			"its siblings extracted the identical labels via a shared Extractor")
+	assert.Equal(t, "Moto2", rows[1].Feed)
+	assert.Equal(t, "Moto3", rows[2].Feed)
+}
+
+func TestGroupHistoryRows_MatchScoreIgnoresGroupsWithNoOverlap(t *testing.T) {
+	// BSB/WSBK/WSS/MotoAmerica/IOMTT share one URL as an optimization, not
+	// because they're related — a genuinely BSB item may leave the other
+	// feeds with zero overlapping labels at all (not a contradiction, just
+	// absence). Absence must not count as evidence either way; BSB's own
+	// positive match must still win over a plain alphabetical fallback.
+	records := []HistoryRecord{
+		NewHistoryRecord("WSBK", makeGofeedItem("BSB Title", "guid-1"), "skipped", skipReasonNoGroupMatched,
+			map[string]string{"series": "BSB"}),
+		NewHistoryRecord("BSB", makeGofeedItem("BSB Title", "guid-1"), "skipped", skipReasonNoGroupMatched,
+			map[string]string{"series": "BSB"}),
+	}
+	feedGroups := func(name string) []Group {
+		switch name {
+		case "BSB":
+			return []Group{{Require: map[string][]string{"series": {"BSB"}}}}
+		case "WSBK":
+			// WSBK's own Require key ("class") never even appears in these
+			// labels — zero overlap, not a contradiction.
+			return []Group{{Require: map[string][]string{"class": {"Superbike"}}}}
+		}
+		return nil
+	}
+
+	rows := groupHistoryRows(records, feedGroups)
+
+	require.Len(t, rows, 2)
+	assert.True(t, rows[0].IsPrimary)
+	assert.Equal(t, "BSB", rows[0].Feed,
+		"BSB's positive match must win even though WSBK sorts first alphabetically")
+}
+
+func TestGroupHistoryRows_NilFeedGroupsFallsBackToAlphabetical(t *testing.T) {
+	records := []HistoryRecord{
+		NewHistoryRecord("WSBK", makeGofeedItem("BSB Title", "guid-1"), "skipped", skipReasonNoGroupMatched, nil),
+		NewHistoryRecord("BSB", makeGofeedItem("BSB Title", "guid-1"), "skipped", skipReasonNoGroupMatched, nil),
+	}
+
+	rows := groupHistoryRows(records, nil)
+
+	require.Len(t, rows, 2)
+	assert.True(t, rows[0].IsPrimary)
+	assert.Equal(t, "BSB", rows[0].Feed, "a nil feedGroups must behave like every feed scoring 0")
+}
+
 func TestHistoryPage_GroupsRecordsSharingGUID(t *testing.T) {
 	h := emptyHistory()
 	h.AddOrUpdateRecord(NewHistoryRecord("BSB",
@@ -698,7 +781,7 @@ func TestHistoryPage_GroupsRecordsSharingGUID(t *testing.T) {
 		makeGofeedItemWithEnclosure("BSB Title", "guid-1", "https://example.com/bsb.torrent"),
 		"skipped", "no group matched labels", nil))
 
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -715,11 +798,53 @@ func TestHistoryPage_GroupsRecordsSharingGUID(t *testing.T) {
 		"each skipped child keeps its own retry button; the dispatched primary has none")
 }
 
+func TestHistoryPage_FeedGroupsBreaksNoGroupMatchedTie(t *testing.T) {
+	h := emptyHistory()
+	h.AddOrUpdateRecord(NewHistoryRecord("Moto2",
+		makeGofeedItemWithEnclosure("MotoGP Title", "guid-1", "https://example.com/motogp.torrent"),
+		"skipped", "no group matched labels", map[string]string{"class": "MotoGP"}))
+	h.AddOrUpdateRecord(NewHistoryRecord("Moto3",
+		makeGofeedItemWithEnclosure("MotoGP Title", "guid-1", "https://example.com/motogp.torrent"),
+		"skipped", "no group matched labels", map[string]string{"class": "MotoGP"}))
+	h.AddOrUpdateRecord(NewHistoryRecord("MotoGP",
+		makeGofeedItemWithEnclosure("MotoGP Title", "guid-1", "https://example.com/motogp.torrent"),
+		"skipped", "no group matched labels", map[string]string{"class": "MotoGP"}))
+
+	feedGroups := func(name string) []Group {
+		switch name {
+		case "MotoGP":
+			return []Group{{Require: map[string][]string{"class": {"MotoGP"}}}}
+		case "Moto2":
+			return []Group{{Require: map[string][]string{"class": {"Moto2"}}}}
+		case "Moto3":
+			return []Group{{Require: map[string][]string{"class": {"Moto3"}}}}
+		}
+		return nil
+	}
+
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, feedGroups)
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+
+	primaryIdx := strings.Index(body, `class="group-toggle"`)
+	require.NotEqual(t, -1, primaryIdx, "expected a primary row with the expand toggle")
+	rowStart := strings.LastIndex(body[:primaryIdx], "<tr")
+	rowEnd := strings.Index(body[primaryIdx:], "</tr>") + primaryIdx
+	primaryRow := body[rowStart:rowEnd]
+	assert.Contains(t, primaryRow, `data-feed="MotoGP"`,
+		"the record whose own group Require is actually satisfied by its labels must be the primary row, "+
+			"even though its siblings extracted the identical labels via a shared Extractor")
+}
+
 func TestHistoryPage_UniqueGUIDRendersUngrouped(t *testing.T) {
 	h := emptyHistory()
 	h.AddOrUpdateRecord(NewHistoryRecord("myfeed", makeGofeedItem("Solo Title", "guid-solo"), "skipped", "excluded by regex", nil))
 
-	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil)
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil)
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -756,7 +881,7 @@ func TestPostTorrentHandler_Success(t *testing.T) {
 
 	called := false
 	var gotRec HistoryRecord
-	mux := newWebMux(h, makeRetryFunc(&called, &gotRec, 7, nil), nil)
+	mux := newWebMux(h, makeRetryFunc(&called, &gotRec, 7, nil), nil, nil)
 
 	req := httptest.NewRequest("POST", "/torrent", makeTorrentFormBody("myfeed", "guid-1"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -772,7 +897,7 @@ func TestPostTorrentHandler_Success(t *testing.T) {
 func TestPostTorrentHandler_UnknownRecord(t *testing.T) {
 	h := emptyHistory()
 	called := false
-	mux := newWebMux(h, makeRetryFunc(&called, nil, 0, nil), nil)
+	mux := newWebMux(h, makeRetryFunc(&called, nil, 0, nil), nil, nil)
 
 	req := httptest.NewRequest("POST", "/torrent", makeTorrentFormBody("ghost-feed", "ghost-guid"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -789,7 +914,7 @@ func TestPostTorrentHandler_RetryError(t *testing.T) {
 	h.AddOrUpdateRecord(rec)
 
 	called := false
-	mux := newWebMux(h, makeRetryFunc(&called, nil, 0, fmt.Errorf("boom: no torrent URL")), nil)
+	mux := newWebMux(h, makeRetryFunc(&called, nil, 0, fmt.Errorf("boom: no torrent URL")), nil, nil)
 
 	req := httptest.NewRequest("POST", "/torrent", makeTorrentFormBody("myfeed", "guid-1"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -806,7 +931,7 @@ func TestPostTorrentHandler_NotRegisteredWhenRetryNil(t *testing.T) {
 	rec := NewHistoryRecord("myfeed", makeGofeedItem("My Title", "guid-1"), "skipped", "", nil)
 	h.AddOrUpdateRecord(rec)
 
-	mux := newWebMux(h, nil, nil)
+	mux := newWebMux(h, nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/torrent", makeTorrentFormBody("myfeed", "guid-1"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -839,7 +964,7 @@ func TestGetCancelHandler_AccessLog_InvalidToken(t *testing.T) {
 	expires, _ := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	req := httptest.NewRequest("GET",
@@ -859,7 +984,7 @@ func TestGetCancelHandler_AccessLog_MissingParams(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	req := httptest.NewRequest("GET", "/cancel?id=test-id", nil)
@@ -879,7 +1004,7 @@ func TestGetCancelHandler_AccessLog_Expired(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "test-id", -time.Second)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	req := httptest.NewRequest("GET",
@@ -900,7 +1025,7 @@ func TestGetCancelHandler_AccessLog_NotFound(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "ghost-id", time.Hour)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	req := httptest.NewRequest("GET",
@@ -922,7 +1047,7 @@ func TestGetCancelHandler_AccessLog_Success(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	req := httptest.NewRequest("GET",
@@ -943,7 +1068,7 @@ func TestGetCancelHandler_AccessLog_NilNoOp(t *testing.T) {
 	cfg := makeCancelCfg("secret", "https://example.com")
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
 
 	req := httptest.NewRequest("GET",
@@ -962,7 +1087,7 @@ func TestPostCancelHandler_AccessLog_InvalidToken(t *testing.T) {
 	expires, _ := GenerateToken([]byte("secret"), "test-id", time.Hour)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	body := makeCancelFormBody("test-id", expires, "badsig")
@@ -985,7 +1110,7 @@ func TestPostCancelHandler_AccessLog_Expired(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "test-id", -time.Second)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	body := makeCancelFormBody("test-id", expires, sig)
@@ -1007,7 +1132,7 @@ func TestPostCancelHandler_AccessLog_NotFound(t *testing.T) {
 	expires, sig := GenerateToken([]byte("secret"), "ghost-id", time.Hour)
 
 	lg, buf := makeTestAccessLogger()
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), lg)
 
 	body := makeCancelFormBody("ghost-id", expires, sig)
@@ -1031,7 +1156,7 @@ func TestPostCancelHandler_AccessLog_Success(t *testing.T) {
 
 	lg, buf := makeTestAccessLogger()
 	removed := false
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, makeRemoveFunc(&removed), noProgressFunc(), lg)
 
 	body := makeCancelFormBody("test-id", expires, sig)
@@ -1058,7 +1183,7 @@ func TestPostCancelHandler_AccessLog_TransmissionError(t *testing.T) {
 	failRemove2 := func(_ context.Context, _ []int64) error {
 		return fmt.Errorf("transmission unreachable")
 	}
-	mux := newWebMux(nil, nil, nil)
+	mux := newWebMux(nil, nil, nil, nil)
 	registerCancelRoutes(mux, store, cfg, failRemove2, noProgressFunc(), lg)
 
 	body := makeCancelFormBody("test-id", expires, sig)

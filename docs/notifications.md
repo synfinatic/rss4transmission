@@ -261,6 +261,18 @@ rss4transmission watch --config config.yaml \
 The history page shows each item's feed name, title, publication date, outcome, and extracted
 labels. Records are pruned on the same schedule as the seen cache (`SeenCacheDays`).
 
+When multiple sibling feeds share one RSS URL — for example, separate feeds for different
+categories of content that all happen to be published through the same feed URL — the same item
+produces one history record per sibling. These are collapsed into a single expandable group
+instead of a wall of near-duplicate rows. The visible parent row is chosen by, in order: a record
+that actually engaged with the item beats one whose `Groups` never matched at all; among those,
+the more informative outcome wins; remaining ties prefer whichever sibling's own extracted labels
+actually satisfy its own `Groups.Require` constraints (see
+[Feeds & Labels](feeds.md#label-based-feed-configuration)) — this matters because siblings that
+share an `Extractor` can extract identical-looking labels for an item that isn't actually theirs,
+so only a label value that satisfies a feed's own `Require` counts as evidence. Any remaining tie
+breaks alphabetically by feed name.
+
 Rows with outcome `skipped`, `excluded`, or `error` show a **Torrent** button when a `.torrent`
 URL was captured for that item, letting you manually re-submit it to Transmission without waiting
 for the feed to re-offer it. Clicking it re-fetches the `.torrent` fresh, submits it exactly like
