@@ -61,6 +61,8 @@ type RunContext struct {
 	History             *HistoryFile
 	CancelStore         *Store
 	CancelRoutesEnabled bool
+	StartStore          *StartStore
+	StartRoutesEnabled  bool
 	Transmission        *transmissionrpc.Client
 	Provider            *file.File
 }

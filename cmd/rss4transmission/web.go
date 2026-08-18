@@ -32,6 +32,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -41,6 +42,9 @@ var historyTmpl string
 
 //go:embed web/cancel.html
 var cancelTmpl string
+
+//go:embed web/start.html
+var startTmpl string
 
 // removeFunc is the signature for removing torrents from Transmission.
 type removeFunc func(ctx context.Context, ids []int64) error
@@ -68,6 +72,20 @@ type cancelPageData struct {
 	SizeFormatted string
 	Downloaded    string // bytes downloaded so far, formatted (e.g. "234.5 MB"), or "Unknown"
 	Percent       string // percent done (e.g. "12.3%"), or "Unknown"
+	ID            string
+	Expires       int64
+	Sig           string
+}
+
+// startPageData is passed to the /start confirmation template. Unlike
+// cancelPageData it carries no Files list: HistoryRecord does not persist
+// file names, only the torrent-level TorrentURL/SizeBytes used to resubmit.
+type startPageData struct {
+	Title         string
+	FeedName      string
+	Labels        map[string]string
+	SizeFormatted string
+	Published     string
 	ID            string
 	Expires       int64
 	Sig           string
@@ -383,17 +401,28 @@ func makePostForgetHandler(history *HistoryFile, forget forgetFunc) http.Handler
 	}
 }
 
-// newCancelMux builds a public-facing mux serving only GET /cancel, POST /cancel,
-// and GET /healthz. Use this when --public-listen is set to expose the cancel
-// endpoint on its own port, keeping the history page on a separate private listener.
+// newCancelMux builds a public-facing mux serving GET/POST /cancel, GET/POST
+// /start, and GET /healthz. Use this when --public-listen is set to expose
+// these token-gated endpoints on their own port, keeping the history page on
+// a separate private listener.
 // POST /cancel is only registered when both store and remove are non-nil.
+// GET /start is only registered when both startStore and history are
+// non-nil; POST /start additionally requires retry to be non-nil.
 // accessLog is optional; when non-nil each request outcome is written to it.
-func newCancelMux(store *Store, cfg CancelConfig, remove removeFunc, getProgress progressFunc, accessLog *logrus.Logger) *http.ServeMux {
+func newCancelMux(store *Store, cfg NotificationsConfig, remove removeFunc, getProgress progressFunc,
+	startStore *StartStore, retry retryFunc, history *HistoryFile, accessLog *logrus.Logger,
+) *http.ServeMux {
 	mux := http.NewServeMux()
 	if store != nil {
 		mux.HandleFunc("GET /cancel", makeGetCancelHandler(store, cfg, getProgress, accessLog))
 		if remove != nil {
 			mux.HandleFunc("POST /cancel", makePostCancelHandler(store, cfg, remove, accessLog))
+		}
+	}
+	if startStore != nil && history != nil {
+		mux.HandleFunc("GET /start", makeGetStartHandler(startStore, cfg, history, accessLog))
+		if retry != nil {
+			mux.HandleFunc("POST /start", makePostStartHandler(startStore, cfg, history, retry, accessLog))
 		}
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -404,15 +433,22 @@ func newCancelMux(store *Store, cfg CancelConfig, remove removeFunc, getProgress
 
 // registerCancelRoutes adds GET /cancel and POST /cancel handlers to mux.
 // accessLog is optional; when non-nil each request outcome is written to it.
-func registerCancelRoutes(mux *http.ServeMux, store *Store, cfg CancelConfig, remove removeFunc, getProgress progressFunc, accessLog *logrus.Logger) {
+func registerCancelRoutes(mux *http.ServeMux, store *Store, cfg NotificationsConfig, remove removeFunc, getProgress progressFunc, accessLog *logrus.Logger) {
 	mux.HandleFunc("GET /cancel", makeGetCancelHandler(store, cfg, getProgress, accessLog))
 	mux.HandleFunc("POST /cancel", makePostCancelHandler(store, cfg, remove, accessLog))
+}
+
+// registerStartRoutes adds GET /start and POST /start handlers to mux.
+// accessLog is optional; when non-nil each request outcome is written to it.
+func registerStartRoutes(mux *http.ServeMux, startStore *StartStore, cfg NotificationsConfig, retry retryFunc, history *HistoryFile, accessLog *logrus.Logger) {
+	mux.HandleFunc("GET /start", makeGetStartHandler(startStore, cfg, history, accessLog))
+	mux.HandleFunc("POST /start", makePostStartHandler(startStore, cfg, history, retry, accessLog))
 }
 
 // registerNotifyCompleteRoute adds POST /notify-complete to mux when ntfy is configured.
 // When cancelCfg.HMACSecret is non-empty the endpoint requires
 // Authorization: Bearer <HMACSecret>. accessLog is optional.
-func registerNotifyCompleteRoute(mux *http.ServeMux, ntfyCfg NtfyConfig, cancelCfg CancelConfig, accessLog *logrus.Logger) {
+func registerNotifyCompleteRoute(mux *http.ServeMux, ntfyCfg NtfyConfig, cancelCfg NotificationsConfig, accessLog *logrus.Logger) {
 	if ntfyCfg.BaseURL == "" || ntfyCfg.Topic == "" {
 		return
 	}
@@ -426,7 +462,7 @@ type notifyCompleteRequest struct {
 	ID   int64  `json:"id"`
 }
 
-func makeNotifyCompleteHandler(ntfyCfg NtfyConfig, cancelCfg CancelConfig, accessLog *logrus.Logger) http.HandlerFunc {
+func makeNotifyCompleteHandler(ntfyCfg NtfyConfig, cancelCfg NotificationsConfig, accessLog *logrus.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if cancelCfg.HMACSecret != "" {
 			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -507,7 +543,7 @@ func tokenErrorResponse(w http.ResponseWriter, err error) {
 // makeGetCancelHandler serves the confirmation form. It validates the token,
 // peeks the store for metadata without consuming the entry, and queries
 // Transmission for live download progress via getProgress.
-func makeGetCancelHandler(store *Store, cfg CancelConfig, getProgress progressFunc, accessLog *logrus.Logger) http.HandlerFunc {
+func makeGetCancelHandler(store *Store, cfg NotificationsConfig, getProgress progressFunc, accessLog *logrus.Logger) http.HandlerFunc {
 	secret := []byte(cfg.HMACSecret)
 	tmpl := template.Must(template.New("cancel").Parse(cancelTmpl))
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -586,7 +622,7 @@ func makeGetCancelHandler(store *Store, cfg CancelConfig, getProgress progressFu
 // makePostCancelHandler processes the confirmation form submission. It re-validates
 // the token, removes the torrent from Transmission, and only then consumes the
 // store entry so users can retry if the Transmission call fails.
-func makePostCancelHandler(store *Store, cfg CancelConfig, remove removeFunc, accessLog *logrus.Logger) http.HandlerFunc {
+func makePostCancelHandler(store *Store, cfg NotificationsConfig, remove removeFunc, accessLog *logrus.Logger) http.HandlerFunc {
 	secret := []byte(cfg.HMACSecret)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -657,6 +693,182 @@ func makePostCancelHandler(store *Store, cfg CancelConfig, remove removeFunc, ac
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "Download cancelled.") //nolint:errcheck
+	}
+}
+
+// makeGetStartHandler serves the /start confirmation form. It validates the
+// token, peeks the StartStore for the feed/GUID pair without consuming the
+// entry, then resolves the HistoryRecord to render.
+func makeGetStartHandler(store *StartStore, cfg NotificationsConfig, history *HistoryFile, accessLog *logrus.Logger) http.HandlerFunc {
+	secret := []byte(cfg.HMACSecret)
+	tmpl := template.Must(template.New("start").Parse(startTmpl))
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		id := q.Get("id")
+		expires, err := parseCancelToken(secret, id, q.Get("expires"), q.Get("sig"))
+		if err != nil {
+			if accessLog != nil {
+				result := "invalid_token"
+				if errors.Is(err, ErrTokenExpired) {
+					result = "expired"
+				}
+				accessLog.WithFields(logrus.Fields{
+					"client_ip": clientIP(r),
+					"endpoint":  "/start",
+					"method":    r.Method,
+					"result":    result,
+				}).Warn("start access")
+			}
+			tokenErrorResponse(w, err)
+			return
+		}
+		sig := q.Get("sig")
+
+		meta, ok := store.Peek(id)
+		if !ok {
+			if accessLog != nil {
+				accessLog.WithFields(logrus.Fields{
+					"client_ip": clientIP(r),
+					"endpoint":  "/start",
+					"method":    r.Method,
+					"result":    "not_found",
+				}).Warn("start access")
+			}
+			http.Error(w, "torrent not found or already started", http.StatusNotFound)
+			return
+		}
+
+		rec, ok := history.FindRecord(meta.FeedName, meta.GUID)
+		if !ok {
+			if accessLog != nil {
+				accessLog.WithFields(logrus.Fields{
+					"client_ip": clientIP(r),
+					"endpoint":  "/start",
+					"method":    r.Method,
+					"result":    "not_found",
+				}).Warn("start access")
+			}
+			http.Error(w, "torrent not found or already started", http.StatusNotFound)
+			return
+		}
+
+		if accessLog != nil {
+			accessLog.WithFields(logrus.Fields{
+				"client_ip": clientIP(r),
+				"endpoint":  "/start",
+				"method":    r.Method,
+				"result":    "ok",
+			}).Info("start access")
+		}
+
+		published := ""
+		if !rec.Published.IsZero() {
+			published = rec.Published.Format(time.RFC1123)
+		}
+
+		data := startPageData{
+			Title:         rec.Title,
+			FeedName:      rec.Feed,
+			Labels:        rec.Labels,
+			SizeFormatted: formatGB(rec.SizeBytes),
+			Published:     published,
+			ID:            id,
+			Expires:       expires,
+			Sig:           sig,
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.Execute(w, data); err != nil {
+			log.WithError(err).Error("Failed to render start template")
+		}
+	}
+}
+
+// makePostStartHandler processes the /start confirmation form submission. It
+// re-validates the token, resolves the HistoryRecord, and submits it via
+// retry (retryHistoryItem). Unlike /cancel, the StartStore entry is never
+// consumed: retryHistoryItem's own outcome guard (dispatched/downloaded ->
+// error) already makes a replayed /start link idempotent.
+func makePostStartHandler(store *StartStore, cfg NotificationsConfig, history *HistoryFile, retry retryFunc, accessLog *logrus.Logger) http.HandlerFunc {
+	secret := []byte(cfg.HMACSecret)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form body", http.StatusBadRequest)
+			return
+		}
+
+		id := r.FormValue("id")
+		_, err := parseCancelToken(secret, id, r.FormValue("expires"), r.FormValue("sig"))
+		if err != nil {
+			if accessLog != nil {
+				result := "invalid_token"
+				if errors.Is(err, ErrTokenExpired) {
+					result = "expired"
+				}
+				accessLog.WithFields(logrus.Fields{
+					"client_ip": clientIP(r),
+					"endpoint":  "/start",
+					"method":    r.Method,
+					"result":    result,
+				}).Warn("start access")
+			}
+			tokenErrorResponse(w, err)
+			return
+		}
+
+		meta, ok := store.Peek(id)
+		if !ok {
+			if accessLog != nil {
+				accessLog.WithFields(logrus.Fields{
+					"client_ip": clientIP(r),
+					"endpoint":  "/start",
+					"method":    r.Method,
+					"result":    "not_found",
+				}).Warn("start access")
+			}
+			http.Error(w, "torrent not found or already started", http.StatusNotFound)
+			return
+		}
+
+		rec, ok := history.FindRecord(meta.FeedName, meta.GUID)
+		if !ok {
+			if accessLog != nil {
+				accessLog.WithFields(logrus.Fields{
+					"client_ip": clientIP(r),
+					"endpoint":  "/start",
+					"method":    r.Method,
+					"result":    "not_found",
+				}).Warn("start access")
+			}
+			http.Error(w, "torrent not found or already started", http.StatusNotFound)
+			return
+		}
+
+		if _, err := retry(rec); err != nil {
+			log.WithError(err).Warnf("Failed to start torrent for %q", rec.Title)
+			if accessLog != nil {
+				accessLog.WithFields(logrus.Fields{
+					"client_ip": clientIP(r),
+					"endpoint":  "/start",
+					"method":    r.Method,
+					"result":    "error",
+				}).Warn("start access")
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if accessLog != nil {
+			accessLog.WithFields(logrus.Fields{
+				"client_ip": clientIP(r),
+				"endpoint":  "/start",
+				"method":    r.Method,
+				"result":    "started",
+			}).Info("start access")
+		}
+		log.Infof("Manually started download via web confirmation: %q (start-id %s)", rec.Title, id)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "Torrent submitted.") //nolint:errcheck
 	}
 }
 

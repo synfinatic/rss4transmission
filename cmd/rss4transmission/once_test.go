@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -606,6 +607,93 @@ func TestDispatch_RealSubmit_StopsProcessing(t *testing.T) {
 	records := ctx.History.GetRecords()
 	require.Len(t, records, 1)
 	assert.Equal(t, "dispatched", records[0].Outcome)
+}
+
+func TestDispatch_Notify_DoesNotSubmitToTransmission(t *testing.T) {
+	requests := 0
+	transmissionSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer transmissionSrv.Close()
+	endpoint, err := url.Parse(transmissionSrv.URL)
+	require.NoError(t, err)
+	client, err := transmissionrpc.New(endpoint, nil)
+	require.NoError(t, err)
+
+	c := makeCandidate("guid1", map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"}, nil)
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil, nil)
+	feedCfg.Action = "notify"
+	keys := []string{"series=MotoGP|round=RD01|session=Race"}
+
+	ctx := &RunContext{
+		Cache:        emptyCache(),
+		History:      &HistoryFile{guidIndex: map[string]int{}},
+		Transmission: client,
+	}
+	cmd := &OnceCmd{}
+	stop := cmd.dispatch(ctx, feedCfg, "testfeed", c, keys)
+
+	assert.True(t, stop, "a notify dispatch must stop processing like a real submit")
+	assert.Equal(t, 0, requests, "Action: notify must not submit to Transmission")
+
+	records := ctx.History.GetRecords()
+	require.Len(t, records, 1)
+	assert.Equal(t, "notified", records[0].Outcome)
+
+	assert.True(t, ctx.Cache.Exists("testfeed", c.item), "cache should still record the notified GUID")
+}
+
+func TestDispatch_Notify_SendsNtfyAndRegistersStartStore(t *testing.T) {
+	var captured *http.Request
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+
+	ntfyCfg := NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}
+	require.NoError(t, ntfyCfg.Validate())
+
+	c := makeCandidate("guid1", map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"}, nil)
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil, nil)
+	feedCfg.Action = "notify"
+	keys := []string{"series=MotoGP|round=RD01|session=Race"}
+
+	ctx := &RunContext{
+		Cache:   emptyCache(),
+		History: &HistoryFile{guidIndex: map[string]int{}},
+		Config: Config{
+			Ntfy: ntfyCfg,
+			Notifications: NotificationsConfig{
+				HMACSecret: "secret",
+				BaseURL:    "https://example.com",
+				TokenTTLH:  24,
+			},
+		},
+		StartStore:         NewStartStore(time.Hour),
+		StartRoutesEnabled: true,
+	}
+	cmd := &OnceCmd{}
+	stop := cmd.dispatch(ctx, feedCfg, "testfeed", c, keys)
+	assert.True(t, stop)
+
+	require.NotNil(t, captured, "ntfy should have been called")
+	assert.Equal(t, "Torrent Found", captured.Header.Get("Title"))
+	actions := captured.Header.Get("Actions")
+	require.NotEmpty(t, actions, "notify action must include a start link")
+	assert.Contains(t, actions, "https://example.com/start?id=")
+
+	idx := strings.Index(actions, "id=")
+	require.True(t, idx >= 0)
+	idPart := actions[idx+len("id="):]
+	if amp := strings.Index(idPart, "&"); amp >= 0 {
+		idPart = idPart[:amp]
+	}
+	meta, ok := ctx.StartStore.Peek(idPart)
+	require.True(t, ok, "start link id should be registered in StartStore")
+	assert.Equal(t, "testfeed", meta.FeedName)
+	assert.Equal(t, "guid1", meta.GUID)
 }
 
 // --- retryHistoryItem ---

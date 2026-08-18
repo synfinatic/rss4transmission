@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestWatchCmd_HasHistoryFileField(t *testing.T) {
@@ -62,6 +64,62 @@ func TestRunContext_NoPublicListenEnabledField(t *testing.T) {
 	if ok {
 		t.Error("RunContext must not have a PublicListenEnabled field; use CancelRoutesEnabled instead")
 	}
+}
+
+func TestRunContext_HasStartRoutesEnabledField(t *testing.T) {
+	_, ok := reflect.TypeOf(RunContext{}).FieldByName("StartRoutesEnabled")
+	if !ok {
+		t.Error("RunContext must have a StartRoutesEnabled field")
+	}
+}
+
+func TestRunContext_HasStartStoreField(t *testing.T) {
+	_, ok := reflect.TypeOf(RunContext{}).FieldByName("StartStore")
+	if !ok {
+		t.Error("RunContext must have a StartStore field")
+	}
+}
+
+// --- warnNotifyFeedsWithoutHistory ---
+
+func TestWarnNotifyFeedsWithoutHistory_WarnsWhenHistoryNil(t *testing.T) {
+	origLog := log
+	defer func() { log = origLog }()
+	lg, buf := makeTestAccessLogger()
+	log = lg
+
+	feeds := []Feed{
+		{Name: "shows", Action: "notify"},
+		{Name: "movies", Action: "download"},
+	}
+	warnNotifyFeedsWithoutHistory(feeds, nil)
+
+	assert.Contains(t, buf.String(), "shows")
+	assert.NotContains(t, buf.String(), "movies")
+}
+
+func TestWarnNotifyFeedsWithoutHistory_NoWarningWhenHistoryConfigured(t *testing.T) {
+	origLog := log
+	defer func() { log = origLog }()
+	lg, buf := makeTestAccessLogger()
+	log = lg
+
+	feeds := []Feed{{Name: "shows", Action: "notify"}}
+	warnNotifyFeedsWithoutHistory(feeds, emptyHistory())
+
+	assert.Empty(t, buf.String())
+}
+
+func TestWarnNotifyFeedsWithoutHistory_NoWarningWhenNoNotifyFeeds(t *testing.T) {
+	origLog := log
+	defer func() { log = origLog }()
+	lg, buf := makeTestAccessLogger()
+	log = lg
+
+	feeds := []Feed{{Name: "movies", Action: "download"}}
+	warnNotifyFeedsWithoutHistory(feeds, nil)
+
+	assert.Empty(t, buf.String())
 }
 
 func TestConfig_NoHistoryFileField(t *testing.T) {

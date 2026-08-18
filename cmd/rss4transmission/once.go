@@ -41,15 +41,15 @@ func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, meta Cancel
 
 	var cancelURL, cancelID string
 	if ctx.CancelRoutesEnabled &&
-		ctx.Config.Cancel.HMACSecret != "" &&
-		ctx.Config.Cancel.BaseURL != "" &&
+		ctx.Config.Notifications.HMACSecret != "" &&
+		ctx.Config.Notifications.BaseURL != "" &&
 		ctx.CancelStore != nil &&
 		torrentID != 0 {
 		cancelID = newUUID()
-		ttl := time.Duration(ctx.Config.Cancel.TokenTTLH) * time.Hour
-		expires, sig := GenerateToken([]byte(ctx.Config.Cancel.HMACSecret), cancelID, ttl)
+		ttl := time.Duration(ctx.Config.Notifications.TokenTTLH) * time.Hour
+		expires, sig := GenerateToken([]byte(ctx.Config.Notifications.HMACSecret), cancelID, ttl)
 		cancelURL = fmt.Sprintf("%s/cancel?id=%s&expires=%d&sig=%s",
-			strings.TrimRight(ctx.Config.Cancel.BaseURL, "/"), cancelID, expires, sig)
+			strings.TrimRight(ctx.Config.Notifications.BaseURL, "/"), cancelID, expires, sig)
 	}
 
 	var guid, link string
@@ -82,6 +82,61 @@ func sendNtfyStarted(ctx *RunContext, feedCfg Feed, torrentID int64, meta Cancel
 	// never saw the cancel link and the store entry would be unreachable.
 	if cancelID != "" {
 		ctx.CancelStore.Register(cancelID, torrentID, meta)
+	}
+}
+
+// sendNtfySeen sends a "torrent found" notification to ntfy for a feed whose
+// Action is "notify". The start action button is only included when start
+// routes are registered (--private-listen or --public-listen) and all
+// Notifications config fields are set; otherwise a plain notification is
+// sent. No NoNotify guard is needed here: Feed.Validate() already forbids
+// combining Action: notify with NoNotify.
+func sendNtfySeen(ctx *RunContext, feedCfg Feed, feedName, guid string, meta CancelMetadata, item *gofeed.Item) {
+	if ctx.Config.Ntfy.BaseURL == "" || ctx.Config.Ntfy.Topic == "" {
+		return
+	}
+
+	var startURL, startID string
+	if ctx.StartRoutesEnabled &&
+		ctx.Config.Notifications.HMACSecret != "" &&
+		ctx.Config.Notifications.BaseURL != "" &&
+		ctx.StartStore != nil {
+		startID = newUUID()
+		ttl := time.Duration(ctx.Config.Notifications.TokenTTLH) * time.Hour
+		expires, sig := GenerateToken([]byte(ctx.Config.Notifications.HMACSecret), startID, ttl)
+		startURL = fmt.Sprintf("%s/start?id=%s&expires=%d&sig=%s",
+			strings.TrimRight(ctx.Config.Notifications.BaseURL, "/"), startID, expires, sig)
+	}
+
+	var itemGUID, link string
+	var published *time.Time
+	if item != nil {
+		itemGUID = item.GUID
+		link = item.Link
+		published = item.PublishedParsed
+	}
+	ntfyCtx := &NtfyTemplateContext{
+		Title:     meta.Title,
+		FeedName:  meta.FeedName,
+		Files:     meta.Files,
+		Labels:    meta.Labels,
+		SizeBytes: meta.SizeBytes,
+		Size:      formatGB(meta.SizeBytes),
+		GUID:      itemGUID,
+		Link:      link,
+		Published: published,
+		StartURL:  startURL,
+	}
+
+	client := NewNtfyClient(ctx.Config.Ntfy)
+	if err := client.SendTorrentSeen(ntfyCtx); err != nil {
+		log.WithError(err).Warn("Failed to send ntfy notification")
+		return
+	}
+	// Register only after the notification was delivered; if Send failed the user
+	// never saw the start link and the store entry would be unreachable.
+	if startID != "" {
+		ctx.StartStore.Register(startID, StartMetadata{FeedName: feedName, GUID: guid})
 	}
 }
 
@@ -351,6 +406,16 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 			return false
 		}
 		ctx.recordHistory(feedName, w.item.Item, "downloaded", "", labels)
+	} else if feedCfg.Action == "notify" {
+		meta := CancelMetadata{
+			Title:     w.item.Item.Title,
+			FeedName:  feedName,
+			Labels:    labels,
+			Files:     w.fileNames,
+			SizeBytes: extractSize(w.item.Item),
+		}
+		sendNtfySeen(ctx, feedCfg, feedName, w.item.Item.GUID, meta, w.item.Item)
+		ctx.recordHistory(feedName, w.item.Item, "notified", "", labels)
 	} else {
 		torrentBytes, err := ensureTorrentBytes(w.item, cmd.TorrentCacheDir, w.torrentBytes)
 		if err != nil {

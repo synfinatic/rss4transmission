@@ -128,6 +128,58 @@ func TestFeedValidate_Valid(t *testing.T) {
 	}
 }
 
+func TestFeedValidate_InvalidAction(t *testing.T) {
+	es := &ExtractorSet{Labels: map[string]LabelDef{}}
+	f := &Feed{
+		Extractor: "racing",
+		Identity:  []string{"series"},
+		Groups:    []Group{{Require: map[string][]string{"series": {"MotoGP"}}}},
+		Action:    "bogus",
+	}
+	if err := f.Validate("myfeed", map[string]*ExtractorSet{"racing": es}); err == nil {
+		t.Error("expected error for invalid Action value")
+	}
+}
+
+func TestFeedValidate_ActionNotifyConflictsWithNoNotify(t *testing.T) {
+	es := &ExtractorSet{Labels: map[string]LabelDef{}}
+	f := &Feed{
+		Extractor: "racing",
+		Identity:  []string{"series"},
+		Groups:    []Group{{Require: map[string][]string{"series": {"MotoGP"}}}},
+		Action:    "notify",
+		NoNotify:  true,
+	}
+	if err := f.Validate("myfeed", map[string]*ExtractorSet{"racing": es}); err == nil {
+		t.Error("expected error when Action: notify is combined with NoNotify")
+	}
+}
+
+func TestFeedValidate_ActionNotifyValid(t *testing.T) {
+	es := &ExtractorSet{Labels: map[string]LabelDef{}}
+	f := &Feed{
+		Extractor: "racing",
+		Identity:  []string{"series"},
+		Groups:    []Group{{Require: map[string][]string{"series": {"MotoGP"}}}},
+		Action:    "notify",
+	}
+	if err := f.Validate("myfeed", map[string]*ExtractorSet{"racing": es}); err != nil {
+		t.Errorf("expected Action: notify to be valid on its own: %v", err)
+	}
+}
+
+func TestFeedValidate_ActionDefaultEmpty(t *testing.T) {
+	es := &ExtractorSet{Labels: map[string]LabelDef{}}
+	f := &Feed{
+		Extractor: "racing",
+		Identity:  []string{"series"},
+		Groups:    []Group{{Require: map[string][]string{"series": {"MotoGP"}}}},
+	}
+	if err := f.Validate("myfeed", map[string]*ExtractorSet{"racing": es}); err != nil {
+		t.Errorf("expected empty Action (default download) to be valid: %v", err)
+	}
+}
+
 func TestValidateFeedNames_Unique(t *testing.T) {
 	feeds := []Feed{{Name: "A", URL: "https://a"}, {Name: "B", URL: "https://b"}}
 	if err := validateFeedNames(feeds); err != nil {
