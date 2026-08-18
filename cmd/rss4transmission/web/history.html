@@ -66,30 +66,35 @@
         th:nth-child(5), td:nth-child(5) { width: 18em; }
         th:nth-child(6), td:nth-child(6) { width: 7em; }
 
-        .btn-torrent {
-            background: #06c;
+        .btn-torrent, .btn-forget {
             color: #fff;
             border: none;
-            padding: 0.3em 0.9em;
+            border-radius: 4px;
+            padding: 0.35em 1em;
             font-family: monospace;
             font-size: 0.85em;
+            font-weight: bold;
+            letter-spacing: 0.02em;
             cursor: pointer;
+            transition: background-color 0.15s ease, transform 0.1s ease;
         }
-        .btn-torrent:hover { background: #08e; }
-        .btn-torrent:disabled { background: #444; color: #888; cursor: default; }
+        .btn-torrent:active, .btn-forget:active { transform: translateY(1px); }
+        .btn-torrent:disabled, .btn-forget:disabled {
+            background: #3a3a3a;
+            color: #777;
+            cursor: default;
+            transform: none;
+        }
+
+        .btn-torrent { background: #0668c4; }
+        .btn-torrent:hover:not(:disabled) { background: #1a86ec; }
 
         .btn-forget {
-            background: #555;
-            color: #fff;
-            border: none;
-            padding: 0.3em 0.9em;
-            font-family: monospace;
-            font-size: 0.85em;
-            cursor: pointer;
-            margin-left: 0.4em;
+            background: #3a3a3a;
+            color: #ccc;
+            margin-left: 0.6em;
         }
-        .btn-forget:hover { background: #777; }
-        .btn-forget:disabled { background: #444; color: #888; cursor: default; }
+        .btn-forget:hover:not(:disabled) { background: #4d4d4d; color: #fff; }
 
         .group-toggle { cursor: pointer; color: #888; user-select: none; display: inline-block; width: 1em; }
         .group-badge { color: #666; font-size: 0.82em; }
