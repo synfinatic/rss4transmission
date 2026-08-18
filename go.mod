@@ -11,7 +11,7 @@ require (
 	github.com/knadh/koanf v1.5.0
 	github.com/knadh/koanf/v2 v2.3.6
 	github.com/manifoldco/promptui v0.9.0
-	github.com/mmcdole/gofeed v1.4.0
+	github.com/mmcdole/gofeed v1.4.1
 	github.com/sirupsen/logrus v1.9.4
 	github.com/stretchr/testify v1.12.0
 	github.com/xhit/go-str2duration/v2 v2.1.0
@@ -21,7 +21,7 @@ require (
 	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/mmcdole/goxpp/v2 v2.0.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 )
 
 require (
@@ -30,7 +30,7 @@ require (
 	github.com/hekmon/cunits/v2 v2.1.0 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
-	golang.org/x/net v0.56.0 // indirect; security
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/net v0.57.0 // indirect; security
+	golang.org/x/text v0.40.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
