@@ -34,24 +34,24 @@ a single-capture regex and an optional normalize map:
 
 ```yaml
 Extractors:
-  motogp:
+  talkshow:
     Labels:
-      series:
-        Regexp: '(?i)(MotoGP|Moto2|Moto3)'
+      edition:
+        Regexp: '(?i)(US|UK|AU)\.Edition'
         Normalize:
-          '(?i)motogp': 'MotoGP'
-          '(?i)moto2': 'Moto2'
-          '(?i)moto3': 'Moto3'
-      round:
-        Regexp: 'RD(\d+)'
-      session:
-        Regexp: '(?i)(Race|Qualifying|Sprint|Practice\d*)'
+          '(?i)us': 'US'
+          '(?i)uk': 'UK'
+          '(?i)au': 'AU'
+      episode:
+        Regexp: 'E(\d+)'
+      segment:
+        Regexp: '(?i)(FullEpisode|Recap|Preview)'
         Normalize:
-          'Qual[^.]*': 'Qualifying'
+          'Rec[^.]*': 'Recap'
       resolution:
         Regexp: '(\d{3,4}p)'
       network:
-        Regexp: '(?i)\.(TNT|NBC|Sky|BT)\.'
+        Regexp: '(?i)\.(NBC|Sky|BT|AMZN)\.'
 ```
 
 - **Regexp**: must contain exactly one capture group — the value of that group becomes the label
@@ -68,23 +68,23 @@ A feed enters label mode when `Extractor` is set:
 
 ```yaml
 Feeds:
-  - Name: MotoGP2024
+  - Name: TalkShowUS
     URL: https://rss.example.com/feed
-    DownloadPath: /torrents/motogp
+    DownloadPath: /torrents/talkshow
     Exclude:
-      - '.*Highlights.*'
-    Extractor: motogp          # references an Extractor defined above
-    Identity: [series, round, session]   # uniquely identifies one event
+      - '.*Bloopers.*'
+    Extractor: talkshow          # references an Extractor defined above
+    Identity: [edition, episode, segment]   # uniquely identifies one broadcast
     Prefer:
       - label: resolution
         order: [1080p, 720p]   # 1080p wins over 720p; unlisted values rank lowest
       - label: network
-        order: [TNT, NBC]      # tiebreaker if resolution is equal
+        order: [NBC, Sky]      # tiebreaker if resolution is equal
     Groups:
       - Require:
-          series: [MotoGP]
+          edition: [US]
       - Require:
-          series: [Moto2, Moto3]
+          edition: [UK, AU]
 ```
 
 **How it works:**
@@ -95,11 +95,11 @@ Feeds:
    values).
 3. Each passing candidate's `.torrent` file is fetched and its file names are extracted. Title
    labels and file labels are unioned.
-4. Candidates sharing the same `Identity` key (e.g. `series=MotoGP|round=1|session=Race`) compete.
-   The winner is the highest-ranked candidate by the `Prefer` ordering not already bettered in the
-   seen cache.
-5. A multi-class bundle (one torrent covering MotoGP + Moto2 + Moto3 files) is submitted once but
-   recorded against all covered identity keys.
+4. Candidates sharing the same `Identity` key (e.g. `edition=US|episode=1|segment=FullEpisode`)
+   compete. The winner is the highest-ranked candidate by the `Prefer` ordering not already
+   bettered in the seen cache.
+5. A multi-edition bundle (one torrent covering the US + UK + AU files together) is submitted once
+   but recorded against all covered identity keys.
 
 ## Full Configuration Example
 
@@ -118,33 +118,33 @@ SeenFile:      /config/seen.json
 SeenCacheDays: 30  # prune records older than this many days
 
 Extractors:
-  motogp:
+  talkshow:
     Labels:
-      series:
-        Regexp: '(?i)(MotoGP|Moto2|Moto3)'
+      edition:
+        Regexp: '(?i)(US|UK|AU)\.Edition'
         Normalize:
-          '(?i)motogp': 'MotoGP'
-          '(?i)moto2': 'Moto2'
-          '(?i)moto3': 'Moto3'
-      round:
-        Regexp: 'RD(\d+)'
-      session:
-        Regexp: '(?i)(Race|Qualifying|Sprint)'
+          '(?i)us': 'US'
+          '(?i)uk': 'UK'
+          '(?i)au': 'AU'
+      episode:
+        Regexp: 'E(\d+)'
+      segment:
+        Regexp: '(?i)(FullEpisode|Recap)'
         Normalize:
-          'Qual[^.]*': 'Qualifying'
+          'Rec[^.]*': 'Recap'
       resolution:
         Regexp: '(\d{3,4}p)'
 
 Feeds:
-  - Name: MotoGP2024
+  - Name: TalkShow2024
     URL: https://rss.example.com/feed
-    DownloadPath: /torrents/motogp
-    Extractor: motogp
-    Identity: [series, round, session]
+    DownloadPath: /torrents/talkshow
+    Extractor: talkshow
+    Identity: [edition, episode, segment]
     Prefer:
       - label: resolution
         order: [1080p, 720p]
     Groups:
       - Require:
-          series: [MotoGP, Moto2, Moto3]
+          edition: [US, UK, AU]
 ```

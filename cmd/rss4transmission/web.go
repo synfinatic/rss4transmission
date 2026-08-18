@@ -29,6 +29,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -142,6 +143,114 @@ func parseListenAddr(s string) (string, error) {
 	return fmt.Sprintf("127.0.0.1:%d", p), nil
 }
 
+// historyRow decorates a HistoryRecord with grouping metadata for template
+// rendering: rows sharing a GUID (the same RSS item seen by multiple feed
+// configs that share an RSS URL) are grouped into one expandable entry so a
+// torrent that only matches one of several sibling feeds doesn't produce a
+// wall of "no group matched labels" rows.
+type historyRow struct {
+	HistoryRecord
+	IsPrimary bool
+	GroupSize int // total records sharing this GUID; 1 = ungrouped
+}
+
+// isNoGroupMatched reports whether a record's feed never applied to the item
+// at all (its Groups never matched the item's labels). This is the least
+// informative reason a record can carry — even below an excluded or errored
+// record, which at least mean the feed engaged with the item — so it's
+// checked before outcomeRank when picking a group's primary row.
+func isNoGroupMatched(r HistoryRecord) bool {
+	return r.Outcome == "skipped" && r.Reason == skipReasonNoGroupMatched
+}
+
+// bestGroupScore returns the highest Group.MatchScore across groups for the
+// given labels, treating a feed with no groups — or whose every group is
+// disqualified (contradicted) or simply uninformative (no positive evidence)
+// — as 0, the same as a feed with no distinguishing evidence at all.
+func bestGroupScore(groups []Group, labels map[string]string) int {
+	best := 0
+	for _, g := range groups {
+		if s := g.MatchScore(labels); s > best {
+			best = s
+		}
+	}
+	return best
+}
+
+// groupHistoryRows reorders records so rows sharing a GUID are contiguous.
+// Within a group, the primary row is chosen by: "no group matched labels"
+// records always sort last (see isNoGroupMatched); among the rest, the most
+// interesting outcome wins (outcomeRank); ties then prefer the record whose
+// own extracted labels give the strongest positive match against its own
+// feed's Groups (see bestGroupScore) — this matters because sibling feeds
+// sharing an Extractor can extract identical labels for an item that isn't
+// theirs, so only labels that actually satisfy a feed's own Require count as
+// evidence; any remaining tie breaks alphabetically by Feed. The chosen
+// record is marked IsPrimary and placed first; the rest follow sorted the
+// same way. Group order follows first appearance in the input. Records with
+// an empty GUID are never grouped with each other or anything else.
+func groupHistoryRows(records []HistoryRecord, feedGroups func(name string) []Group) []historyRow {
+	if feedGroups == nil {
+		feedGroups = func(string) []Group { return nil }
+	}
+	type group struct {
+		key     string
+		records []HistoryRecord
+	}
+
+	order := make([]string, 0, len(records))
+	groups := make(map[string]*group, len(records))
+	empties := 0
+	for _, r := range records {
+		var key string
+		if r.GUID == "" {
+			// Each empty-GUID record is its own singleton group.
+			empties++
+			key = fmt.Sprintf("\x00empty-%d", empties)
+		} else {
+			key = r.GUID
+		}
+
+		g, ok := groups[key]
+		if !ok {
+			g = &group{key: key}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.records = append(g.records, r)
+	}
+
+	rows := make([]historyRow, 0, len(records))
+	for _, key := range order {
+		g := groups[key]
+		recs := append([]HistoryRecord(nil), g.records...)
+		sort.SliceStable(recs, func(i, j int) bool {
+			ni, nj := isNoGroupMatched(recs[i]), isNoGroupMatched(recs[j])
+			if ni != nj {
+				return nj // i sorts first when i is NOT a no-group-matched record
+			}
+			ri, rj := outcomeRank(recs[i].Outcome), outcomeRank(recs[j].Outcome)
+			if ri != rj {
+				return ri < rj
+			}
+			si := bestGroupScore(feedGroups(recs[i].Feed), recs[i].Labels)
+			sj := bestGroupScore(feedGroups(recs[j].Feed), recs[j].Labels)
+			if si != sj {
+				return si > sj // higher score sorts first
+			}
+			return recs[i].Feed < recs[j].Feed
+		})
+		for i, r := range recs {
+			rows = append(rows, historyRow{
+				HistoryRecord: r,
+				IsPrimary:     i == 0,
+				GroupSize:     len(recs),
+			})
+		}
+	}
+	return rows
+}
+
 // newWebMux builds the shared HTTP mux. If history is non-nil, the history
 // page is served at "/". When history and retry are both non-nil, POST /torrent
 // is also registered to re-submit a past skipped/excluded/error item.
@@ -149,8 +258,11 @@ func parseListenAddr(s string) (string, error) {
 // config; the Torrent button is hidden on the history page for records whose
 // feed no longer exists, since retrying one always fails with "feed ... is no
 // longer configured". A nil feedConfigured shows the button unconditionally.
+// feedGroups reports a feed's own configured Groups, used to break primary-row
+// ties in groupHistoryRows; a nil feedGroups falls back to alphabetical
+// ordering, same as if every feed had no groups.
 // The /healthz route is always registered.
-func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name string) bool) *http.ServeMux {
+func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name string) bool, feedGroups func(name string) []Group) *http.ServeMux {
 	if feedConfigured == nil {
 		feedConfigured = func(string) bool { return true }
 	}
@@ -166,6 +278,7 @@ func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name s
 			}
 		},
 		"feedConfigured": feedConfigured,
+		"sub":            func(a, b int) int { return a - b },
 	}
 	tmpl := template.Must(template.New("history").Funcs(funcMap).Parse(historyTmpl))
 
@@ -177,8 +290,9 @@ func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name s
 			for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
 				records[i], records[j] = records[j], records[i]
 			}
+			rows := groupHistoryRows(records, feedGroups)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if err := tmpl.Execute(w, records); err != nil {
+			if err := tmpl.Execute(w, rows); err != nil {
 				log.WithError(err).Error("Failed to render history template")
 			}
 		})

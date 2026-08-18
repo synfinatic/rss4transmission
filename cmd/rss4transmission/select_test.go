@@ -293,3 +293,59 @@ func TestGroupMatches_MultipleAcceptableValues(t *testing.T) {
 		t.Error("expected no match for series=MotoGP")
 	}
 }
+
+// --- Group.MatchScore ---
+
+func TestGroupMatchScore_AllRequiredMatch(t *testing.T) {
+	g := Group{Require: map[string][]string{
+		"series":  {"MotoGP"},
+		"session": {"Race", "Qualifying"},
+	}}
+	labels := map[string]string{"series": "MotoGP", "session": "Race"}
+	if got := g.MatchScore(labels); got != 2 {
+		t.Errorf("MatchScore = %d, want 2 (both Require keys present and matching)", got)
+	}
+}
+
+func TestGroupMatchScore_AbsentKeyNotCounted(t *testing.T) {
+	g := Group{Require: map[string][]string{
+		"series":  {"MotoGP"},
+		"session": {"Race"},
+	}}
+	labels := map[string]string{"series": "MotoGP"} // session absent, not a contradiction
+	if got := g.MatchScore(labels); got != 1 {
+		t.Errorf("MatchScore = %d, want 1 (absent key contributes nothing, but isn't a contradiction)", got)
+	}
+}
+
+func TestGroupMatchScore_PresentContradictionDisqualifiesWholeGroup(t *testing.T) {
+	// series is present but wrong; session also matches, but the contradiction
+	// on series must disqualify the whole group, not just fail to count series.
+	g := Group{Require: map[string][]string{
+		"series":  {"Moto2"},
+		"session": {"Race"},
+	}}
+	labels := map[string]string{"series": "MotoGP", "session": "Race"}
+	if got := g.MatchScore(labels); got != -1 {
+		t.Errorf("MatchScore = %d, want -1 (a present contradicting key disqualifies the group "+
+			"even though another key matches)", got)
+	}
+}
+
+func TestGroupMatchScore_NoOverlapAtAll(t *testing.T) {
+	g := Group{Require: map[string][]string{
+		"series": {"MotoAmerica"},
+	}}
+	labels := map[string]string{"network": "TNT"} // no overlap, no contradiction either
+	if got := g.MatchScore(labels); got != 0 {
+		t.Errorf("MatchScore = %d, want 0 (no positive evidence, but no contradiction)", got)
+	}
+}
+
+func TestGroupMatchScore_EmptyRequire(t *testing.T) {
+	g := Group{Require: map[string][]string{}}
+	labels := map[string]string{"series": "MotoGP"}
+	if got := g.MatchScore(labels); got != 0 {
+		t.Errorf("MatchScore = %d, want 0 (nothing to require, nothing to score)", got)
+	}
+}

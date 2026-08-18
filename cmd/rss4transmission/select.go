@@ -29,6 +29,29 @@ func (g *Group) Matches(labels map[string]string) bool {
 	return true
 }
 
+// MatchScore returns how many Require keys are present in labels and satisfy
+// their allowed values, or -1 if any present key contradicts a Require
+// constraint. A contradiction on even one key is strong evidence this group
+// doesn't own the item — sibling feeds sharing an Extractor can otherwise
+// extract identity-looking labels (e.g. class=MotoGP) for an item that isn't
+// theirs, and that false positive shouldn't be diluted or offset by other,
+// incidental keys matching. A key simply absent from labels doesn't
+// contradict; it's just not counted.
+func (g *Group) MatchScore(labels map[string]string) int {
+	score := 0
+	for label, acceptable := range g.Require {
+		v, ok := labels[label]
+		if !ok {
+			continue
+		}
+		if !slices.Contains(acceptable, v) {
+			return -1
+		}
+		score++
+	}
+	return score
+}
+
 // IdentityKey computes a stable string key from the given labels using the
 // declared identity label names. Returns ("", false) if any identity label is
 // absent from labels.

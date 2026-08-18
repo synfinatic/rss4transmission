@@ -170,21 +170,27 @@ func (cmd *OnceCmd) feedAllowed(feedName string) bool {
 // should stop processing further feeds this run — either a torrent was
 // dispatched/downloaded, or the user selected Quit interactively.
 func (cmd *OnceCmd) processFeed(ctx *RunContext, feedName string, feedCfg Feed, rss *gofeed.Feed, extractor *ExtractorSet) bool {
-	// Phase 1: Pre-filter candidates via Exclude + size, then extract title labels.
+	// Phase 1: Extract title labels for every item, then pre-filter candidates via
+	// Exclude + size. Labels are extracted before the Check() filter runs so that
+	// excluded items still carry their labels into history — matching what
+	// skipped/dispatched records show, and giving the history page's group
+	// primary-row tie-break (bestGroupScore) evidence to work with even when every
+	// sibling feed excludes the same item.
 	var candidates []*candidate
 	for _, item := range rss.Items {
 		fi := &FeedItem{Feed: feedName, Item: item}
 		if ctx.Cache.Exists(feedName, fi) {
 			continue
 		}
+		titleLabels := extractor.ExtractLabels(item.Title)
 		ok, reason := feedCfg.Check(item)
 		if !ok {
-			ctx.recordHistory(feedName, item, "excluded", reason, nil)
+			ctx.recordHistory(feedName, item, "excluded", reason, titleLabels)
 			continue
 		}
 		candidates = append(candidates, &candidate{
 			item:        fi,
-			titleLabels: extractor.ExtractLabels(item.Title),
+			titleLabels: titleLabels,
 			defaults:    extractor.Defaults(),
 		})
 	}
@@ -493,6 +499,12 @@ func ensureTorrentBytes(item *FeedItem, cacheDir string, existing []byte) ([]byt
 // keys. Referenced in markCacheRejectedSeen to avoid string duplication.
 const skipReasonCacheBetter = "better version already in cache"
 
+// skipReasonNoGroupMatched is the reason string used when a candidate's labels
+// never matched any of the feed's Groups — i.e. this feed config never applied
+// to the item at all. Also referenced by groupHistoryRows in web.go, which
+// treats it as the least informative skip reason among siblings in a group.
+const skipReasonNoGroupMatched = "no group matched labels"
+
 // markCacheRejectedSeen adds the GUID of each cache-rejected candidate to the
 // seen cache. On the next run, Exists() catches these GUIDs in Phase 1, before
 // the torrent disk read, eliminating redundant I/O for items that will never
@@ -545,7 +557,7 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) ([]*
 	skipReasons := map[*candidate]string{}
 	for _, c := range candidates {
 		if !matchedCands[c] {
-			skipReasons[c] = "no group matched labels"
+			skipReasons[c] = skipReasonNoGroupMatched
 		} else if !inBest[c] {
 			skipReasons[c] = "outranked by better candidate in this run"
 		}
@@ -582,7 +594,7 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) ([]*
 		}
 	}
 	for c, reason := range skipReasons {
-		if reason != "no group matched labels" {
+		if reason != skipReasonNoGroupMatched {
 			continue
 		}
 		if key, ok := titleOnlyKey(c); ok {
