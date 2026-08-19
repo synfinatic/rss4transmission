@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +39,31 @@ func warnNotifyFeedsWithoutHistory(feeds []Feed, history *HistoryFile) {
 				"it will never be downloadable via /start", f.Name)
 		}
 	}
+}
+
+// logNtfyStatus reports at startup whether ntfy push notifications are
+// enabled and, if so, which topics are active: Topic gates torrent
+// started/found/completed notifications, AlertTopic gates config-reload and
+// port-state notifications, and either can be configured without the other.
+func logNtfyStatus(cfg NtfyConfig) {
+	if cfg.BaseURL == "" {
+		log.Infof("ntfy notifications disabled (Ntfy.BaseURL not configured)")
+		return
+	}
+
+	var active []string
+	if cfg.Topic != "" {
+		active = append(active, fmt.Sprintf("torrent (topic: %s)", cfg.Topic))
+	}
+	if cfg.AlertTopic != "" {
+		active = append(active, fmt.Sprintf("alert (topic: %s)", cfg.AlertTopic))
+	}
+
+	if len(active) == 0 {
+		log.Infof("ntfy notifications configured but no topics set; no notifications will be sent")
+		return
+	}
+	log.Infof("ntfy notifications enabled: %s", strings.Join(active, ", "))
 }
 
 // retryLoadConfig calls tryLoad repeatedly, sleeping interval between attempts.
@@ -244,6 +271,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	}
 
 	warnNotifyFeedsWithoutHistory(ctx.Config.Feeds, ctx.History)
+	logNtfyStatus(ctx.Config.Ntfy)
 
 	var removeT removeFunc
 	var getProgress progressFunc

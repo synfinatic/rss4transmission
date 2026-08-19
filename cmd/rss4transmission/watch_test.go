@@ -122,6 +122,68 @@ func TestWarnNotifyFeedsWithoutHistory_NoWarningWhenNoNotifyFeeds(t *testing.T) 
 	assert.Empty(t, buf.String())
 }
 
+// --- logNtfyStatus ---
+
+func TestLogNtfyStatus_DisabledWhenNoBaseURL(t *testing.T) {
+	origLog := log
+	defer func() { log = origLog }()
+	lg, buf := makeTestAccessLogger()
+	log = lg
+
+	logNtfyStatus(NtfyConfig{Topic: "torrents", AlertTopic: "alerts"})
+
+	assert.Contains(t, buf.String(), "disabled")
+	assert.NotContains(t, buf.String(), "torrents")
+	assert.NotContains(t, buf.String(), "alerts")
+}
+
+func TestLogNtfyStatus_TopicOnly(t *testing.T) {
+	origLog := log
+	defer func() { log = origLog }()
+	lg, buf := makeTestAccessLogger()
+	log = lg
+
+	logNtfyStatus(NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "torrents"})
+
+	assert.Contains(t, buf.String(), "torrents")
+	assert.NotContains(t, buf.String(), "alerts")
+}
+
+func TestLogNtfyStatus_AlertTopicOnly(t *testing.T) {
+	origLog := log
+	defer func() { log = origLog }()
+	lg, buf := makeTestAccessLogger()
+	log = lg
+
+	logNtfyStatus(NtfyConfig{BaseURL: "https://ntfy.sh", AlertTopic: "alerts"})
+
+	assert.Contains(t, buf.String(), "alerts")
+	assert.NotContains(t, buf.String(), "torrents")
+}
+
+func TestLogNtfyStatus_BothTopics(t *testing.T) {
+	origLog := log
+	defer func() { log = origLog }()
+	lg, buf := makeTestAccessLogger()
+	log = lg
+
+	logNtfyStatus(NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "torrents", AlertTopic: "alerts"})
+
+	assert.Contains(t, buf.String(), "torrents")
+	assert.Contains(t, buf.String(), "alerts")
+}
+
+func TestLogNtfyStatus_BaseURLSetButNoTopics(t *testing.T) {
+	origLog := log
+	defer func() { log = origLog }()
+	lg, buf := makeTestAccessLogger()
+	log = lg
+
+	logNtfyStatus(NtfyConfig{BaseURL: "https://ntfy.sh"})
+
+	assert.Contains(t, buf.String(), "no topics")
+}
+
 func TestConfig_NoHistoryFileField(t *testing.T) {
 	_, ok := reflect.TypeOf(Config{}).FieldByName("HistoryFile")
 	if ok {
