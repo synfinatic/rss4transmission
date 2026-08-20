@@ -205,7 +205,7 @@ accept `text/template` strings, with their own small context:
 
 When the `SpeedTest` feature decides the VPN egress is too slow and asks Gluetun to re-pick a
 server, a single alert is sent to `Ntfy.AlertTopic` using `VpnRotatedTitle`/`VpnRotatedBody`.
-See [VPN Speed Testing](deployment.md#vpn-speed-testing) for how that decision is made.
+See [VPN Speed Testing](speedtest.md) for how that decision is made.
 
 The alert fires when the rotation is *requested*. The VPN restart itself happens on the
 port-check loop's next 5-minute tick.

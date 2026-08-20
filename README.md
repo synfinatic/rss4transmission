@@ -60,8 +60,9 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
 ## Documentation
 
 - [Deployment & Docker Compose](docs/deployment.md) — Docker setup, Transmission config,
-  Gluetun integration, VPN speed testing and egress rotation, seen cache, torrent file cache,
-  environment variables
+  Gluetun integration, seen cache, torrent file cache, environment variables
+- [VPN Speed Testing](docs/speedtest.md) — measuring throughput over the Gluetun tunnel,
+  automatic egress rotation, bandwidth cost, `/speedtest` page and `/metrics` endpoint
 - [Feeds & Labels](docs/feeds.md) — feed configuration, label extractors, identity
   deduplication, preference ranking, full config example
 - [Notifications & History](docs/notifications.md) — ntfy push notifications with customizable
