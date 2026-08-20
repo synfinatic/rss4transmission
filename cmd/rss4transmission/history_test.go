@@ -32,11 +32,12 @@ func TestOutcomeRank(t *testing.T) {
 	}{
 		{"dispatched", 0},
 		{"downloaded", 0},
-		{"skipped", 1},
-		{"excluded", 2},
-		{"error", 3},
-		{"unknown", 3},
-		{"", 3},
+		{"notified", 1},
+		{"skipped", 2},
+		{"excluded", 3},
+		{"error", 4},
+		{"unknown", 4},
+		{"", 4},
 	}
 	for _, tc := range cases {
 		if got := outcomeRank(tc.outcome); got != tc.want {
@@ -276,6 +277,36 @@ func TestAddOrUpdateRecord_SkippedToDispatched(t *testing.T) {
 
 	if h.Records[0].Outcome != "dispatched" {
 		t.Errorf("Outcome = %q, want dispatched (skipped should upgrade to dispatched)", h.Records[0].Outcome)
+	}
+}
+
+func TestAddOrUpdateRecord_NotifiedToDispatched(t *testing.T) {
+	h := emptyHistory()
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", makeGofeedItem("Show", "guid1"), "notified", "", nil))
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", makeGofeedItem("Show", "guid1"), "dispatched", "", nil))
+
+	if h.Records[0].Outcome != "dispatched" {
+		t.Errorf("Outcome = %q, want dispatched (notified should upgrade to dispatched)", h.Records[0].Outcome)
+	}
+}
+
+func TestAddOrUpdateRecord_DispatchedToNotified_NoDowngrade(t *testing.T) {
+	h := emptyHistory()
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", makeGofeedItem("Show", "guid1"), "dispatched", "", nil))
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", makeGofeedItem("Show", "guid1"), "notified", "", nil))
+
+	if h.Records[0].Outcome != "dispatched" {
+		t.Errorf("Outcome = %q, want dispatched (should not downgrade to notified)", h.Records[0].Outcome)
+	}
+}
+
+func TestAddOrUpdateRecord_SkippedToNotified_Updates(t *testing.T) {
+	h := emptyHistory()
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", makeGofeedItem("Show", "guid1"), "skipped", "", nil))
+	h.AddOrUpdateRecord(NewHistoryRecord("feed", makeGofeedItem("Show", "guid1"), "notified", "", nil))
+
+	if h.Records[0].Outcome != "notified" {
+		t.Errorf("Outcome = %q, want notified (should upgrade from skipped)", h.Records[0].Outcome)
 	}
 }
 

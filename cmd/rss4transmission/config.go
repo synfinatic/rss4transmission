@@ -27,14 +27,14 @@ import (
 )
 
 var ConfigDefaults = map[string]interface{}{
-	"Transmission.Host":     "localhost",
-	"Transmission.Port":     9091,
-	"Transmission.HTTPS":    false,
-	"Transmission.Path":     "/transmission/rpc",
-	"Transmission.Username": "admin",
-	"Transmission.Password": "admin",
-	"SeenCacheDays":         30,
-	"Cancel.TokenTTLH":      24,
+	"Transmission.Host":       "localhost",
+	"Transmission.Port":       9091,
+	"Transmission.HTTPS":      false,
+	"Transmission.Path":       "/transmission/rpc",
+	"Transmission.Username":   "admin",
+	"Transmission.Password":   "admin",
+	"SeenCacheDays":           30,
+	"Notifications.TokenTTLH": 24,
 }
 
 type Config struct {
@@ -43,7 +43,7 @@ type Config struct {
 	Transmission  Transmission             `koanf:"Transmission"`
 	Gluetun       GluetunConfig            `koanf:"Gluetun"`
 	Ntfy          NtfyConfig               `koanf:"Ntfy"`
-	Cancel        CancelConfig             `koanf:"Cancel"`
+	Notifications NotificationsConfig      `koanf:"Notifications"`
 	PortCheck     PortCheckConfig          `koanf:"PortCheck"`
 	SeenFile      string                   `koanf:"SeenFile"`
 	SeenCacheDays int                      `koanf:"SeenCacheDays"`
@@ -59,6 +59,9 @@ type NtfyConfig struct {
 	CompletedTitle    string `koanf:"CompletedTitle"`
 	CompletedBody     string `koanf:"CompletedBody"`
 	CompletedPriority string `koanf:"CompletedPriority"`
+	SeenTitle         string `koanf:"SeenTitle"`
+	SeenBody          string `koanf:"SeenBody"`
+	SeenPriority      string `koanf:"SeenPriority"`
 
 	AlertTopic             string `koanf:"AlertTopic"`
 	ConfigReloadedTitle    string `koanf:"ConfigReloadedTitle"`
@@ -78,6 +81,8 @@ type NtfyConfig struct {
 	startedBodyTmpl         *template.Template
 	completedTitleTmpl      *template.Template
 	completedBodyTmpl       *template.Template
+	seenTitleTmpl           *template.Template
+	seenBodyTmpl            *template.Template
 	configReloadedTitleTmpl *template.Template
 	configReloadedBodyTmpl  *template.Template
 	configFailedTitleTmpl   *template.Template
@@ -92,7 +97,7 @@ type PortCheckConfig struct {
 	Enabled bool `koanf:"Enabled"`
 }
 
-type CancelConfig struct {
+type NotificationsConfig struct {
 	HMACSecret string `koanf:"HMACSecret"` //nolint:gosec
 	BaseURL    string `koanf:"BaseURL"`
 	TokenTTLH  int    `koanf:"TokenTTLH"`
@@ -126,6 +131,7 @@ type Feed struct {
 	NoValidateCert bool     `koanf:"NoValidateCert"`
 	NoSubmit       bool     `koanf:"NoSubmit"`
 	NoNotify       bool     `koanf:"NoNotify"`
+	Action         string   `koanf:"Action"`
 	MaxSize        string   `koanf:"MaxSize"`
 	MinSize        string   `koanf:"MinSize"`
 
@@ -172,6 +178,12 @@ func (f *Feed) Validate(name string, extractors map[string]*ExtractorSet) error 
 	}
 	if len(f.Groups) == 0 {
 		return fmt.Errorf("feed %q: Groups must contain at least one entry", name)
+	}
+	if f.Action != "" && f.Action != "download" && f.Action != "notify" {
+		return fmt.Errorf("feed %q: Action must be %q or %q, got %q", name, "download", "notify", f.Action)
+	}
+	if f.Action == "notify" && f.NoNotify {
+		return fmt.Errorf("feed %q: NoNotify cannot be combined with Action: notify", name)
 	}
 	return nil
 }

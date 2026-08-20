@@ -2,12 +2,16 @@
 
 ## Overview
 
-RSS4Transmission supports four kinds of push notifications via [ntfy](https://ntfy.sh):
+RSS4Transmission supports five kinds of push notifications via [ntfy](https://ntfy.sh):
 
 - **Torrent started** — sent by rss4transmission immediately after submitting a torrent to
   Transmission. Includes a **More Info** action button that opens a browser confirmation
   page showing torrent details and live download progress. Confirming removes the torrent from
   Transmission.
+- **Torrent found** — sent instead of "Torrent started" for feeds configured with
+  `Action: notify` (see [Notify-only feeds](feeds.md#notify-only-feeds)). Includes a **Start
+  Download** action button that opens a confirmation page; nothing is submitted to Transmission
+  until you confirm there. See [Start Endpoint](#start-endpoint) below.
 - **Torrent completed** — sent via the `POST /notify-complete` endpoint, which is called by
   `bin/torrent-complete.sh` running as Transmission's "torrent done" hook. The endpoint renders
   your configured templates and sends the notification to ntfy.
@@ -17,9 +21,9 @@ RSS4Transmission supports four kinds of push notifications via [ntfy](https://nt
   (e.g. a YAML parse error), so a bad edit is visible immediately without tailing logs.
 - **Port closed / reopened** — see [Port Notifications](#port-notifications) below.
 
-## ntfy and Cancel Configuration
+## ntfy and Notifications Configuration
 
-Add `Ntfy` and `Cancel` blocks to your config file:
+Add `Ntfy` and `Notifications` blocks to your config file:
 
 ```yaml
 Ntfy:
@@ -28,10 +32,10 @@ Ntfy:
   AlertTopic: <your-alert-topic-name>      # ntfy topic to publish to (config-reload / port alerts)
   Token:      tk_<your-access-token>       # ntfy access token
 
-Cancel:
+Notifications:
   HMACSecret: <random-32-byte-hex>                   # generate: openssl rand -hex 32
   BaseURL:    https://rss4transmission.yourdomain.com # externally reachable URL
-  TokenTTLH:  24                                     # cancel link TTL in hours (default: 24)
+  TokenTTLH:  24                                     # cancel/start link TTL in hours (default: 24), shared by both
 
 # Only needed to enable the port-open check/alerts when Gluetun is NOT configured
 # (with Gluetun configured, the check runs automatically). See Port Notifications below.
@@ -50,6 +54,9 @@ PortCheck:
 | `Ntfy.CompletedTitle` | `"Torrent Complete"` | `text/template` string for the completed notification title |
 | `Ntfy.CompletedBody` | `"{{.Title}}\n{{.Dir}}"` | `text/template` string for the completed notification body |
 | `Ntfy.CompletedPriority` | `default` | ntfy priority for completed notifications |
+| `Ntfy.SeenTitle` | `"Torrent Found"` | `text/template` string for the notify-only "found" notification title (`Action: notify` feeds) |
+| `Ntfy.SeenBody` | `"{{.Title}}\n{{.Size}}"` | `text/template` string for the notify-only "found" notification body |
+| `Ntfy.SeenPriority` | `default` | ntfy priority for notify-only "found" notifications |
 | `Ntfy.AlertTopic` | — | ntfy topic to publish config-reload and port-state notifications to |
 | `Ntfy.ConfigReloadedTitle` | `"Config Reloaded"` | `text/template` string for the reload-success notification title |
 | `Ntfy.ConfigReloadedBody` | `"{{.ConfigFile}}"` | `text/template` string for the reload-success notification body |
@@ -64,20 +71,22 @@ PortCheck:
 | `Ntfy.PortOpenedBody` | `"{{.Reason}}"` | `text/template` string for the port-reopened notification body |
 | `Ntfy.PortOpenedPriority` | `default` | ntfy priority for port-reopened notifications |
 | `PortCheck.Enabled` | `false` | Enables the periodic port-open check when Gluetun is **not** configured (see [Port Notifications](#port-notifications)) |
-| `Cancel.HMACSecret` | — | Secret key for signing cancel URLs (HMAC-SHA256) |
-| `Cancel.BaseURL` | — | Public base URL of rss4transmission (used in cancel links) |
-| `Cancel.TokenTTLH` | `24` | Hours before a cancel link expires |
+| `Notifications.HMACSecret` | — | Secret key for signing cancel/start URLs (HMAC-SHA256) |
+| `Notifications.BaseURL` | — | Public base URL of rss4transmission (used in cancel/start links) |
+| `Notifications.TokenTTLH` | `24` | Hours before a cancel or start link expires (shared by both) |
 
-Cancel links are omitted from notifications when `Cancel.HMACSecret` or `Cancel.BaseURL` is not
-configured — the torrent started notification is still sent, just without the cancel action.
-Ntfy notifications are entirely disabled when `Ntfy.BaseURL` is not set. `Ntfy.Topic` and
-`Ntfy.AlertTopic` gate their respective notification groups independently: torrent
-started/completed notifications require `Topic`, config-reload and port-state notifications
-require `AlertTopic`, and either can be configured without the other.
+Cancel/start links are omitted from notifications when `Notifications.HMACSecret` or
+`Notifications.BaseURL` is not configured — the torrent started/found notification is still sent,
+just without the action link. Ntfy notifications are entirely disabled when `Ntfy.BaseURL` is not
+set. `Ntfy.Topic` and `Ntfy.AlertTopic` gate their respective notification groups independently:
+torrent started/found/completed notifications require `Topic`, config-reload and port-state
+notifications require `AlertTopic`, and either can be configured without the other.
 
-> **Breaking rename:** `Ntfy.ConfigTopic` was renamed to `Ntfy.AlertTopic`. If your config sets
+> **Breaking renames:** `Ntfy.ConfigTopic` was renamed to `Ntfy.AlertTopic`. If your config sets
 > `ConfigTopic`, rename it to `AlertTopic` — it now gates both config-reload and port-state
-> notifications together.
+> notifications together. Separately, the `Cancel` config section was renamed to `Notifications`
+> (`Cancel.HMACSecret` → `Notifications.HMACSecret`, etc.) since it's now shared by both the
+> `/cancel` and `/start` endpoints.
 
 ## Notification Templates
 
@@ -97,8 +106,9 @@ are available:
 | `{{.GUID}}` | `string` | RSS item GUID | Empty for completions |
 | `{{.Link}}` | `string` | RSS item URL (web page) | Empty for completions |
 | `{{.Published}}` | `*time.Time` | RSS item publication time | May be `nil`; guard with `{{if .Published}}` |
-| `{{.TorrentID}}` | `int64` | Transmission torrent ID | |
-| `{{.CancelURL}}` | `string` | Signed cancel link | Empty when cancel is not configured |
+| `{{.TorrentID}}` | `int64` | Transmission torrent ID | `0` for "found" notifications, since nothing has been submitted yet |
+| `{{.CancelURL}}` | `string` | Signed cancel link | Empty when cancel is not configured; only populated for started notifications |
+| `{{.StartURL}}` | `string` | Signed start link | Empty when start is not configured; only populated for found notifications (`Action: notify` feeds) |
 
 Valid `Priority` values: `min`, `low`, `default`, `high`, `max`.
 
@@ -198,20 +208,20 @@ There are two deployment models.
 
 **Model 1 — Traefik (or other reverse proxy)**
 
-Use `--private-listen` to start a single web server and let Traefik route only `/cancel` and
-`/healthz` externally:
+Use `--private-listen` to start a single web server and let Traefik route only `/cancel`, `/start`,
+and `/healthz` externally:
 
 ```bash
 rss4transmission watch --config config.yaml --private-listen :8080
 ```
 
 The [docker-compose.yaml](../docker-compose.yaml) example defaults to this model. Its Traefik
-labels route only those two paths externally while keeping the history page (`/`) internal.
+labels route only those paths externally while keeping the history page (`/`) internal.
 
 **Model 2 — Direct port-forward (no reverse proxy)**
 
 Use `--public-listen` to start a separate public-facing listener that serves only `/cancel`,
-`/notify-complete`, and `/healthz`, keeping the history page on `--private-listen`
+`/start`, `/notify-complete`, and `/healthz`, keeping the history page on `--private-listen`
 (internal only):
 
 ```bash
@@ -237,10 +247,30 @@ ports:
 When using [docker-compose-gluetun.yaml](../docker-compose-gluetun.yaml), set `PUBLIC_LISTEN`
 and uncomment the `ports` block to forward the cancel port from your firewall or NAS.
 
+## Start Endpoint
+
+The `/start` endpoint serves a confirmation page for feeds configured with `Action: notify` (see
+[Notify-only feeds](feeds.md#notify-only-feeds)): the user reviews the torrent details and clicks
+"Start Download" to submit it to Transmission. It shares deployment, listener, and token
+configuration with `/cancel` — everything in [Cancel Endpoint](#cancel-endpoint) above (Traefik
+vs. direct port-forward, `Notifications.HMACSecret`/`BaseURL`/`TokenTTLH`) applies equally to
+`/start`.
+
+`/start` additionally requires `--history-file`: the link's token only carries a feed name and
+GUID, which is resolved to the full torrent details (and re-submitted) via the history record. The
+in-memory token → (feed, GUID) mapping lives only for the lifetime of the running `watch` process
+— it is not persisted, so a `/start` link stops working across a restart, and `once` (which does
+not run a long-lived server) can never serve it. `watch` logs a startup warning for any
+`Action: notify` feed if `--history-file` is not provided.
+
+Unlike `/cancel`, confirming `/start` is safely repeatable: `retryHistoryItem` already rejects a
+record whose outcome is `dispatched`/`downloaded`, so re-visiting or re-submitting the same link
+after a successful start is a no-op rather than a duplicate submission.
+
 ## History Web UI
 
 Pass `--history-file` to enable history recording. rss4transmission records the outcome of
-every feed item it processes (dispatched, downloaded, skipped, excluded, error).
+every feed item it processes (dispatched, downloaded, notified, skipped, excluded, error).
 
 Pass `--private-listen` to start the web UI. That flag accepts a bare port number (binds to
 `127.0.0.1`) or a full `host:port` address (including IPv6 `[::1]:port`).
@@ -273,14 +303,14 @@ share an `Extractor` can extract identical-looking labels for an item that isn't
 so only a label value that satisfies a feed's own `Require` counts as evidence. Any remaining tie
 breaks alphabetically by feed name.
 
-Rows with outcome `skipped`, `excluded`, or `error` show a **Torrent** button when a `.torrent`
-URL was captured for that item, letting you manually re-submit it to Transmission without waiting
-for the feed to re-offer it. Clicking it re-fetches the `.torrent` fresh, submits it exactly like
-an automatic dispatch, and sends the normal "torrent started" ntfy notification (including a
-working Cancel link) on success. The button requires the item's feed to still be present in the
-config — it's hidden or fails with an error otherwise — and disappears once an item is
-successfully torrented. The action lives at `POST /torrent`, served only alongside the history
-page (`--private-listen`); it is never reachable on `--public-listen`.
+Rows with outcome `notified`, `skipped`, `excluded`, or `error` show a **Torrent** button when a
+`.torrent` URL was captured for that item, letting you manually re-submit it to Transmission
+without waiting for the feed to re-offer it. Clicking it re-fetches the `.torrent` fresh, submits
+it exactly like an automatic dispatch, and sends the normal "torrent started" ntfy notification
+(including a working Cancel link) on success. The button requires the item's feed to still be
+present in the config — it's hidden or fails with an error otherwise — and disappears once an
+item is successfully torrented. The action lives at `POST /torrent`, served only alongside the
+history page (`--private-listen`); it is never reachable on `--public-listen`.
 
 Every row also shows a **Forget** button, which removes that item's `(feed, guid)` pair from
 both the seen cache and the history page. Use it to retest a config change — for example after
@@ -308,6 +338,7 @@ environment:
 | `/torrent` | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
 | `/forget` | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
 | `/cancel` | ✓ | — | ✓ |
+| `/start` | ✓ (requires `--history-file`) | — | ✓ (requires `--history-file`) |
 | `/notify-complete` | ✓ | — | ✓ |
 | `/healthz` | ✓ | ✓ | ✓ |
 
@@ -318,15 +349,15 @@ details to the `/notify-complete` endpoint, which renders your configured `Compl
 `CompletedBody`, and `CompletedPriority` templates before sending to ntfy.
 
 Set `RSS4TRANSMISSION_URL` to the base URL of your rss4transmission server (same host:port as
-`--public-listen` or `--private-listen`). If `Cancel.HMACSecret` is configured, also set
-`CANCEL_HMAC_SECRET` to the same value — the endpoint will then require
+`--public-listen` or `--private-listen`). If `Notifications.HMACSecret` is configured, also set
+`HMAC_SECRET` to the same value — the endpoint will then require
 `Authorization: Bearer <secret>` and reject unauthenticated requests with `401`.
 
 ```yaml
 # Transmission container environment
 environment:
   - RSS4TRANSMISSION_URL=http://rss4transmission:8080
-  - CANCEL_HMAC_SECRET=<same value as Cancel.HMACSecret in config.yaml>
+  - HMAC_SECRET=<same value as Notifications.HMACSecret in config.yaml>
 ```
 
 The endpoint accepts `POST /notify-complete` with a JSON body:

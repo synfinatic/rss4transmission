@@ -43,6 +43,7 @@
         }
         .outcome-pill input:checked + label { color: #e0e0e0; }
         .outcome-pill input:checked + label.dispatched { color: #6f6; border-color: #6f6; }
+        .outcome-pill input:checked + label.notified   { color: #6cf; border-color: #6cf; }
         .outcome-pill input:checked + label.skipped    { color: #fa0; border-color: #fa0; }
         .outcome-pill input:checked + label.excluded   { color: #fa0; border-color: #fa0; }
         .outcome-pill input:checked + label.error      { color: #f66; border-color: #f66; }
@@ -55,6 +56,7 @@
         td { padding: 6px 12px; border-bottom: 1px solid #2a2a2a; vertical-align: top; word-break: break-word; }
         tr:hover td { background: #222; }
         .dispatched { color: #6f6; }
+        .notified { color: #6cf; }
         .error { color: #f66; }
         .skipped { color: #fa0; }
         a { color: inherit; text-decoration: none; }
@@ -129,6 +131,10 @@
                     <label class="dispatched" for="o-dispatched">dispatched</label>
                 </span>
                 <span class="outcome-pill">
+                    <input type="checkbox" id="o-notified" value="notified" checked>
+                    <label class="notified" for="o-notified">notified</label>
+                </span>
+                <span class="outcome-pill">
                     <input type="checkbox" id="o-skipped" value="skipped" checked>
                     <label class="skipped" for="o-skipped">skipped</label>
                 </span>
@@ -189,7 +195,7 @@
     <script>
     (function () {
         var TOTAL = {{ len . }};
-        var ALL_OUTCOMES = ['dispatched', 'skipped', 'excluded', 'error'];
+        var ALL_OUTCOMES = ['dispatched', 'notified', 'skipped', 'excluded', 'error'];
 
         var countEl  = document.getElementById('count');
         var feedSel  = document.getElementById('f-feed');
@@ -384,6 +390,7 @@
 
         function outcomeClass(outcome) {
             if (outcome === 'dispatched' || outcome === 'downloaded') return 'dispatched';
+            if (outcome === 'notified') return 'notified';
             if (outcome === 'error') return 'error';
             return 'skipped';
         }

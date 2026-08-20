@@ -35,7 +35,10 @@ func captureNtfyRequest(t *testing.T, alertTopic string, send func(*NtfyClient) 
 	return captured
 }
 
-func TestSendTorrentStarted_Headers(t *testing.T) {
+// captureNtfyTopicRequest is captureNtfyRequest's Topic-based counterpart, used
+// by the torrent started/found notification tests (BaseURL is filled in here).
+func captureNtfyTopicRequest(t *testing.T, cfg NtfyConfig, send func(*NtfyClient) error) *http.Request {
+	t.Helper()
 	var captured *http.Request
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured = r
@@ -43,19 +46,21 @@ func TestSendTorrentStarted_Headers(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg := mustValidateNtfyConfig(t, NtfyConfig{
-		BaseURL: srv.URL,
-		Topic:   "mytopic",
-		Token:   "tk_testtoken",
-	})
-	c := NewNtfyClient(cfg)
-	err := c.SendTorrentStarted(&NtfyTemplateContext{
-		Title:     "My.Show.S01E01",
-		Size:      "4.32 GB",
-		CancelURL: "https://example.com/cancel?id=x",
-	})
-	require.NoError(t, err)
+	cfg.BaseURL = srv.URL
+	require.NoError(t, send(NewNtfyClient(mustValidateNtfyConfig(t, cfg))))
 	require.NotNil(t, captured)
+	return captured
+}
+
+func TestSendTorrentStarted_Headers(t *testing.T) {
+	captured := captureNtfyTopicRequest(t, NtfyConfig{Topic: "mytopic", Token: "tk_testtoken"},
+		func(c *NtfyClient) error {
+			return c.SendTorrentStarted(&NtfyTemplateContext{
+				Title:     "My.Show.S01E01",
+				Size:      "4.32 GB",
+				CancelURL: "https://example.com/cancel?id=x",
+			})
+		})
 
 	assert.Equal(t, "POST", captured.Method)
 	assert.Equal(t, "/mytopic", captured.URL.Path)
@@ -106,6 +111,102 @@ func TestSendTorrentStarted_NoSize(t *testing.T) {
 	c := NewNtfyClient(cfg)
 	require.NoError(t, c.SendTorrentStarted(&NtfyTemplateContext{Title: "My.Show.S01E01"}))
 	assert.Equal(t, "My.Show.S01E01\n", string(body))
+}
+
+func TestSendTorrentSeen_Headers(t *testing.T) {
+	captured := captureNtfyTopicRequest(t, NtfyConfig{Topic: "mytopic", Token: "tk_testtoken"},
+		func(c *NtfyClient) error {
+			return c.SendTorrentSeen(&NtfyTemplateContext{
+				Title:    "My.Show.S01E01",
+				Size:     "4.32 GB",
+				StartURL: "https://example.com/start?id=x",
+			})
+		})
+
+	assert.Equal(t, "POST", captured.Method)
+	assert.Equal(t, "/mytopic", captured.URL.Path)
+	assert.Equal(t, "Torrent Found", captured.Header.Get("Title"))
+	assert.Equal(t, "default", captured.Header.Get("Priority"))
+
+	wantAction := "view, Start Download, https://example.com/start?id=x"
+	assert.Equal(t, wantAction, captured.Header.Get("Actions"))
+
+	assert.Equal(t, "Bearer tk_testtoken", captured.Header.Get("Authorization"))
+}
+
+func TestSendTorrentSeen_Body(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		require.NoError(t, err)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, Topic: "t"})
+	c := NewNtfyClient(cfg)
+	require.NoError(t, c.SendTorrentSeen(&NtfyTemplateContext{
+		Title:    "My.Show.S01E01",
+		Size:     "4.32 GB",
+		StartURL: "https://example.com/start",
+	}))
+	assert.Equal(t, "My.Show.S01E01\n4.32 GB", string(body))
+}
+
+func TestSendTorrentSeen_NoStartURL(t *testing.T) {
+	var captured *http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, Topic: "mytopic", Token: "tk_testtoken"})
+	c := NewNtfyClient(cfg)
+	err := c.SendTorrentSeen(&NtfyTemplateContext{Title: "My.Show.S01E01"})
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+	assert.Empty(t, captured.Header.Get("Actions"), "empty startURL must produce no Actions header")
+}
+
+func TestSendTorrentSeen_CustomTitleTemplate(t *testing.T) {
+	var captured *http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{
+		BaseURL:   srv.URL,
+		Topic:     "t",
+		SeenTitle: "{{.FeedName}}: {{.Title}}",
+	})
+	c := NewNtfyClient(cfg)
+	require.NoError(t, c.SendTorrentSeen(&NtfyTemplateContext{
+		Title:    "My.Show.S01E01",
+		FeedName: "shows",
+	}))
+	assert.Equal(t, "shows: My.Show.S01E01", captured.Header.Get("Title"))
+}
+
+func TestSendTorrentSeen_CustomPriority(t *testing.T) {
+	var captured *http.Request
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{
+		BaseURL:      srv.URL,
+		Topic:        "t",
+		SeenPriority: "high",
+	})
+	c := NewNtfyClient(cfg)
+	require.NoError(t, c.SendTorrentSeen(&NtfyTemplateContext{Title: "My.Show"}))
+	assert.Equal(t, "high", captured.Header.Get("Priority"))
 }
 
 func TestSendTorrentCompleted_Headers(t *testing.T) {
@@ -324,8 +425,10 @@ func TestNtfyConfig_Validate_Defaults(t *testing.T) {
 
 	assert.Equal(t, "Torrent Started", cfg.StartedTitle)
 	assert.Equal(t, "Torrent Complete", cfg.CompletedTitle)
+	assert.Equal(t, "Torrent Found", cfg.SeenTitle)
 	assert.Equal(t, "default", cfg.StartedPriority)
 	assert.Equal(t, "default", cfg.CompletedPriority)
+	assert.Equal(t, "default", cfg.SeenPriority)
 
 	ctx := &NtfyTemplateContext{Title: "T", Size: "4.32 GB"}
 	out, err := renderTemplate(cfg.startedTitleTmpl, ctx)
@@ -356,6 +459,13 @@ func TestNtfyConfig_Validate_InvalidTemplate(t *testing.T) {
 	err := cfg.Validate()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "StartedTitle")
+}
+
+func TestNtfyConfig_Validate_InvalidSeenTemplate(t *testing.T) {
+	cfg := NtfyConfig{BaseURL: "https://ntfy.sh", Topic: "test", SeenTitle: "{{.Unclosed"}
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SeenTitle")
 }
 
 func TestNtfyConfig_Validate_InvalidPriority(t *testing.T) {

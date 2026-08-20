@@ -52,17 +52,19 @@ type HistoryRecord struct {
 }
 
 // outcomeRank returns a rank for dedup: lower is more interesting.
-// "dispatched"/"downloaded" beat "skipped" beat "excluded" beat "error".
+// "dispatched"/"downloaded" beat "notified" beat "skipped" beat "excluded" beat "error".
 func outcomeRank(outcome string) int {
 	switch outcome {
 	case "dispatched", "downloaded":
 		return 0
-	case "skipped":
+	case "notified":
 		return 1
-	case "excluded":
+	case "skipped":
 		return 2
-	default:
+	case "excluded":
 		return 3
+	default:
+		return 4
 	}
 }
 

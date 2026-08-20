@@ -36,6 +36,7 @@ type NtfyTemplateContext struct {
 	Published *time.Time // may be nil; guard with {{if .Published}}
 	TorrentID int64
 	CancelURL string
+	StartURL  string
 }
 
 var validNtfyPriorities = map[string]struct{}{
@@ -97,6 +98,13 @@ func (c *NtfyConfig) Validate() error {
 			&c.CompletedTitle, &c.CompletedBody, &c.CompletedPriority,
 			"Torrent Complete", "{{.Title}}\n{{.Dir}}", "default",
 			"CompletedTitle", "CompletedBody", "CompletedPriority")
+		if err != nil {
+			return err
+		}
+		c.seenTitleTmpl, c.seenBodyTmpl, err = compileNotificationTemplates(
+			&c.SeenTitle, &c.SeenBody, &c.SeenPriority,
+			"Torrent Found", "{{.Title}}\n{{.Size}}", "default",
+			"SeenTitle", "SeenBody", "SeenPriority")
 		if err != nil {
 			return err
 		}
@@ -195,6 +203,22 @@ func (c *NtfyClient) SendTorrentStarted(ctx *NtfyTemplateContext) error {
 		actions = fmt.Sprintf("view, More Info, %s", ctx.CancelURL)
 	}
 	return c.post(c.cfg.Topic, title, body, actions, c.cfg.StartedPriority)
+}
+
+func (c *NtfyClient) SendTorrentSeen(ctx *NtfyTemplateContext) error {
+	title, err := renderTemplate(c.cfg.seenTitleTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	body, err := renderTemplate(c.cfg.seenBodyTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	var actions string
+	if ctx.StartURL != "" {
+		actions = fmt.Sprintf("view, Start Download, %s", ctx.StartURL)
+	}
+	return c.post(c.cfg.Topic, title, body, actions, c.cfg.SeenPriority)
 }
 
 func (c *NtfyClient) SendTorrentCompleted(ctx *NtfyTemplateContext) error {

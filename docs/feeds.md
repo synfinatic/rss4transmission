@@ -16,6 +16,33 @@ All feeds support these options:
 | `NoValidateCert` | Skip TLS certificate validation for this feed's URL |
 | `NoSubmit` | Dry-run: log matches but do not send to Transmission |
 | `NoNotify` | Skip ntfy notifications for this feed (see [Notifications](notifications.md)) |
+| `Action` | `download` (default) submits matches to Transmission automatically. `notify` sends a push notification instead and waits for manual confirmation (see [Notify-only feeds](#notify-only-feeds)). |
+
+`Action: notify` and `NoNotify: true` cannot be combined on the same feed — a feed that never
+notifies and never auto-downloads would produce matches nobody can act on.
+
+### Notify-only feeds
+
+Setting `Action: notify` on a feed changes what happens when an item matches: instead of being
+submitted to Transmission right away, the match is recorded and a push notification is sent (see
+[Notifications](notifications.md)) with a link to a confirmation page. Visiting that page and
+clicking "Start Download" is what actually submits the torrent.
+
+```yaml
+Feeds:
+  - Name: TalkShowUS
+    URL: https://rss.example.com/feed
+    Action: notify
+    Extractor: talkshow
+    Identity: [edition, episode, segment]
+```
+
+This requires `watch` to be run with `--history-file` and a listener (`--private-listen` and/or
+`--public-listen`) configured — the notify link resolves to a history record, and the in-memory
+token store that backs it only exists while `watch` is running. `once` cannot serve `/start` links
+at all, since there is no long-running process to hold the token. A feed with `Action: notify` but
+no `--history-file` configured logs a startup warning, since its matches would never be
+downloadable.
 
 `Feeds` is a list, so feeds are always processed in the order they appear in the config file. As
 soon as one item is actually dispatched (submitted to Transmission or downloaded to disk with

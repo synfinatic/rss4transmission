@@ -6,13 +6,13 @@
 # server (same host:port as --cancel-listen, e.g. http://localhost:8080).
 # The server renders the notification using your configured templates and priority.
 #
-# If Cancel.HMACSecret is configured in rss4transmission, set CANCEL_HMAC_SECRET
+# If Notifications.HMACSecret is configured in rss4transmission, set HMAC_SECRET
 # to the same value so the endpoint can authenticate the request.
 #
 # Example (Docker Compose):
 #   environment:
 #     - RSS4TRANSMISSION_URL=http://rss4transmission:8080
-#     - CANCEL_HMAC_SECRET=<same value as Cancel.HMACSecret in config.yaml>
+#     - HMAC_SECRET=<same value as Notifications.HMACSecret in config.yaml>
 #
 # Transmission passes torrent details via environment variables:
 #   TR_TORRENT_NAME  - torrent name
@@ -20,8 +20,8 @@
 #   TR_TORRENT_ID    - Transmission torrent ID (integer)
 
 CURL_ARGS=()
-if [ -n "${CANCEL_HMAC_SECRET}" ]; then
-    CURL_ARGS+=("-H" "Authorization: Bearer ${CANCEL_HMAC_SECRET}")
+if [ -n "${HMAC_SECRET}" ]; then
+    CURL_ARGS+=("-H" "Authorization: Bearer ${HMAC_SECRET}")
 fi
 
 /usr/bin/curl -s -X POST \

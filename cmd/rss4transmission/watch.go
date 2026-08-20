@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/hekmon/transmissionrpc/v3"
+	"github.com/sirupsen/logrus"
 )
 
 const defaultRetryInterval = 60 * time.Second
@@ -17,9 +20,50 @@ type WatchCmd struct {
 	Sleep           int      `kong:"short='s',default='300',help='Seconds to sleep between scraping'"`
 	HistoryFile     string   `kong:"help='Path to history JSON file'"`
 	PrivateListen   string   `kong:"help='Address to serve torrent history on (internal only), as host:port or bare port (disabled if empty)'"`
-	PublicListen    string   `kong:"help='Address to serve /cancel, /notify-complete, and /healthz on (host:port or bare port); splits listeners so history stays on the private listener'"`
+	PublicListen    string   `kong:"help='Address to serve /cancel, /start, /notify-complete, and /healthz on (host:port or bare port); splits listeners so history stays on the private listener'"`
 	TorrentCacheDir string   `kong:"help='Directory to cache fetched .torrent files across runs'"`
 	AccessLog       string   `kong:"help='Path to append-mode HTTP access log for fail2ban integration (disabled if empty)'"`
+}
+
+// warnNotifyFeedsWithoutHistory logs a startup warning for each feed configured
+// with Action: notify when no history file is available: the /start token to
+// history-record mapping requires ctx.History to resolve, so a notify feed
+// with no history file can never be manually started.
+func warnNotifyFeedsWithoutHistory(feeds []Feed, history *HistoryFile) {
+	if history != nil {
+		return
+	}
+	for _, f := range feeds {
+		if f.Action == "notify" {
+			log.Warnf("feed %q has Action: notify but no --history-file was provided; "+
+				"it will never be downloadable via /start", f.Name)
+		}
+	}
+}
+
+// logNtfyStatus reports at startup whether ntfy push notifications are
+// enabled and, if so, which topics are active: Topic gates torrent
+// started/found/completed notifications, AlertTopic gates config-reload and
+// port-state notifications, and either can be configured without the other.
+func logNtfyStatus(cfg NtfyConfig) {
+	if cfg.BaseURL == "" {
+		log.Infof("ntfy notifications disabled (Ntfy.BaseURL not configured)")
+		return
+	}
+
+	var active []string
+	if cfg.Topic != "" {
+		active = append(active, fmt.Sprintf("torrent (topic: %s)", cfg.Topic))
+	}
+	if cfg.AlertTopic != "" {
+		active = append(active, fmt.Sprintf("alert (topic: %s)", cfg.AlertTopic))
+	}
+
+	if len(active) == 0 {
+		log.Infof("ntfy notifications configured but no topics set; no notifications will be sent")
+		return
+	}
+	log.Infof("ntfy notifications enabled: %s", strings.Join(active, ", "))
 }
 
 // retryLoadConfig calls tryLoad repeatedly, sleeping interval between attempts.
@@ -116,6 +160,68 @@ func (r *configReloader) recover() {
 	}
 }
 
+// setupWebServers wires and starts the HTTP listener(s) for /cancel, /start,
+// /notify-complete, /healthz, and (on the private listener) the history UI,
+// based on which of --public-listen / --private-listen were configured. It
+// sets ctx.CancelRoutesEnabled / ctx.StartRoutesEnabled to reflect what was
+// actually registered. Factored out of WatchCmd.Run to keep its cyclomatic
+// complexity down.
+func setupWebServers(cmd *WatchCmd, ctx *RunContext, removeT removeFunc, getProgress progressFunc,
+	retryHistory retryFunc, feedConfigured func(string) bool, feedGroups func(string) []Group,
+	forgetHistory forgetFunc, accessLog *logrus.Logger,
+) {
+	if cmd.PublicListen != "" {
+		// Split-listener mode: /cancel, /start, /notify-complete, and /healthz on the
+		// public port, history on a separate private port. Cancel/start routes are NOT
+		// registered on the private mux.
+		if ctx.CancelStore != nil {
+			ctx.CancelRoutesEnabled = true
+		}
+		if ctx.StartStore != nil && ctx.History != nil {
+			ctx.StartRoutesEnabled = true
+		}
+		addr, err := parseListenAddr(cmd.PublicListen)
+		if err != nil {
+			log.Fatalf("--public-listen: %s", err)
+		}
+		cancelMux := newCancelMux(ctx.CancelStore, ctx.Config.Notifications, removeT, getProgress,
+			ctx.StartStore, retryHistory, ctx.History, accessLog)
+		registerNotifyCompleteRoute(cancelMux, ctx.Config.Ntfy, ctx.Config.Notifications, accessLog)
+		go startWebServer("public", cancelMux, addr)
+
+		if cmd.PrivateListen != "" {
+			histAddr, err := parseListenAddr(cmd.PrivateListen)
+			if err != nil {
+				log.Fatalf("--private-listen: %s", err)
+			}
+			if ctx.History == nil {
+				log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
+			}
+			go startWebServer("private", newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory), histAddr)
+		}
+	} else if cmd.PrivateListen != "" {
+		// Single-listener mode: history + cancel on the same port.
+		addr, err := parseListenAddr(cmd.PrivateListen)
+		if err != nil {
+			log.Fatalf("--private-listen: %s", err)
+		}
+		if ctx.History == nil {
+			log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
+		}
+		mux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory)
+		if ctx.CancelStore != nil {
+			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Notifications, removeT, getProgress, accessLog)
+			ctx.CancelRoutesEnabled = true
+		}
+		if ctx.StartStore != nil && ctx.History != nil {
+			registerStartRoutes(mux, ctx.StartStore, ctx.Config.Notifications, retryHistory, ctx.History, accessLog)
+			ctx.StartRoutesEnabled = true
+		}
+		registerNotifyCompleteRoute(mux, ctx.Config.Ntfy, ctx.Config.Notifications, accessLog)
+		go startWebServer("private", mux, addr)
+	}
+}
+
 func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	reloader := &configReloader{
 		reload: func() error {
@@ -152,15 +258,20 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		}
 	}
 
-	// Initialize the cancel store if the HMAC secret is configured.
+	// Initialize the cancel and start stores if the HMAC secret is configured.
 	// The reaper context is cancelled when Run returns, preventing a goroutine leak.
 	reaperCtx, reaperCancel := context.WithCancel(context.Background())
 	defer reaperCancel()
-	if ctx.Config.Cancel.HMACSecret != "" {
-		ttl := time.Duration(ctx.Config.Cancel.TokenTTLH) * time.Hour
+	if ctx.Config.Notifications.HMACSecret != "" {
+		ttl := time.Duration(ctx.Config.Notifications.TokenTTLH) * time.Hour
 		ctx.CancelStore = NewStore(ttl)
 		ctx.CancelStore.StartReaper(reaperCtx)
+		ctx.StartStore = NewStartStore(ttl)
+		ctx.StartStore.StartReaper(reaperCtx)
 	}
+
+	warnNotifyFeedsWithoutHistory(ctx.Config.Feeds, ctx.History)
+	logNtfyStatus(ctx.Config.Ntfy)
 
 	var removeT removeFunc
 	var getProgress progressFunc
@@ -235,48 +346,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 
 	accessLog := openAccessLog(cmd.AccessLog)
 
-	if cmd.PublicListen != "" {
-		// Split-listener mode: /cancel, /notify-complete, and /healthz on the public
-		// port, history on a separate private port. Cancel routes are NOT registered on
-		// the private mux.
-		if ctx.CancelStore != nil {
-			ctx.CancelRoutesEnabled = true
-		}
-		addr, err := parseListenAddr(cmd.PublicListen)
-		if err != nil {
-			log.Fatalf("--public-listen: %s", err)
-		}
-		cancelMux := newCancelMux(ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress, accessLog)
-		registerNotifyCompleteRoute(cancelMux, ctx.Config.Ntfy, ctx.Config.Cancel, accessLog)
-		go startWebServer("public", cancelMux, addr)
-
-		if cmd.PrivateListen != "" {
-			histAddr, err := parseListenAddr(cmd.PrivateListen)
-			if err != nil {
-				log.Fatalf("--private-listen: %s", err)
-			}
-			if ctx.History == nil {
-				log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
-			}
-			go startWebServer("private", newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory), histAddr)
-		}
-	} else if cmd.PrivateListen != "" {
-		// Single-listener mode: history + cancel on the same port.
-		addr, err := parseListenAddr(cmd.PrivateListen)
-		if err != nil {
-			log.Fatalf("--private-listen: %s", err)
-		}
-		if ctx.History == nil {
-			log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
-		}
-		mux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory)
-		if ctx.CancelStore != nil {
-			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Cancel, removeT, getProgress, accessLog)
-			ctx.CancelRoutesEnabled = true
-		}
-		registerNotifyCompleteRoute(mux, ctx.Config.Ntfy, ctx.Config.Cancel, accessLog)
-		go startWebServer("private", mux, addr)
-	}
+	setupWebServers(cmd, ctx, removeT, getProgress, retryHistory, feedConfigured, feedGroups, forgetHistory, accessLog)
 
 	var g *Gluetun
 	if ctx.Config.Gluetun.Host != "" && ctx.Config.Gluetun.Port != 0 {

@@ -32,8 +32,8 @@ func TestHealthzHandler(t *testing.T) {
 
 // --- /cancel helpers ---
 
-func makeCancelCfg(secret, baseURL string) CancelConfig {
-	return CancelConfig{HMACSecret: secret, BaseURL: baseURL, TokenTTLH: 24}
+func makeCancelCfg(secret, baseURL string) NotificationsConfig {
+	return NotificationsConfig{HMACSecret: secret, BaseURL: baseURL, TokenTTLH: 24}
 }
 
 func makeRemoveFunc(called *bool) removeFunc {
@@ -323,7 +323,7 @@ func TestPostCancelHandler_NotFound(t *testing.T) {
 func TestNewCancelMux_HealthzReachable(t *testing.T) {
 	store := NewStore(time.Hour)
 	cfg := makeCancelCfg("secret", "https://example.com")
-	mux := newCancelMux(store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
+	mux := newCancelMux(store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	rr := httptest.NewRecorder()
@@ -334,7 +334,7 @@ func TestNewCancelMux_HealthzReachable(t *testing.T) {
 func TestNewCancelMux_CancelReachable(t *testing.T) {
 	store := NewStore(time.Hour)
 	cfg := makeCancelCfg("secret", "https://example.com")
-	mux := newCancelMux(store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
+	mux := newCancelMux(store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil, nil, nil, nil)
 
 	// A POST with missing params should return 400, not 404 — proving the route exists.
 	body := strings.NewReader("id=x")
@@ -348,7 +348,7 @@ func TestNewCancelMux_CancelReachable(t *testing.T) {
 func TestNewCancelMux_HistoryNotReachable(t *testing.T) {
 	store := NewStore(time.Hour)
 	cfg := makeCancelCfg("secret", "https://example.com")
-	mux := newCancelMux(store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
+	mux := newCancelMux(store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	rr := httptest.NewRecorder()
@@ -358,7 +358,7 @@ func TestNewCancelMux_HistoryNotReachable(t *testing.T) {
 
 func TestNewCancelMux_NilStoreHealthzStillWorks(t *testing.T) {
 	cfg := makeCancelCfg("", "")
-	mux := newCancelMux(nil, cfg, nil, nil, nil)
+	mux := newCancelMux(nil, cfg, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	rr := httptest.NewRecorder()
@@ -368,7 +368,7 @@ func TestNewCancelMux_NilStoreHealthzStillWorks(t *testing.T) {
 
 func TestNewCancelMux_NilStoreCancelReturns404(t *testing.T) {
 	cfg := makeCancelCfg("", "")
-	mux := newCancelMux(nil, cfg, nil, nil, nil)
+	mux := newCancelMux(nil, cfg, nil, nil, nil, nil, nil, nil)
 
 	body := strings.NewReader("id=x&expires=1&sig=y")
 	req := httptest.NewRequest("POST", "/cancel", body)
@@ -426,7 +426,7 @@ func TestNewCancelMux_NilRemovePostReturns404(t *testing.T) {
 	store.Register("test-id", 42, CancelMetadata{})
 	cfg := makeCancelCfg("secret", "https://example.com")
 	// non-nil store, nil remove → POST /cancel must not be registered (no panic)
-	mux := newCancelMux(store, cfg, nil, nil, nil)
+	mux := newCancelMux(store, cfg, nil, nil, nil, nil, nil, nil)
 
 	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
 	body := makeCancelFormBody("test-id", expires, sig)
@@ -468,6 +468,37 @@ func TestHistoryPage_RendersTorrentButtonForSkippedWithURL(t *testing.T) {
 	assert.Contains(t, body, `class="btn-torrent"`)
 	assert.Contains(t, body, `data-feed="myfeed"`)
 	assert.Contains(t, body, `data-guid="guid-1"`)
+}
+
+func TestHistoryPage_NotifiedOutcomeRendersWithOwnClass(t *testing.T) {
+	h := emptyHistory()
+	rec := NewHistoryRecord("myfeed",
+		makeGofeedItemWithEnclosure("Needs Review", "guid-1", "https://example.com/my.torrent"),
+		"notified", "", nil)
+	h.AddOrUpdateRecord(rec)
+
+	mux := newWebMux(h, nil, nil, nil, nil)
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, `data-outcome="notified"`)
+	assert.Contains(t, body, `class="outcome notified"`)
+}
+
+func TestHistoryPage_NotifiedOutcomeFilterPillPresentAndChecked(t *testing.T) {
+	h := emptyHistory()
+	mux := newWebMux(h, nil, nil, nil, nil)
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, `id="o-notified" value="notified" checked`,
+		"the notified outcome must have its own filter checkbox, checked by default, or notified records are hidden on load")
 }
 
 func TestHistoryPage_RendersForgetButtonForSkipped(t *testing.T) {
@@ -983,7 +1014,7 @@ func TestPostTorrentHandler_NotRegisteredWhenRetryNil(t *testing.T) {
 func TestPostTorrentHandler_NotRegisteredOnCancelMux(t *testing.T) {
 	store := NewStore(time.Hour)
 	cfg := makeCancelCfg("secret", "https://example.com")
-	mux := newCancelMux(store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
+	mux := newCancelMux(store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil, nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/torrent", makeTorrentFormBody("myfeed", "guid-1"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1080,7 +1111,7 @@ func TestPostForgetHandler_NotRegisteredWhenForgetNil(t *testing.T) {
 func TestPostForgetHandler_NotRegisteredOnCancelMux(t *testing.T) {
 	store := NewStore(time.Hour)
 	cfg := makeCancelCfg("secret", "https://example.com")
-	mux := newCancelMux(store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
+	mux := newCancelMux(store, cfg, makeRemoveFunc(new(bool)), noProgressFunc(), nil, nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/forget", makeTorrentFormBody("myfeed", "guid-1"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1486,7 +1517,7 @@ func TestParseListenAddr(t *testing.T) {
 
 // --- POST /notify-complete ---
 
-func makeNotifyCompleteMux(t *testing.T, ntfyCfg NtfyConfig, cancelCfg CancelConfig) *http.ServeMux {
+func makeNotifyCompleteMux(t *testing.T, ntfyCfg NtfyConfig, cancelCfg NotificationsConfig) *http.ServeMux {
 	t.Helper()
 	require.NoError(t, ntfyCfg.Validate())
 	mux := http.NewServeMux()
@@ -1502,7 +1533,7 @@ func TestNotifyComplete_Success(t *testing.T) {
 	}))
 	defer ntfySrv.Close()
 
-	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, CancelConfig{})
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, NotificationsConfig{})
 	body := bytes.NewBufferString(`{"name":"My.Show.S01E01","dir":"/downloads","id":42}`)
 	req := httptest.NewRequest("POST", "/notify-complete", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -1521,7 +1552,7 @@ func TestNotifyComplete_BadJSON(t *testing.T) {
 	}))
 	defer ntfySrv.Close()
 
-	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, CancelConfig{})
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, NotificationsConfig{})
 	req := httptest.NewRequest("POST", "/notify-complete", bytes.NewBufferString(`not-json`))
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -1535,7 +1566,7 @@ func TestNotifyComplete_NtfyError(t *testing.T) {
 	}))
 	defer ntfySrv.Close()
 
-	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, CancelConfig{})
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, NotificationsConfig{})
 	body := bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":1}`)
 	req := httptest.NewRequest("POST", "/notify-complete", body)
 	rr := httptest.NewRecorder()
@@ -1556,7 +1587,7 @@ func TestNotifyComplete_CustomTemplate(t *testing.T) {
 		BaseURL:        ntfySrv.URL,
 		Topic:          "t",
 		CompletedTitle: "Done: {{.Title}}",
-	}, CancelConfig{})
+	}, NotificationsConfig{})
 	body := bytes.NewBufferString(`{"name":"My.Show.S01E01","dir":"/dl","id":7}`)
 	req := httptest.NewRequest("POST", "/notify-complete", body)
 	rr := httptest.NewRecorder()
@@ -1578,7 +1609,7 @@ func TestNotifyComplete_CustomPriority(t *testing.T) {
 		BaseURL:           ntfySrv.URL,
 		Topic:             "t",
 		CompletedPriority: "high",
-	}, CancelConfig{})
+	}, NotificationsConfig{})
 	body := bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":3}`)
 	req := httptest.NewRequest("POST", "/notify-complete", body)
 	rr := httptest.NewRecorder()
@@ -1592,7 +1623,7 @@ func TestNotifyComplete_NotRegisteredWhenNtfyUnconfigured(t *testing.T) {
 	mux := http.NewServeMux()
 	ntfyCfg := NtfyConfig{} // no BaseURL/Topic
 	require.NoError(t, ntfyCfg.Validate())
-	registerNotifyCompleteRoute(mux, ntfyCfg, CancelConfig{}, nil)
+	registerNotifyCompleteRoute(mux, ntfyCfg, NotificationsConfig{}, nil)
 
 	req := httptest.NewRequest("POST", "/notify-complete", nil)
 	rr := httptest.NewRecorder()
@@ -1608,7 +1639,7 @@ func TestNotifyComplete_Auth_NoSecretConfigured(t *testing.T) {
 	defer ntfySrv.Close()
 
 	// HMACSecret empty → no auth required
-	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, CancelConfig{})
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, NotificationsConfig{})
 	body := bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":1}`)
 	req := httptest.NewRequest("POST", "/notify-complete", body)
 	rr := httptest.NewRecorder()
@@ -1623,7 +1654,7 @@ func TestNotifyComplete_Auth_MissingHeader(t *testing.T) {
 	}))
 	defer ntfySrv.Close()
 
-	cancelCfg := CancelConfig{HMACSecret: "supersecret"}
+	cancelCfg := NotificationsConfig{HMACSecret: "supersecret"}
 	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, cancelCfg)
 	body := bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":1}`)
 	req := httptest.NewRequest("POST", "/notify-complete", body)
@@ -1640,7 +1671,7 @@ func TestNotifyComplete_Auth_WrongToken(t *testing.T) {
 	}))
 	defer ntfySrv.Close()
 
-	cancelCfg := CancelConfig{HMACSecret: "supersecret"}
+	cancelCfg := NotificationsConfig{HMACSecret: "supersecret"}
 	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, cancelCfg)
 	body := bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":1}`)
 	req := httptest.NewRequest("POST", "/notify-complete", body)
@@ -1659,7 +1690,7 @@ func TestNotifyComplete_Auth_CorrectToken(t *testing.T) {
 	}))
 	defer ntfySrv.Close()
 
-	cancelCfg := CancelConfig{HMACSecret: "supersecret"}
+	cancelCfg := NotificationsConfig{HMACSecret: "supersecret"}
 	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, cancelCfg)
 	body := bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":1}`)
 	req := httptest.NewRequest("POST", "/notify-complete", body)
@@ -1679,7 +1710,7 @@ func TestNotifyComplete_EmptyName(t *testing.T) {
 	}))
 	defer ntfySrv.Close()
 
-	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, CancelConfig{})
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, NotificationsConfig{})
 	body := bytes.NewBufferString(`{"name":"","dir":"/dl","id":1}`)
 	req := httptest.NewRequest("POST", "/notify-complete", body)
 	rr := httptest.NewRecorder()
@@ -1697,7 +1728,7 @@ func TestNotifyComplete_BodyTooLarge(t *testing.T) {
 	}))
 	defer ntfySrv.Close()
 
-	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, CancelConfig{})
+	mux := makeNotifyCompleteMux(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}, NotificationsConfig{})
 	// Build a valid JSON body that exceeds 1 MB.
 	huge := `{"name":"` + strings.Repeat("x", 2<<20) + `","dir":"/dl","id":1}`
 	req := httptest.NewRequest("POST", "/notify-complete", strings.NewReader(huge))
@@ -1722,13 +1753,356 @@ func TestNotifyComplete_SizeIsUnknown(t *testing.T) {
 		BaseURL:       ntfySrv.URL,
 		Topic:         "t",
 		CompletedBody: "{{.Size}}",
-	}, CancelConfig{})
+	}, NotificationsConfig{})
 	req := httptest.NewRequest("POST", "/notify-complete", bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":1}`))
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, "Unknown", string(body))
+}
+
+// --- /start helpers ---
+
+func historyWithNotifiedRecord(feed, guid, title string) *HistoryFile {
+	h := emptyHistory()
+	rec := NewHistoryRecord(feed, makeGofeedItem(title, guid), "notified", "", map[string]string{"show": "My Show"})
+	h.AddOrUpdateRecord(rec)
+	return h
+}
+
+// --- GET /start ---
+
+func TestGetStartHandler_RendersForm(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	store.Register("test-id", StartMetadata{FeedName: "shows", GUID: "guid-1"})
+	h := historyWithNotifiedRecord("shows", "guid-1", "My Show S01E01")
+
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(new(bool), nil, 42, nil), h, nil)
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/start?id=test-id&expires=%d&sig=%s", expires, sig), nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, "My Show S01E01", "title should appear in form")
+	assert.Contains(t, body, "shows", "feed name should appear in form")
+}
+
+func TestGetStartHandler_MissingParams(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	cfg := makeCancelCfg("secret", "https://example.com")
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(new(bool), nil, 42, nil), emptyHistory(), nil)
+
+	req := httptest.NewRequest("GET", "/start?id=test-id", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestGetStartHandler_BadSignature(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	store.Register("test-id", StartMetadata{FeedName: "shows", GUID: "guid-1"})
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, _ := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(new(bool), nil, 42, nil), emptyHistory(), nil)
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/start?id=test-id&expires=%d&sig=badsig", expires), nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestGetStartHandler_Expired(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	store.Register("test-id", StartMetadata{FeedName: "shows", GUID: "guid-1"})
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", -time.Second)
+
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(new(bool), nil, 42, nil), emptyHistory(), nil)
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/start?id=test-id&expires=%d&sig=%s", expires, sig), nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusGone, rr.Code)
+}
+
+func TestGetStartHandler_NotFoundInStore(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "ghost-id", time.Hour)
+
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(new(bool), nil, 42, nil), emptyHistory(), nil)
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/start?id=ghost-id&expires=%d&sig=%s", expires, sig), nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestGetStartHandler_NotFoundInHistory(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	store.Register("test-id", StartMetadata{FeedName: "shows", GUID: "guid-missing"})
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(new(bool), nil, 42, nil), emptyHistory(), nil)
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/start?id=test-id&expires=%d&sig=%s", expires, sig), nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestGetStartHandler_DoesNotConsumeEntry(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	store.Register("test-id", StartMetadata{FeedName: "shows", GUID: "guid-1"})
+	h := historyWithNotifiedRecord("shows", "guid-1", "Keep Me")
+
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(new(bool), nil, 42, nil), h, nil)
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/start?id=test-id&expires=%d&sig=%s", expires, sig), nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	_, ok := store.Peek("test-id")
+	assert.True(t, ok, "entry must still be present after GET")
+}
+
+// --- POST /start ---
+
+func TestPostStartHandler_Valid(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	store.Register("test-id", StartMetadata{FeedName: "shows", GUID: "guid-1"})
+	h := historyWithNotifiedRecord("shows", "guid-1", "My Show S01E01")
+
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	called := false
+	var gotRec HistoryRecord
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(&called, &gotRec, 42, nil), h, nil)
+
+	body := makeCancelFormBody("test-id", expires, sig)
+	req := httptest.NewRequest("POST", "/start", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.True(t, called, "retry should have been called")
+	assert.Equal(t, "shows", gotRec.Feed)
+	assert.Equal(t, "guid-1", gotRec.GUID)
+}
+
+func TestPostStartHandler_MissingParams(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	cfg := makeCancelCfg("secret", "https://example.com")
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(new(bool), nil, 42, nil), emptyHistory(), nil)
+
+	body := strings.NewReader("id=test-id") // missing expires and sig
+	req := httptest.NewRequest("POST", "/start", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestPostStartHandler_BadSignature(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	store.Register("test-id", StartMetadata{FeedName: "shows", GUID: "guid-1"})
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, _ := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(new(bool), nil, 42, nil), emptyHistory(), nil)
+
+	body := makeCancelFormBody("test-id", expires, "badsig")
+	req := httptest.NewRequest("POST", "/start", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestPostStartHandler_Expired(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	store.Register("test-id", StartMetadata{FeedName: "shows", GUID: "guid-1"})
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", -time.Second)
+
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(new(bool), nil, 42, nil), emptyHistory(), nil)
+
+	body := makeCancelFormBody("test-id", expires, sig)
+	req := httptest.NewRequest("POST", "/start", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusGone, rr.Code)
+}
+
+func TestPostStartHandler_NotFoundInStore(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "ghost-id", time.Hour)
+
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(new(bool), nil, 42, nil), emptyHistory(), nil)
+
+	body := makeCancelFormBody("ghost-id", expires, sig)
+	req := httptest.NewRequest("POST", "/start", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestPostStartHandler_NotFoundInHistory(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	store.Register("test-id", StartMetadata{FeedName: "shows", GUID: "guid-missing"})
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	called := false
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(&called, nil, 42, nil), emptyHistory(), nil)
+
+	body := makeCancelFormBody("test-id", expires, sig)
+	req := httptest.NewRequest("POST", "/start", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+	assert.False(t, called, "retry must not be called for an unknown record")
+}
+
+func TestPostStartHandler_RetryError(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	store.Register("test-id", StartMetadata{FeedName: "shows", GUID: "guid-1"})
+	h := historyWithNotifiedRecord("shows", "guid-1", "My Show S01E01")
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg,
+		makeRetryFunc(new(bool), nil, 0, fmt.Errorf("boom: no torrent URL")), h, nil)
+
+	body := makeCancelFormBody("test-id", expires, sig)
+	req := httptest.NewRequest("POST", "/start", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "boom: no torrent URL")
+
+	// A retry failure must not consume the store entry so the user can retry.
+	_, ok := store.Peek("test-id")
+	assert.True(t, ok, "store entry must survive a failed retry")
+}
+
+func TestPostStartHandler_DoesNotConsumeStoreEntryOnSuccess(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	store.Register("test-id", StartMetadata{FeedName: "shows", GUID: "guid-1"})
+	h := historyWithNotifiedRecord("shows", "guid-1", "My Show S01E01")
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	mux := newWebMux(nil, nil, nil, nil, nil)
+	registerStartRoutes(mux, store, cfg, makeRetryFunc(new(bool), nil, 42, nil), h, nil)
+
+	body := makeCancelFormBody("test-id", expires, sig)
+	req := httptest.NewRequest("POST", "/start", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	// StartStore deliberately has no consume method: retryHistoryItem's own
+	// outcome guard makes a replayed /start link idempotent.
+	_, ok := store.Peek("test-id")
+	assert.True(t, ok, "StartStore never consumes entries; idempotency comes from retryHistoryItem")
+}
+
+// --- newCancelMux /start wiring ---
+
+func TestNewCancelMux_StartReachable(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	store.Register("test-id", StartMetadata{FeedName: "shows", GUID: "guid-1"})
+	h := historyWithNotifiedRecord("shows", "guid-1", "My Show S01E01")
+	cfg := makeCancelCfg("secret", "https://example.com")
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+
+	mux := newCancelMux(nil, cfg, nil, nil, store, makeRetryFunc(new(bool), nil, 42, nil), h, nil)
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/start?id=test-id&expires=%d&sig=%s", expires, sig), nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+func TestNewCancelMux_NilStartStoreStartReturns404(t *testing.T) {
+	cfg := makeCancelCfg("", "")
+	mux := newCancelMux(nil, cfg, nil, nil, nil, nil, nil, nil)
+
+	req := httptest.NewRequest("GET", "/start?id=x&expires=1&sig=y", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestNewCancelMux_NilRetryStartPostReturns404(t *testing.T) {
+	store := NewStartStore(time.Hour)
+	cfg := makeCancelCfg("secret", "https://example.com")
+	// non-nil startStore, nil retry -> POST /start must not be registered
+	mux := newCancelMux(nil, cfg, nil, nil, store, nil, emptyHistory(), nil)
+
+	expires, sig := GenerateToken([]byte("secret"), "test-id", time.Hour)
+	body := makeCancelFormBody("test-id", expires, sig)
+	req := httptest.NewRequest("POST", "/start", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, rr.Code,
+		"POST /start must not be registered when retry is nil")
 }
 
 func TestStartWebServer_LogsName(t *testing.T) {
