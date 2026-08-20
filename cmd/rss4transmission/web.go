@@ -296,6 +296,8 @@ func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name s
 			switch outcome {
 			case "dispatched", "downloaded":
 				return "dispatched"
+			case "notified":
+				return "notified"
 			case "error":
 				return "error"
 			default:

@@ -470,6 +470,37 @@ func TestHistoryPage_RendersTorrentButtonForSkippedWithURL(t *testing.T) {
 	assert.Contains(t, body, `data-guid="guid-1"`)
 }
 
+func TestHistoryPage_NotifiedOutcomeRendersWithOwnClass(t *testing.T) {
+	h := emptyHistory()
+	rec := NewHistoryRecord("myfeed",
+		makeGofeedItemWithEnclosure("Needs Review", "guid-1", "https://example.com/my.torrent"),
+		"notified", "", nil)
+	h.AddOrUpdateRecord(rec)
+
+	mux := newWebMux(h, nil, nil, nil, nil)
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, `data-outcome="notified"`)
+	assert.Contains(t, body, `class="outcome notified"`)
+}
+
+func TestHistoryPage_NotifiedOutcomeFilterPillPresentAndChecked(t *testing.T) {
+	h := emptyHistory()
+	mux := newWebMux(h, nil, nil, nil, nil)
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, `id="o-notified" value="notified" checked`,
+		"the notified outcome must have its own filter checkbox, checked by default, or notified records are hidden on load")
+}
+
 func TestHistoryPage_RendersForgetButtonForSkipped(t *testing.T) {
 	h := emptyHistory()
 	rec := NewHistoryRecord("myfeed",

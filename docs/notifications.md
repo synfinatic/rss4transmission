@@ -270,7 +270,7 @@ after a successful start is a no-op rather than a duplicate submission.
 ## History Web UI
 
 Pass `--history-file` to enable history recording. rss4transmission records the outcome of
-every feed item it processes (dispatched, downloaded, skipped, excluded, error).
+every feed item it processes (dispatched, downloaded, notified, skipped, excluded, error).
 
 Pass `--private-listen` to start the web UI. That flag accepts a bare port number (binds to
 `127.0.0.1`) or a full `host:port` address (including IPv6 `[::1]:port`).
@@ -303,14 +303,14 @@ share an `Extractor` can extract identical-looking labels for an item that isn't
 so only a label value that satisfies a feed's own `Require` counts as evidence. Any remaining tie
 breaks alphabetically by feed name.
 
-Rows with outcome `skipped`, `excluded`, or `error` show a **Torrent** button when a `.torrent`
-URL was captured for that item, letting you manually re-submit it to Transmission without waiting
-for the feed to re-offer it. Clicking it re-fetches the `.torrent` fresh, submits it exactly like
-an automatic dispatch, and sends the normal "torrent started" ntfy notification (including a
-working Cancel link) on success. The button requires the item's feed to still be present in the
-config — it's hidden or fails with an error otherwise — and disappears once an item is
-successfully torrented. The action lives at `POST /torrent`, served only alongside the history
-page (`--private-listen`); it is never reachable on `--public-listen`.
+Rows with outcome `notified`, `skipped`, `excluded`, or `error` show a **Torrent** button when a
+`.torrent` URL was captured for that item, letting you manually re-submit it to Transmission
+without waiting for the feed to re-offer it. Clicking it re-fetches the `.torrent` fresh, submits
+it exactly like an automatic dispatch, and sends the normal "torrent started" ntfy notification
+(including a working Cancel link) on success. The button requires the item's feed to still be
+present in the config — it's hidden or fails with an error otherwise — and disappears once an
+item is successfully torrented. The action lives at `POST /torrent`, served only alongside the
+history page (`--private-listen`); it is never reachable on `--public-listen`.
 
 Every row also shows a **Forget** button, which removes that item's `(feed, guid)` pair from
 both the seen cache and the history page. Use it to retest a config change — for example after
