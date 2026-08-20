@@ -104,9 +104,19 @@ type configReloader struct {
 	// identical-event dedup window, so without this each one independently
 	// reloads and notifies. Zero (the default) disables debouncing and
 	// reloads synchronously, which is what every non-debounce test expects.
+	//
+	// Debouncing is implemented with a generation counter rather than
+	// resetting a single *time.Timer via Stop()/AfterFunc: Stop() returning
+	// false only means the timer's callback has already been scheduled to
+	// run, not that it has finished — so a reset-based implementation can
+	// still let a "cancelled" timer's callback fire, producing a duplicate
+	// reload. Instead, every event bumps debounceGen and schedules its own
+	// timer capturing that generation; a timer only calls doReload() if its
+	// captured generation is still the latest when it fires, so at most one
+	// timer per burst ever actually reloads, regardless of firing order.
 	debounceInterval time.Duration
 	debounceMu       sync.Mutex
-	debounceTimer    *time.Timer
+	debounceGen      uint64
 }
 
 // onWatchEvent is the callback registered with the file watcher.
@@ -119,6 +129,14 @@ type configReloader struct {
 // watcher dies permanently and silently and no further reload ever happens.
 func (r *configReloader) onWatchEvent(event any, err error) {
 	if err != nil {
+		// Invalidate any debounced reload still pending from before the
+		// watcher died: recover() below performs its own reload/re-register
+		// cycle, so a stale timer must not fire a redundant doReload()
+		// racing with it.
+		r.debounceMu.Lock()
+		r.debounceGen++
+		r.debounceMu.Unlock()
+
 		log.Warnf("config file watcher stopped (%s); reloading and re-registering", err)
 		go r.recover()
 		return
@@ -130,11 +148,18 @@ func (r *configReloader) onWatchEvent(event any, err error) {
 	}
 
 	r.debounceMu.Lock()
-	if r.debounceTimer != nil {
-		r.debounceTimer.Stop()
-	}
-	r.debounceTimer = time.AfterFunc(r.debounceInterval, r.doReload)
+	r.debounceGen++
+	gen := r.debounceGen
 	r.debounceMu.Unlock()
+
+	time.AfterFunc(r.debounceInterval, func() {
+		r.debounceMu.Lock()
+		current := gen == r.debounceGen
+		r.debounceMu.Unlock()
+		if current {
+			r.doReload()
+		}
+	})
 }
 
 // doReload performs the actual config reload and notification. It's called

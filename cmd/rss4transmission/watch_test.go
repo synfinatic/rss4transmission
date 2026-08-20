@@ -671,10 +671,68 @@ func TestConfigReloader_OnWatchEvent_Debounce_SeparateBurstsReloadSeparately(t *
 		t.Fatal("expected first burst to reload")
 	}
 
+	// Confirm the first burst produced exactly one reload before starting the
+	// second: otherwise a spurious extra reload from burst 1 could sit
+	// buffered in `calls` and be consumed by the next select below, letting
+	// this test pass even if bursts aren't actually independent.
+	select {
+	case <-calls:
+		t.Fatal("first burst produced more than one reload")
+	case <-time.After(50 * time.Millisecond):
+	}
+
 	r.onWatchEvent(nil, nil)
 	select {
 	case <-calls:
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected second, separately-timed burst to reload independently")
+	}
+}
+
+// TestConfigReloader_OnWatchEvent_WatchError_CancelsPendingDebouncedReload is
+// the regression test for a race where a debounced reload scheduled just
+// before the watcher dies would still fire after recover() has already
+// performed its own reload+re-register cycle, producing a redundant
+// reload/notification racing with recovery.
+func TestConfigReloader_OnWatchEvent_WatchError_CancelsPendingDebouncedReload(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	reregistered := make(chan struct{}, 1)
+	r := &configReloader{
+		reload: func() error {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			return nil
+		},
+		registerWatch: func(cb func(event any, err error)) error {
+			reregistered <- struct{}{}
+			return nil
+		},
+		retryInterval:    0,
+		debounceInterval: 30 * time.Millisecond,
+	}
+
+	// A live event schedules a debounced reload...
+	r.onWatchEvent(nil, nil)
+	// ...but before it fires, the watcher dies and recover() takes over.
+	r.onWatchEvent(nil, fmt.Errorf("fsnotify watch channel closed"))
+
+	select {
+	case <-reregistered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected recover() to re-register the watcher")
+	}
+
+	// Wait past the original debounce interval to give a stale timer a
+	// chance to fire.
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("expected exactly 1 reload (from recover()), got %d — "+
+			"a stale debounce timer fired a redundant reload", got)
 	}
 }
