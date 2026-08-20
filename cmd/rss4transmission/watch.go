@@ -13,6 +13,13 @@ import (
 
 const defaultRetryInterval = 60 * time.Second
 
+// defaultConfigReloadDebounce coalesces bursts of rapid-fire config file
+// watch events (see configReloader.debounceInterval) into a single
+// reload+notify. Bind-mount layers such as Docker Desktop's file sharing
+// have been observed propagating one host-side save as 3+ distinct fsnotify
+// events within a couple hundred milliseconds of each other.
+const defaultConfigReloadDebounce = 1 * time.Second
+
 type WatchCmd struct {
 	Feed            []string `kong:"help='Limit scraping to the given feed(s)'"`
 	Download        bool     `kong:"short='d',help='Download torrent file instead of torrenting',xor='action'"`
@@ -89,6 +96,27 @@ type configReloader struct {
 	registerWatch func(cb func(event any, err error)) error
 	retryInterval time.Duration
 	notifyReload  func(err error)
+
+	// debounceInterval coalesces bursts of rapid-fire watch events into a
+	// single reload+notify. Some bind-mount layers (e.g. Docker Desktop's
+	// file sharing) propagate one host-side save as multiple distinct
+	// fsnotify events spaced further apart than koanf's own 5ms
+	// identical-event dedup window, so without this each one independently
+	// reloads and notifies. Zero (the default) disables debouncing and
+	// reloads synchronously, which is what every non-debounce test expects.
+	//
+	// Debouncing is implemented with a generation counter rather than
+	// resetting a single *time.Timer via Stop()/AfterFunc: Stop() returning
+	// false only means the timer's callback has already been scheduled to
+	// run, not that it has finished — so a reset-based implementation can
+	// still let a "cancelled" timer's callback fire, producing a duplicate
+	// reload. Instead, every event bumps debounceGen and schedules its own
+	// timer capturing that generation; a timer only calls doReload() if its
+	// captured generation is still the latest when it fires, so at most one
+	// timer per burst ever actually reloads, regardless of firing order.
+	debounceInterval time.Duration
+	debounceMu       sync.Mutex
+	debounceGen      uint64
 }
 
 // onWatchEvent is the callback registered with the file watcher.
@@ -101,11 +129,43 @@ type configReloader struct {
 // watcher dies permanently and silently and no further reload ever happens.
 func (r *configReloader) onWatchEvent(event any, err error) {
 	if err != nil {
+		// Invalidate any debounced reload still pending from before the
+		// watcher died: recover() below performs its own reload/re-register
+		// cycle, so a stale timer must not fire a redundant doReload()
+		// racing with it.
+		r.debounceMu.Lock()
+		r.debounceGen++
+		r.debounceMu.Unlock()
+
 		log.Warnf("config file watcher stopped (%s); reloading and re-registering", err)
 		go r.recover()
 		return
 	}
 
+	if r.debounceInterval <= 0 {
+		r.doReload()
+		return
+	}
+
+	r.debounceMu.Lock()
+	r.debounceGen++
+	gen := r.debounceGen
+	r.debounceMu.Unlock()
+
+	time.AfterFunc(r.debounceInterval, func() {
+		r.debounceMu.Lock()
+		current := gen == r.debounceGen
+		r.debounceMu.Unlock()
+		if current {
+			r.doReload()
+		}
+	})
+}
+
+// doReload performs the actual config reload and notification. It's called
+// either synchronously from onWatchEvent (debounceInterval == 0) or once a
+// burst of events has settled (debounceInterval > 0).
+func (r *configReloader) doReload() {
 	reloadErr := func() error {
 		// don't change the config while we are processing the feed
 		r.mu.Lock()
@@ -232,8 +292,9 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			ctx.Konf = konf
 			return nil
 		},
-		registerWatch: ctx.Provider.Watch,
-		retryInterval: defaultRetryInterval,
+		registerWatch:    ctx.Provider.Watch,
+		retryInterval:    defaultRetryInterval,
+		debounceInterval: defaultConfigReloadDebounce,
 		notifyReload: func(err error) {
 			notifyConfigReload(ctx.Config.Ntfy, ctx.configFile, err)
 		},
