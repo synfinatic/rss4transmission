@@ -5,11 +5,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/mmcdole/gofeed"
+	"github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/test"
 )
+
+// withTestLogHook temporarily replaces the package-global log with a null
+// logger wired to a logrus test hook, restoring the original on cleanup.
+func withTestLogHook(t *testing.T) *test.Hook {
+	t.Helper()
+	orig := log
+	testLog, hook := test.NewNullLogger()
+	testLog.SetLevel(logrus.InfoLevel)
+	log = testLog
+	t.Cleanup(func() { log = orig })
+	return hook
+}
 
 func makeGofeedItem(title, guid string) *gofeed.Item {
 	return &gofeed.Item{Title: title, GUID: guid}
@@ -580,6 +595,45 @@ func TestRecordHistory_NilHistory_NoPanic(t *testing.T) {
 	ctx := &RunContext{} // History is nil
 	item := makeGofeedItem("Show", "guid1")
 	ctx.recordHistory("feed", item, "dispatched", "", nil) // must not panic
+}
+
+// TestRecordHistory_LogsOneInfoLineWithOutcome verifies the log fires even
+// when ctx.History is nil (--history-file not configured), since an operator
+// tailing logs shouldn't need history recording enabled to see what happened.
+func TestRecordHistory_LogsOneInfoLineWithOutcome(t *testing.T) {
+	hook := withTestLogHook(t)
+	ctx := &RunContext{} // History is nil
+	item := makeGofeedItem("Show S01E01", "guid1")
+	ctx.recordHistory("myfeed", item, "dispatched", "", nil)
+
+	entries := hook.AllEntries()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	if entries[0].Level != logrus.InfoLevel {
+		t.Errorf("Level = %v, want Info", entries[0].Level)
+	}
+	msg := entries[0].Message
+	for _, want := range []string{"myfeed", "Show S01E01", "dispatched"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("log message %q does not contain %q", msg, want)
+		}
+	}
+}
+
+func TestRecordHistory_LogsReasonWhenPresent(t *testing.T) {
+	hook := withTestLogHook(t)
+	ctx := &RunContext{}
+	item := makeGofeedItem("Show S01E01", "guid1")
+	ctx.recordHistory("myfeed", item, "skipped", "outranked by better candidate in this run", nil)
+
+	entries := hook.AllEntries()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	if !strings.Contains(entries[0].Message, "outranked by better candidate in this run") {
+		t.Errorf("log message %q does not contain the reason", entries[0].Message)
+	}
 }
 
 func TestRecordHistory_WithHistory_AddsRecord(t *testing.T) {

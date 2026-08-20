@@ -284,6 +284,34 @@ func TestProcessFeed_ExcludedItemsRecordExtractedTitleLabels(t *testing.T) {
 		"excluded records should carry title-extracted labels, same as skipped/dispatched records")
 }
 
+// Regression: processFeed's decisions (excluded, skipped, dispatched, etc.)
+// used to be visible only via the optional history file. This confirms the
+// real call path (not just a direct recordHistory unit call) produces one
+// INFO log line per processed item, so an operator without --history-file
+// configured can still see what happened by tailing logs.
+func TestProcessFeed_ExcludedItem_LogsOneInfoLine(t *testing.T) {
+	hook := withTestLogHook(t)
+	extractor := &ExtractorSet{Labels: map[string]LabelDef{
+		"series": {Regexp: `(?i)(MotoGP|Moto2|Moto3)`},
+	}}
+	feedCfg := Feed{
+		Name:    "testfeed",
+		Exclude: []string{"Highlights"},
+	}
+	rss := &gofeed.Feed{Items: []*gofeed.Item{
+		{Title: "MotoGP.Round06.Highlights", GUID: "guid1"},
+	}}
+
+	ctx := &RunContext{Cache: emptyCache()} // no History configured
+	cmd := &OnceCmd{}
+	cmd.processFeed(ctx, "testfeed", feedCfg, rss, extractor)
+
+	entries := hook.AllEntries()
+	require.Len(t, entries, 1)
+	assert.Contains(t, entries[0].Message, "excluded")
+	assert.Contains(t, entries[0].Message, "MotoGP.Round06.Highlights")
+}
+
 // Regression: excluded items were never added to the seen cache, so an item
 // that stays in the RSS feed (e.g. a perpetual "Highlights" upload) got
 // re-evaluated and re-recorded to history on every single run. That's
