@@ -45,6 +45,7 @@ type Gluetun struct {
 	retryAttempts    int
 	retryDelay       time.Duration
 	statusPollDelay  time.Duration
+	publicIPWait     time.Duration // how long to wait for the exit IP to change after a rotation
 
 	// rotateMu guards rotateReason, which is written by the SpeedMonitor
 	// goroutine via RequestRotate and read by the PortMonitor goroutine via
@@ -52,6 +53,13 @@ type Gluetun struct {
 	// but RequestRotate is deliberately callable from outside that lock.
 	rotateMu     sync.Mutex
 	rotateReason string // non-empty => a rotation is pending
+
+	// OnRotated, when set, is called after a rotation completes with the exit
+	// IP observed before the restart and the one Gluetun reports afterwards.
+	// Either may be empty when Gluetun couldn't answer. It runs on the
+	// PortMonitor goroutine, inside PortMonitor.mu, so it must not block for
+	// long or call back into Gluetun.
+	OnRotated func(previousIP, newIP string)
 }
 
 func NewGluetun(g GluetunConfig, t *transmissionrpc.Client) *Gluetun {
@@ -84,6 +92,7 @@ func NewGluetun(g GluetunConfig, t *transmissionrpc.Client) *Gluetun {
 		retryAttempts:    5,
 		retryDelay:       3 * time.Second,
 		statusPollDelay:  3 * time.Second,
+		publicIPWait:     30 * time.Second,
 	}
 }
 
@@ -385,6 +394,15 @@ func (g *Gluetun) rotate() error {
 	} else {
 		log.Info("Rotating VPN...")
 	}
+
+	// Read the exit IP before tearing the tunnel down: afterwards there is
+	// nothing left to compare the new one against, and "which exit did we
+	// leave" is half of what makes the post-rotation report useful.
+	previousIP, ipErr := g.getPublicIp()
+	if ipErr != nil {
+		log.WithError(ipErr).Debug("Unable to read the pre-rotation public IP")
+	}
+
 	err := g.restartVPN()
 	if err != nil {
 		return fmt.Errorf("unable to RestartVPN(): %s", err.Error())
@@ -411,5 +429,50 @@ func (g *Gluetun) rotate() error {
 	g.lastRotate = time.Now()
 	g.portCheckFailed = 0
 	g.peerPort = -1
+
+	newIP := g.publicIPAfterRotate(previousIP)
+	switch newIP {
+	case "":
+		log.Warn("VPN rotated, but Gluetun did not report a public IP")
+	case previousIP:
+		log.Warnf("VPN rotated, but the exit IP is unchanged: %s", newIP)
+	default:
+		log.Infof("VPN rotated to exit IP %s", newIP)
+	}
+	if g.OnRotated != nil {
+		g.OnRotated(previousIP, newIP)
+	}
+
 	return nil
+}
+
+// publicIPAfterRotate returns the exit IP Gluetun reports once the tunnel is
+// back up. Gluetun marks the VPN running slightly before it has refreshed its
+// public IP, so a single query can still answer with the pre-rotation address;
+// poll for up to publicIPWait for it to change.
+//
+// Waiting the full window is not a failure. With a small server pool the
+// reconnect really can land on the same exit, and that is exactly the outcome
+// worth reporting -- so the last address seen is returned either way, and the
+// caller decides what an unchanged IP means. The window is generous because the
+// alternative error is worse: giving up early reports a stale address as the new
+// one, which reads as "the rotation changed nothing" when it did.
+func (g *Gluetun) publicIPAfterRotate(previousIP string) string {
+	deadline := time.Now().Add(g.publicIPWait)
+	var ip string
+	for first := true; first || time.Now().Before(deadline); first = false {
+		if !first {
+			time.Sleep(g.statusPollDelay)
+		}
+		current, err := g.getPublicIp()
+		if err != nil {
+			log.WithError(err).Debug("Unable to read the post-rotation public IP")
+			continue
+		}
+		ip = current
+		if ip != "" && ip != previousIP {
+			break
+		}
+	}
+	return ip
 }

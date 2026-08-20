@@ -70,9 +70,12 @@ PortCheck:
 | `Ntfy.PortOpenedTitle` | `"Transmission Port Open"` | `text/template` string for the port-reopened notification title |
 | `Ntfy.PortOpenedBody` | `"{{.Reason}}"` | `text/template` string for the port-reopened notification body |
 | `Ntfy.PortOpenedPriority` | `default` | ntfy priority for port-reopened notifications |
-| `Ntfy.VpnRotatedTitle` | `"VPN Rotating"` | `text/template` string for the VPN-rotation notification title |
-| `Ntfy.VpnRotatedBody` | `"{{.Reason}}\nExit IP: {{.ExitIP}}"` | `text/template` string for the VPN-rotation notification body |
-| `Ntfy.VpnRotatedPriority` | `default` | ntfy priority for VPN-rotation notifications |
+| `Ntfy.VpnRotatingTitle` | `"VPN Rotating"` | `text/template` string for the rotation-requested notification title |
+| `Ntfy.VpnRotatingBody` | `"{{.Reason}}\nExit IP: {{.ExitIP}}"` | `text/template` string for the rotation-requested notification body |
+| `Ntfy.VpnRotatingPriority` | `default` | ntfy priority for rotation-requested notifications |
+| `Ntfy.VpnRotatedTitle` | `"VPN Rotated"` | `text/template` string for the rotation-complete notification title |
+| `Ntfy.VpnRotatedBody` | see [VPN Rotation Notifications](#vpn-rotation-notifications) | `text/template` string for the rotation-complete notification body |
+| `Ntfy.VpnRotatedPriority` | `default` | ntfy priority for rotation-complete notifications |
 | `PortCheck.Enabled` | `false` | Enables the periodic port-open check when Gluetun is **not** configured (see [Port Notifications](#port-notifications)) |
 | `Notifications.HMACSecret` | — | Secret key for signing cancel/start URLs (HMAC-SHA256) |
 | `Notifications.BaseURL` | — | Public base URL of rss4transmission (used in cancel/start links) |
@@ -201,16 +204,19 @@ accept `text/template` strings, with their own small context:
 |---|---|---|
 | `{{.Reason}}` | `string` | Why the alert fired, e.g. `"port closed"`, `"port reopened"`, or `"port not open 60s after startup"` |
 
-## VPN Rotation Notification
+## VPN Rotation Notifications
 
-When the `SpeedTest` feature decides the VPN egress is too slow and asks Gluetun to re-pick a
-server, a single alert is sent to `Ntfy.AlertTopic` using `VpnRotatedTitle`/`VpnRotatedBody`.
-See [VPN Speed Testing](speedtest.md) for how that decision is made.
+A VPN rotation sends two alerts to `Ntfy.AlertTopic`: one when the rotation is requested, and one
+once the tunnel is back up.
 
-The alert fires when the rotation is *requested*. The VPN restart itself happens on the
-port-check loop's next 5-minute tick.
+### Rotation Requested
 
-### VPN Rotation Context
+Sent using `VpnRotatingTitle`/`VpnRotatingBody` when the `SpeedTest` feature decides the VPN egress
+is too slow and asks Gluetun to re-pick a server. See [VPN Speed Testing](speedtest.md) for how
+that decision is made.
+
+This alert fires when the rotation is *requested*. The VPN restart itself happens on the port-check
+loop's next 5-minute tick, so expect a gap of up to five minutes before the second alert arrives.
 
 | Field | Type | Description |
 |---|---|---|
@@ -218,13 +224,43 @@ port-check loop's next 5-minute tick.
 | `{{.DownloadMbps}}` | `float64` | The measured download throughput that triggered the rotation |
 | `{{.ExitIP}}` | `string` | The VPN exit IP being rotated away from |
 
+### Rotation Complete
+
+Sent using `VpnRotatedTitle`/`VpnRotatedBody` once Gluetun reports the tunnel running again.
+Unlike the request alert, `{{.ExitIP}}` here is the **new** exit — this is the notification that
+tells you what address you actually landed on.
+
+It is sent for *every* rotation, including the time-based `Gluetun.RotateTime` and the
+`Gluetun.ClosedPortChecks` rotations, not just speed-triggered ones.
+
+| Field | Type | Description |
+|---|---|---|
+| `{{.ExitIP}}` | `string` | The new VPN exit IP; empty if Gluetun never reported one |
+| `{{.PreviousIP}}` | `string` | The exit IP in use before the rotation; empty if it couldn't be read |
+| `{{.SameExit}}` | `bool` | True when the reconnect landed on the same exit, so the rotation changed nothing |
+
+The default body is:
+
+```text
+Exit IP: {{if .ExitIP}}{{.ExitIP}}{{else}}unknown{{end}}{{if .PreviousIP}}
+Previous: {{.PreviousIP}}{{end}}{{if .SameExit}}
+Reconnected to the same exit{{end}}
+```
+
+`SameExit` is worth alerting on. With a narrow Gluetun server filter (a single city, say) the
+restart can reconnect to the same server, which means the rotation cost you a VPN restart and a
+new peer port without improving anything.
+
 Example:
 
 ```yaml
 Ntfy:
-  VpnRotatedTitle:    "VPN Rotating"
-  VpnRotatedBody:     "{{printf \"%.1f\" .DownloadMbps}} Mbps on {{.ExitIP}} — {{.Reason}}"
-  VpnRotatedPriority: high
+  VpnRotatingTitle:   "VPN Rotating"
+  VpnRotatingBody:    "{{printf \"%.1f\" .DownloadMbps}} Mbps on {{.ExitIP}} — {{.Reason}}"
+  VpnRotatingPriority: high
+  VpnRotatedTitle:    "VPN Rotated"
+  VpnRotatedBody:     "Now on {{.ExitIP}}{{if .SameExit}} (unchanged!){{end}}"
+  VpnRotatedPriority: default
 ```
 
 ## Cancel Endpoint

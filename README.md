@@ -47,8 +47,9 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
 - **VPN speed testing & egress rotation** — periodically measures real speedtest.net throughput
   over the Gluetun tunnel and asks Gluetun to re-pick an egress when the link is slow, gated by a
   cooldown, a daily cap, and a never-rotate-while-downloading rule; results are persisted, shown
-  on a `/speedtest` page, exported on a Prometheus-style `/metrics` endpoint, and can trigger an
-  ntfy alert. Run `rss4transmission speedtest` for a single on-demand measurement
+  on a `/speedtest` page, and exported on a Prometheus-style `/metrics` endpoint. Every rotation
+  can send a pair of ntfy alerts — one when it's requested and one naming the new exit IP once the
+  tunnel is back up. Run `rss4transmission speedtest` for a single on-demand measurement
 - **Torrent file cache** — avoids re-fetching `.torrent` files on every watch-loop iteration;
   pruned automatically
 - **Ordered, stop-after-dispatch processing** — feeds are processed in the order they're listed

@@ -117,6 +117,11 @@ Note that with a narrow server filter such as `SERVER_CITIES=Los Angeles`, a res
 the same server. The `/speedtest` page flags rotations whose exit IP did not change, which is the
 signal to widen the filter rather than to rotate more.
 
+Two ntfy alerts bracket each rotation: one when it is requested, naming the exit being left, and
+one once the tunnel is back up, naming the exit it landed on. The second alert also flags a
+reconnect to the same exit. See
+[VPN Rotation Notifications](notifications.md#vpn-rotation-notifications).
+
 Without a `Gluetun` block, `SpeedTest` still runs in measure-only mode: results are recorded and
 served, but nothing rotates. Note that the Gluetun client is built once at startup and is not
 rebuilt on config reload; the speed monitor inherits that limitation.

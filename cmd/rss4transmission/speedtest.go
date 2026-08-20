@@ -233,7 +233,7 @@ func (m *SpeedMonitor) decide(result SpeedResult) {
 		FromExitIP: result.ExitIP,
 	})
 	m.rotate(reason)
-	notifyVpnRotated(m.ntfy, &NtfyVpnContext{
+	notifyVpnRotating(m.ntfy, &NtfyVpnContext{
 		Reason:       reason,
 		DownloadMbps: result.DownloadMbps,
 		ExitIP:       result.ExitIP,

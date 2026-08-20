@@ -398,3 +398,164 @@ func TestRequestRotate_ConcurrentAccess(t *testing.T) {
 	}
 	<-done
 }
+
+// --- post-rotation exit IP reporting ---
+
+// newRotateServer fakes the Gluetun endpoints rotate() touches. Each call to
+// /v1/publicip/ip returns the next entry in ips, sticking on the last one, so a
+// test can describe "the IP changed on the second poll" as a list.
+func newRotateServer(ips []string) *httptest.Server {
+	var n int32
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPut {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.URL.Path == "/v1/publicip/ip" {
+			i := int(atomic.AddInt32(&n, 1)) - 1
+			if i >= len(ips) {
+				i = len(ips) - 1
+			}
+			_, _ = w.Write([]byte(`{"public_ip":"` + ips[i] + `"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"running"}`))
+	}))
+}
+
+func TestRotate_ReportsNewExitIP(t *testing.T) {
+	ts := newRotateServer([]string{"1.1.1.1", "2.2.2.2"})
+	defer ts.Close()
+
+	var gotPrev, gotNew string
+	var calls int
+	g := newTestGluetun(ts.URL)
+	g.statusPollDelay = time.Millisecond
+	g.publicIPWait = time.Second
+	g.OnRotated = func(previousIP, newIP string) {
+		calls++
+		gotPrev, gotNew = previousIP, newIP
+	}
+
+	if err := g.rotate(); err != nil {
+		t.Fatalf("rotate() returned error: %v", err)
+	}
+
+	if calls != 1 {
+		t.Errorf("OnRotated called %d times, want 1", calls)
+	}
+	if gotPrev != "1.1.1.1" {
+		t.Errorf("previousIP = %q, want %q", gotPrev, "1.1.1.1")
+	}
+	if gotNew != "2.2.2.2" {
+		t.Errorf("newIP = %q, want %q", gotNew, "2.2.2.2")
+	}
+}
+
+// A small server pool can hand back the same exit. That is a real outcome the
+// user needs to see, not a reason to keep polling forever or report nothing.
+func TestRotate_ReportsSameExitIP(t *testing.T) {
+	ts := newRotateServer([]string{"1.1.1.1"})
+	defer ts.Close()
+
+	var gotPrev, gotNew string
+	g := newTestGluetun(ts.URL)
+	g.statusPollDelay = time.Millisecond
+	g.publicIPWait = 5 * time.Millisecond
+	g.OnRotated = func(previousIP, newIP string) {
+		gotPrev, gotNew = previousIP, newIP
+	}
+
+	if err := g.rotate(); err != nil {
+		t.Fatalf("rotate() returned error: %v", err)
+	}
+
+	if gotPrev != "1.1.1.1" || gotNew != "1.1.1.1" {
+		t.Errorf("OnRotated(%q, %q), want both %q", gotPrev, gotNew, "1.1.1.1")
+	}
+}
+
+// Gluetun reports the VPN running before it has refreshed its public IP, so the
+// first poll can still answer with the old address. Reporting that as the new
+// exit would claim the rotation changed nothing when it did.
+func TestRotate_WaitsForExitIPToRefresh(t *testing.T) {
+	ts := newRotateServer([]string{"1.1.1.1", "1.1.1.1", "2.2.2.2"})
+	defer ts.Close()
+
+	var gotNew string
+	g := newTestGluetun(ts.URL)
+	g.statusPollDelay = time.Millisecond
+	g.publicIPWait = time.Second
+	g.OnRotated = func(previousIP, newIP string) { gotNew = newIP }
+
+	if err := g.rotate(); err != nil {
+		t.Fatalf("rotate() returned error: %v", err)
+	}
+	if gotNew != "2.2.2.2" {
+		t.Errorf("newIP = %q, want %q once Gluetun refreshed it", gotNew, "2.2.2.2")
+	}
+}
+
+// A rotation that never brought the VPN back up hasn't rotated anything, so
+// there is no new exit IP to announce.
+func TestRotate_NoHookOnFailure(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPut {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"stopped"}`))
+	}))
+	defer ts.Close()
+
+	called := false
+	g := newTestGluetun(ts.URL)
+	g.statusPollDelay = time.Millisecond
+	g.OnRotated = func(previousIP, newIP string) { called = true }
+
+	if err := g.rotate(); err == nil {
+		t.Fatal("rotate() returned nil error, want failure when VPN stays down")
+	}
+	if called {
+		t.Error("OnRotated called after a failed rotation, want no call")
+	}
+}
+
+// getPublicIp failing must not block the rotation itself.
+func TestRotate_SucceedsWhenPublicIPUnavailable(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/publicip/ip" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPut {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"running"}`))
+	}))
+	defer ts.Close()
+
+	var gotNew string
+	called := false
+	g := newTestGluetun(ts.URL)
+	g.statusPollDelay = time.Millisecond
+	g.publicIPWait = 5 * time.Millisecond
+	g.OnRotated = func(previousIP, newIP string) {
+		called = true
+		gotNew = newIP
+	}
+
+	if err := g.rotate(); err != nil {
+		t.Fatalf("rotate() returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("OnRotated not called, want a call reporting an unknown IP")
+	}
+	if gotNew != "" {
+		t.Errorf("newIP = %q, want empty when Gluetun can't report one", gotNew)
+	}
+}

@@ -427,6 +427,12 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 
 	startSpeedMonitor(ctx, g)
 
+	// Wired after startSpeedMonitor because that is what populates ctx.Speed,
+	// which the hook backfills with the exit IP the tunnel came back up on.
+	if g != nil {
+		g.OnRotated = vpnRotatedHook(ctx.Config.Ntfy, ctx.Speed, ctx.Config.SpeedTest.RetentionDuration())
+	}
+
 	setupWebServers(cmd, ctx, removeT, getProgress, retryHistory, feedConfigured, feedGroups, forgetHistory, accessLog)
 
 	if portMonitor != nil {

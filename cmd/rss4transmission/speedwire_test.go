@@ -1,8 +1,12 @@
 package main
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hekmon/transmissionrpc/v3"
 )
@@ -143,4 +147,69 @@ func TestNewSpeedMonitorFor_BadProxyIsAnError(t *testing.T) {
 	if _, err := newSpeedMonitorFor(ctx, nil); err == nil {
 		t.Error("expected an error for an unusable proxy")
 	}
+}
+
+// --- post-rotation hook: vpnRotatedHook ---
+
+func TestVpnRotatedHook_NotifiesWithNewExitIP(t *testing.T) {
+	var body []byte
+	var title string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		title = r.Header.Get("Title")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ntfy := NtfyConfig{BaseURL: srv.URL, AlertTopic: "alerts"}
+	if err := ntfy.Validate(); err != nil {
+		t.Fatalf("ntfy Validate: %v", err)
+	}
+
+	vpnRotatedHook(ntfy, nil, time.Hour)("1.1.1.1", "2.2.2.2")
+
+	if title != "VPN Rotated" {
+		t.Errorf("Title = %q, want %q", title, "VPN Rotated")
+	}
+	if !strings.Contains(string(body), "2.2.2.2") {
+		t.Errorf("body = %q, want it to name the new exit IP", body)
+	}
+}
+
+// The new exit IP is also what backfills ToExitIP on the rotation the speed
+// monitor recorded, so the /speedtest page stops showing a blank destination
+// until the next hourly measurement.
+func TestVpnRotatedHook_RecordsExitIPInStore(t *testing.T) {
+	store := tempSpeedFile(t)
+	store.AddRotation(RotationEvent{At: time.Now(), Reason: "slow", FromExitIP: "1.1.1.1"})
+
+	vpnRotatedHook(NtfyConfig{}, store, 30*24*time.Hour)("1.1.1.1", "2.2.2.2")
+
+	last, ok := store.LastRotation()
+	if !ok {
+		t.Fatal("LastRotation() returned no rotation")
+	}
+	if last.ToExitIP != "2.2.2.2" {
+		t.Errorf("ToExitIP = %q, want %q", last.ToExitIP, "2.2.2.2")
+	}
+}
+
+// A rotation that landed on the same exit must still be recorded -- that is
+// precisely the case worth seeing.
+func TestVpnRotatedHook_RecordsSameExitIP(t *testing.T) {
+	store := tempSpeedFile(t)
+	store.AddRotation(RotationEvent{At: time.Now(), Reason: "slow", FromExitIP: "1.1.1.1"})
+
+	vpnRotatedHook(NtfyConfig{}, store, 30*24*time.Hour)("1.1.1.1", "1.1.1.1")
+
+	last, _ := store.LastRotation()
+	if last.ToExitIP != "1.1.1.1" {
+		t.Errorf("ToExitIP = %q, want %q", last.ToExitIP, "1.1.1.1")
+	}
+}
+
+// Rotations also fire from RotateTime and ClosedPortChecks, where there is no
+// speed store at all; the hook must still notify rather than panic.
+func TestVpnRotatedHook_NilStore(t *testing.T) {
+	vpnRotatedHook(NtfyConfig{}, nil, time.Hour)("1.1.1.1", "")
 }

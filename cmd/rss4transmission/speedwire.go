@@ -21,6 +21,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hekmon/transmissionrpc/v3"
 )
@@ -109,4 +110,34 @@ func startSpeedMonitor(ctx *RunContext, g *Gluetun) {
 	}
 
 	go monitor.Run(context.Background())
+}
+
+// vpnRotatedHook builds the callback Gluetun invokes once a rotation has
+// completed and the tunnel is back up. It answers the question the request-time
+// alert cannot: which exit are we on now.
+//
+// It is wired for every rotation trigger, not just the speedtest one, since a
+// RotateTime or closed-port rotation changes the exit just as thoroughly.
+// store is nil when SpeedTest is disabled, in which case there is no rotation
+// history to backfill and only the notification is sent. retention is passed
+// straight to Save, which prunes on write -- it must be the configured
+// retention window, never a zero value, or the save would drop every record.
+func vpnRotatedHook(ntfy NtfyConfig, store *SpeedFile, retention time.Duration) func(previousIP, newIP string) {
+	return func(previousIP, newIP string) {
+		if store != nil {
+			// Backfills ToExitIP on the rotation the speed monitor recorded, so
+			// the /speedtest page names the new exit immediately instead of
+			// waiting for the next measurement to observe it.
+			store.RecordExitIP(newIP)
+			if err := store.Save(retention); err != nil {
+				log.WithError(err).Warn("Unable to save speedtest results after rotation")
+			}
+		}
+
+		notifyVpnRotated(ntfy, &NtfyVpnRotatedContext{
+			ExitIP:     newIP,
+			PreviousIP: previousIP,
+			SameExit:   newIP != "" && newIP == previousIP,
+		})
+	}
 }
