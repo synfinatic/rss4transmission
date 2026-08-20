@@ -103,3 +103,15 @@ func (m *PortMonitor) check() (bool, error) {
 
 	return open, nil
 }
+
+// LastOpen reports the peer-port state observed by the most recent check.
+// known is false until the first check completes, so callers can distinguish
+// "not checked yet" from "checked and closed" rather than reporting a guess.
+func (m *PortMonitor) LastOpen() (open bool, known bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.lastOpen == nil {
+		return false, false
+	}
+	return *m.lastOpen, true
+}

@@ -60,6 +60,8 @@
         .error { color: #f66; }
         .skipped { color: #fa0; }
         a { color: inherit; text-decoration: none; }
+        #nav { margin: 0 0 1em 0; }
+        #nav a { color: #6aa8e0; text-decoration: underline; }
         a:hover { text-decoration: underline; }
         .labels { font-size: 0.82em; color: #666; margin-top: 3px; }
         th:nth-child(1), td:nth-child(1) { width: 10em; white-space: nowrap; }
@@ -114,6 +116,9 @@
 <body>
     <h1>RSS4Transmission History</h1>
     <p id="count">{{ len . }} record(s) &mdash; auto-refreshes every 60 seconds.</p>
+{{- if speedtestEnabled }}
+    <p id="nav"><a href="/speedtest">VPN Speed</a></p>
+{{- end }}
 
     <div id="filters">
         <span>

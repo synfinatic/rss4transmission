@@ -70,6 +70,9 @@ PortCheck:
 | `Ntfy.PortOpenedTitle` | `"Transmission Port Open"` | `text/template` string for the port-reopened notification title |
 | `Ntfy.PortOpenedBody` | `"{{.Reason}}"` | `text/template` string for the port-reopened notification body |
 | `Ntfy.PortOpenedPriority` | `default` | ntfy priority for port-reopened notifications |
+| `Ntfy.VpnRotatedTitle` | `"VPN Rotating"` | `text/template` string for the VPN-rotation notification title |
+| `Ntfy.VpnRotatedBody` | `"{{.Reason}}\nExit IP: {{.ExitIP}}"` | `text/template` string for the VPN-rotation notification body |
+| `Ntfy.VpnRotatedPriority` | `default` | ntfy priority for VPN-rotation notifications |
 | `PortCheck.Enabled` | `false` | Enables the periodic port-open check when Gluetun is **not** configured (see [Port Notifications](#port-notifications)) |
 | `Notifications.HMACSecret` | — | Secret key for signing cancel/start URLs (HMAC-SHA256) |
 | `Notifications.BaseURL` | — | Public base URL of rss4transmission (used in cancel/start links) |
@@ -197,6 +200,32 @@ accept `text/template` strings, with their own small context:
 | Field | Type | Description |
 |---|---|---|
 | `{{.Reason}}` | `string` | Why the alert fired, e.g. `"port closed"`, `"port reopened"`, or `"port not open 60s after startup"` |
+
+## VPN Rotation Notification
+
+When the `SpeedTest` feature decides the VPN egress is too slow and asks Gluetun to re-pick a
+server, a single alert is sent to `Ntfy.AlertTopic` using `VpnRotatedTitle`/`VpnRotatedBody`.
+See [VPN Speed Testing](deployment.md#vpn-speed-testing) for how that decision is made.
+
+The alert fires when the rotation is *requested*. The VPN restart itself happens on the
+port-check loop's next 5-minute tick.
+
+### VPN Rotation Context
+
+| Field | Type | Description |
+|---|---|---|
+| `{{.Reason}}` | `string` | Why the rotation fired, e.g. `"download 42.1 Mbps below 100.0 Mbps threshold"` |
+| `{{.DownloadMbps}}` | `float64` | The measured download throughput that triggered the rotation |
+| `{{.ExitIP}}` | `string` | The VPN exit IP being rotated away from |
+
+Example:
+
+```yaml
+Ntfy:
+  VpnRotatedTitle:    "VPN Rotating"
+  VpnRotatedBody:     "{{printf \"%.1f\" .DownloadMbps}} Mbps on {{.ExitIP}} — {{.Reason}}"
+  VpnRotatedPriority: high
+```
 
 ## Cancel Endpoint
 

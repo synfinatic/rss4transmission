@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/hekmon/transmissionrpc/v3"
@@ -43,6 +44,14 @@ type Gluetun struct {
 	AuthAPIKey       string
 	retryAttempts    int
 	retryDelay       time.Duration
+	statusPollDelay  time.Duration
+
+	// rotateMu guards rotateReason, which is written by the SpeedMonitor
+	// goroutine via RequestRotate and read by the PortMonitor goroutine via
+	// rotateNow(). Every other Gluetun field is serialized by PortMonitor.mu,
+	// but RequestRotate is deliberately callable from outside that lock.
+	rotateMu     sync.Mutex
+	rotateReason string // non-empty => a rotation is pending
 }
 
 func NewGluetun(g GluetunConfig, t *transmissionrpc.Client) *Gluetun {
@@ -74,6 +83,7 @@ func NewGluetun(g GluetunConfig, t *transmissionrpc.Client) *Gluetun {
 		AuthAPIKey:       g.AuthAPIKey,
 		retryAttempts:    5,
 		retryDelay:       3 * time.Second,
+		statusPollDelay:  3 * time.Second,
 	}
 }
 
@@ -268,7 +278,7 @@ func (g *Gluetun) updatePort() error {
 }
 
 func (g *Gluetun) getPublicIp() (string, error) {
-	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/publicip/ip", g.URL), nil)
+	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/publicip/ip", g.URL), nil)
 	if err != nil {
 		return "", err
 	}
@@ -312,8 +322,51 @@ func (g *Gluetun) isPortOpen() (bool, error) {
 	return open, nil
 }
 
+// RequestRotate asks for the VPN to be rotated on the next port check, with a
+// human-readable reason that ends up in the log line and the ntfy alert. It is
+// safe to call from any goroutine.
+//
+// The rotation is deliberately not performed here: Gluetun has no internal
+// locking and all of its other state is serialized by PortMonitor.mu, so the
+// request is picked up by rotateNow() on the PortMonitor goroutine instead.
+// That also means the rotation lands within one portCheckInterval rather than
+// immediately, and it reuses CheckVpnTunnel's existing peer-port resync.
+//
+// An already-pending request is not overwritten -- the first caller to spot a
+// problem owns the explanation. An empty reason is ignored, since it can't be
+// distinguished from "nothing pending".
+func (g *Gluetun) RequestRotate(reason string) {
+	if reason == "" {
+		return
+	}
+	g.rotateMu.Lock()
+	defer g.rotateMu.Unlock()
+	if g.rotateReason != "" {
+		return
+	}
+	g.rotateReason = reason
+}
+
+// PendingRotate returns the reason for a pending rotation, or "" if none.
+func (g *Gluetun) PendingRotate() string {
+	g.rotateMu.Lock()
+	defer g.rotateMu.Unlock()
+	return g.rotateReason
+}
+
+// clearPendingRotate drops any pending rotation request.
+func (g *Gluetun) clearPendingRotate() {
+	g.rotateMu.Lock()
+	defer g.rotateMu.Unlock()
+	g.rotateReason = ""
+}
+
 // rotateNow tells us if we should rotate now or not
 func (g *Gluetun) rotateNow() bool {
+	if g.PendingRotate() != "" {
+		return true
+	}
+
 	if g.ClosedPortChecks > 0 && g.portCheckFailed > g.ClosedPortChecks {
 		return true
 	}
@@ -327,7 +380,11 @@ func (g *Gluetun) rotateNow() bool {
 
 // rotate shuts down the VPN tunnel and updates the peer port for Transmission
 func (g *Gluetun) rotate() error {
-	log.Info("Rotating VPN...")
+	if reason := g.PendingRotate(); reason != "" {
+		log.Infof("Rotating VPN: %s", reason)
+	} else {
+		log.Info("Rotating VPN...")
+	}
 	err := g.restartVPN()
 	if err != nil {
 		return fmt.Errorf("unable to RestartVPN(): %s", err.Error())
@@ -340,9 +397,9 @@ func (g *Gluetun) rotate() error {
 		status, err = g.getStatus()
 		if err != nil {
 			log.WithError(err).Errorf("Unable to GetStatus")
-			time.Sleep(3 * time.Second)
+			time.Sleep(g.statusPollDelay)
 		} else if status == VPNDown {
-			time.Sleep(3 * time.Second)
+			time.Sleep(g.statusPollDelay)
 		}
 	}
 
@@ -350,6 +407,7 @@ func (g *Gluetun) rotate() error {
 		return fmt.Errorf("aborting rotation: VPN Failed to come back up")
 	}
 
+	g.clearPendingRotate()
 	g.lastRotate = time.Now()
 	g.portCheckFailed = 0
 	g.peerPort = -1

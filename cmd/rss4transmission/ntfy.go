@@ -22,6 +22,13 @@ type NtfyPortContext struct {
 	Reason string
 }
 
+// NtfyVpnContext holds the data available to VPN-rotation notification templates.
+type NtfyVpnContext struct {
+	Reason       string
+	DownloadMbps float64
+	ExitIP       string
+}
+
 // NtfyTemplateContext holds all torrent data available to notification templates.
 type NtfyTemplateContext struct {
 	Title     string
@@ -137,6 +144,13 @@ func (c *NtfyConfig) Validate() error {
 			&c.PortOpenedTitle, &c.PortOpenedBody, &c.PortOpenedPriority,
 			"Transmission Port Open", "{{.Reason}}", "default",
 			"PortOpenedTitle", "PortOpenedBody", "PortOpenedPriority")
+		if err != nil {
+			return err
+		}
+		c.vpnRotatedTitleTmpl, c.vpnRotatedBodyTmpl, err = compileNotificationTemplates(
+			&c.VpnRotatedTitle, &c.VpnRotatedBody, &c.VpnRotatedPriority,
+			"VPN Rotating", "{{.Reason}}\nExit IP: {{.ExitIP}}", "default",
+			"VpnRotatedTitle", "VpnRotatedBody", "VpnRotatedPriority")
 		if err != nil {
 			return err
 		}
@@ -281,6 +295,18 @@ func (c *NtfyClient) SendPortOpened(ctx *NtfyPortContext) error {
 	return c.post(c.cfg.AlertTopic, title, body, "", c.cfg.PortOpenedPriority)
 }
 
+func (c *NtfyClient) SendVpnRotated(ctx *NtfyVpnContext) error {
+	title, err := renderTemplate(c.cfg.vpnRotatedTitleTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	body, err := renderTemplate(c.cfg.vpnRotatedBodyTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	return c.post(c.cfg.AlertTopic, title, body, "", c.cfg.VpnRotatedPriority)
+}
+
 // notifyConfigReload sends a config-reload outcome notification to ntfy's
 // AlertTopic. No-op when BaseURL or AlertTopic is unset. Send failures are
 // logged as warnings, never fatal — a broken notification channel must not
@@ -331,5 +357,19 @@ func notifyPortOpened(cfg NtfyConfig, reason string) {
 	client := NewNtfyClient(cfg)
 	if err := client.SendPortOpened(&NtfyPortContext{Reason: reason}); err != nil {
 		log.WithError(err).Warn("Failed to send ntfy port-opened notification")
+	}
+}
+
+// notifyVpnRotated sends a VPN-rotation alert to ntfy's AlertTopic. No-op when
+// BaseURL or AlertTopic is unset. Send failures are logged as warnings, never
+// fatal — a broken notification channel must not block VPN rotation.
+func notifyVpnRotated(cfg NtfyConfig, ctx *NtfyVpnContext) {
+	if cfg.BaseURL == "" || cfg.AlertTopic == "" {
+		return
+	}
+
+	client := NewNtfyClient(cfg)
+	if err := client.SendVpnRotated(ctx); err != nil {
+		log.WithError(err).Warn("Failed to send ntfy vpn-rotated notification")
 	}
 }

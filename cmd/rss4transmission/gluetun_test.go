@@ -124,7 +124,9 @@ func TestGetStatus_Stopped(t *testing.T) {
 }
 
 func TestGetPublicIp(t *testing.T) {
+	var gotPath string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"public_ip":"1.2.3.4"}`))
 	}))
@@ -137,6 +139,9 @@ func TestGetPublicIp(t *testing.T) {
 	}
 	if ip != "1.2.3.4" {
 		t.Errorf("ip = %q, want 1.2.3.4", ip)
+	}
+	if gotPath != "/v1/publicip/ip" {
+		t.Errorf("path = %q, want /v1/publicip/ip", gotPath)
 	}
 }
 
@@ -276,4 +281,120 @@ func TestCheckVpnTunnel_PortTestErrors_StillSyncsPort(t *testing.T) {
 	if g.peerPort != 12345 {
 		t.Errorf("g.peerPort = %d, want 12345", g.peerPort)
 	}
+}
+
+func TestRequestRotate_MakesRotateNowTrue(t *testing.T) {
+	g := &Gluetun{lastRotate: time.Now()}
+
+	if g.rotateNow() {
+		t.Fatal("rotateNow() = true before any request, want false")
+	}
+	if reason := g.PendingRotate(); reason != "" {
+		t.Errorf("PendingRotate() = %q, want empty", reason)
+	}
+
+	g.RequestRotate("slow: 12.5 Mbps")
+
+	if !g.rotateNow() {
+		t.Error("rotateNow() = false after RequestRotate, want true")
+	}
+	if reason := g.PendingRotate(); reason != "slow: 12.5 Mbps" {
+		t.Errorf("PendingRotate() = %q, want %q", reason, "slow: 12.5 Mbps")
+	}
+}
+
+// RequestRotate must not clobber an already-pending reason: the first caller
+// to notice a problem owns the explanation that eventually reaches the logs
+// and the ntfy alert.
+func TestRequestRotate_KeepsFirstReason(t *testing.T) {
+	g := &Gluetun{lastRotate: time.Now()}
+
+	g.RequestRotate("first")
+	g.RequestRotate("second")
+
+	if reason := g.PendingRotate(); reason != "first" {
+		t.Errorf("PendingRotate() = %q, want %q", reason, "first")
+	}
+}
+
+// An empty reason is not a rotation request -- it would be indistinguishable
+// from "nothing pending" in the internal representation.
+func TestRequestRotate_IgnoresEmptyReason(t *testing.T) {
+	g := &Gluetun{lastRotate: time.Now()}
+
+	g.RequestRotate("")
+
+	if g.rotateNow() {
+		t.Error("rotateNow() = true after empty RequestRotate, want false")
+	}
+}
+
+func TestRotate_ClearsPendingRequest(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPut {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"running"}`))
+	}))
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	g.RequestRotate("slow")
+
+	if err := g.rotate(); err != nil {
+		t.Fatalf("rotate() returned error: %v", err)
+	}
+
+	if reason := g.PendingRotate(); reason != "" {
+		t.Errorf("PendingRotate() = %q after rotate(), want empty", reason)
+	}
+	if g.rotateNow() {
+		t.Error("rotateNow() = true after rotate(), want false")
+	}
+}
+
+// A failed rotation must leave the request pending so the next tick retries it.
+func TestRotate_FailureKeepsPendingRequest(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPut {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"stopped"}`))
+	}))
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	g.statusPollDelay = time.Millisecond
+	g.RequestRotate("slow")
+
+	if err := g.rotate(); err == nil {
+		t.Fatal("rotate() returned nil error, want failure when VPN stays down")
+	}
+
+	if reason := g.PendingRotate(); reason != "slow" {
+		t.Errorf("PendingRotate() = %q after failed rotate(), want %q", reason, "slow")
+	}
+}
+
+// RequestRotate is called from the SpeedMonitor goroutine while the PortMonitor
+// goroutine reads it via rotateNow(); run under -race to prove rotateMu covers it.
+func TestRequestRotate_ConcurrentAccess(t *testing.T) {
+	g := &Gluetun{lastRotate: time.Now()}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 1000; i++ {
+			g.RequestRotate("slow")
+		}
+	}()
+	for i := 0; i < 1000; i++ {
+		_ = g.rotateNow()
+		_ = g.PendingRotate()
+	}
+	<-done
 }

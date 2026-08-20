@@ -59,6 +59,8 @@ type RunContext struct {
 	Config              Config
 	Cache               *CacheFile
 	History             *HistoryFile
+	Speed               *SpeedFile
+	PeerPortOpen        portOpenFunc
 	CancelStore         *Store
 	CancelRoutesEnabled bool
 	StartStore          *StartStore
@@ -75,10 +77,11 @@ type CLI struct {
 	SeenFile string `kong:"help='Override path to SeenFile file'"`
 
 	// comamnds
-	Version  VersionCmd  `kong:"cmd,help='Print version and exit'"`
-	Watch    WatchCmd    `kong:"cmd,help='Scrape RSS feeds in a loop'"`
-	Once     OnceCmd     `kong:"cmd,help='Scrape RSS feeds once'"`
-	Simulate SimulateCmd `kong:"cmd,help='Replay a local RSS feed file for testing'"`
+	Version   VersionCmd   `kong:"cmd,help='Print version and exit'"`
+	Watch     WatchCmd     `kong:"cmd,help='Scrape RSS feeds in a loop'"`
+	Once      OnceCmd      `kong:"cmd,help='Scrape RSS feeds once'"`
+	Simulate  SimulateCmd  `kong:"cmd,help='Replay a local RSS feed file for testing'"`
+	SpeedTest SpeedTestCmd `kong:"cmd,name='speedtest',help='Run a single speedtest over the VPN proxy'"`
 }
 
 func main() {
@@ -224,6 +227,10 @@ func (rc *RunContext) loadConfig(configFile string) (*koanf.Koanf, error) {
 
 	if err := cfg.Ntfy.Validate(); err != nil {
 		return konf, fmt.Errorf("invalid ntfy template: %w", err)
+	}
+
+	if err := cfg.SpeedTest.Validate(); err != nil {
+		return konf, fmt.Errorf("invalid SpeedTest configuration: %w", err)
 	}
 
 	if err := validateFeedNames(cfg.Feeds); err != nil {

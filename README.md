@@ -44,6 +44,11 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
   Transmission when running behind [Gluetun](https://github.com/qdm12/gluetun); port state is
   polled every 5 minutes and logged/alerted on (also available without Gluetun via
   `PortCheck.Enabled`)
+- **VPN speed testing & egress rotation** — periodically measures real speedtest.net throughput
+  over the Gluetun tunnel and asks Gluetun to re-pick an egress when the link is slow, gated by a
+  cooldown, a daily cap, and a never-rotate-while-downloading rule; results are persisted, shown
+  on a `/speedtest` page, exported on a Prometheus-style `/metrics` endpoint, and can trigger an
+  ntfy alert. Run `rss4transmission speedtest` for a single on-demand measurement
 - **Torrent file cache** — avoids re-fetching `.torrent` files on every watch-loop iteration;
   pruned automatically
 - **Ordered, stop-after-dispatch processing** — feeds are processed in the order they're listed
@@ -55,7 +60,8 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
 ## Documentation
 
 - [Deployment & Docker Compose](docs/deployment.md) — Docker setup, Transmission config,
-  Gluetun integration, seen cache, torrent file cache, environment variables
+  Gluetun integration, VPN speed testing and egress rotation, seen cache, torrent file cache,
+  environment variables
 - [Feeds & Labels](docs/feeds.md) — feed configuration, label extractors, identity
   deduplication, preference ranking, full config example
 - [Notifications & History](docs/notifications.md) — ntfy push notifications with customizable
