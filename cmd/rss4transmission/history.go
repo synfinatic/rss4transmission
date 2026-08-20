@@ -165,9 +165,16 @@ func (h *HistoryFile) SaveHistory(d time.Duration) error {
 	return os.WriteFile(h.filename, data, 0644) //nolint:gosec
 }
 
-// recordHistory is a convenience method on RunContext that creates a HistoryRecord
-// and adds it to the history file. It is a no-op when ctx.History is nil.
+// recordHistory is a convenience method on RunContext that logs a single INFO
+// line describing how a processed item was handled, and adds a HistoryRecord
+// to the history file when one is configured. The log always fires — it's the
+// only visibility into per-item outcomes when --history-file isn't set.
 func (ctx *RunContext) recordHistory(feedName string, item *gofeed.Item, outcome, reason string, labels map[string]string) {
+	if reason != "" {
+		log.Infof("[%s] %s: %s (%s)", feedName, outcome, item.Title, reason)
+	} else {
+		log.Infof("[%s] %s: %s", feedName, outcome, item.Title)
+	}
 	if ctx.History != nil {
 		ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, item, outcome, reason, labels))
 	}
