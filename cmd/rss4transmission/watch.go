@@ -13,6 +13,13 @@ import (
 
 const defaultRetryInterval = 60 * time.Second
 
+// defaultConfigReloadDebounce coalesces bursts of rapid-fire config file
+// watch events (see configReloader.debounceInterval) into a single
+// reload+notify. Bind-mount layers such as Docker Desktop's file sharing
+// have been observed propagating one host-side save as 3+ distinct fsnotify
+// events within a couple hundred milliseconds of each other.
+const defaultConfigReloadDebounce = 1 * time.Second
+
 type WatchCmd struct {
 	Feed            []string `kong:"help='Limit scraping to the given feed(s)'"`
 	Download        bool     `kong:"short='d',help='Download torrent file instead of torrenting',xor='action'"`
@@ -89,6 +96,17 @@ type configReloader struct {
 	registerWatch func(cb func(event any, err error)) error
 	retryInterval time.Duration
 	notifyReload  func(err error)
+
+	// debounceInterval coalesces bursts of rapid-fire watch events into a
+	// single reload+notify. Some bind-mount layers (e.g. Docker Desktop's
+	// file sharing) propagate one host-side save as multiple distinct
+	// fsnotify events spaced further apart than koanf's own 5ms
+	// identical-event dedup window, so without this each one independently
+	// reloads and notifies. Zero (the default) disables debouncing and
+	// reloads synchronously, which is what every non-debounce test expects.
+	debounceInterval time.Duration
+	debounceMu       sync.Mutex
+	debounceTimer    *time.Timer
 }
 
 // onWatchEvent is the callback registered with the file watcher.
@@ -106,6 +124,23 @@ func (r *configReloader) onWatchEvent(event any, err error) {
 		return
 	}
 
+	if r.debounceInterval <= 0 {
+		r.doReload()
+		return
+	}
+
+	r.debounceMu.Lock()
+	if r.debounceTimer != nil {
+		r.debounceTimer.Stop()
+	}
+	r.debounceTimer = time.AfterFunc(r.debounceInterval, r.doReload)
+	r.debounceMu.Unlock()
+}
+
+// doReload performs the actual config reload and notification. It's called
+// either synchronously from onWatchEvent (debounceInterval == 0) or once a
+// burst of events has settled (debounceInterval > 0).
+func (r *configReloader) doReload() {
 	reloadErr := func() error {
 		// don't change the config while we are processing the feed
 		r.mu.Lock()
@@ -232,8 +267,9 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 			ctx.Konf = konf
 			return nil
 		},
-		registerWatch: ctx.Provider.Watch,
-		retryInterval: defaultRetryInterval,
+		registerWatch:    ctx.Provider.Watch,
+		retryInterval:    defaultRetryInterval,
+		debounceInterval: defaultConfigReloadDebounce,
 		notifyReload: func(err error) {
 			notifyConfigReload(ctx.Config.Ntfy, ctx.configFile, err)
 		},

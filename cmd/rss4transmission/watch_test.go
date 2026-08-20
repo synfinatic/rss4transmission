@@ -556,3 +556,125 @@ func TestConfigReloader_Recover_NotifiesFailureOnceThenSuccess(t *testing.T) {
 		t.Errorf("expected final notifyReload call to report success (nil), got %v", notified[1])
 	}
 }
+
+// --- debouncing rapid-fire watch events ---
+//
+// Some bind-mount layers (e.g. Docker Desktop's file sharing) propagate a
+// single host-side save as multiple distinct fsnotify events, spaced more
+// than koanf's own 5ms identical-event dedup window apart. Left unhandled,
+// each one independently reloads and notifies, producing duplicate "config
+// reloaded" pushes for one edit. debounceInterval coalesces bursts of
+// onWatchEvent(nil, nil) calls into a single reload+notify.
+
+func TestConfigReloader_OnWatchEvent_NoDebounce_ReloadsImmediately(t *testing.T) {
+	calls := 0
+	r := &configReloader{
+		reload: func() error {
+			calls++
+			return nil
+		},
+		registerWatch: func(cb func(event any, err error)) error { return nil },
+	}
+
+	// debounceInterval is unset (zero value); reload must happen synchronously,
+	// matching every pre-existing test's expectations.
+	r.onWatchEvent(nil, nil)
+
+	if calls != 1 {
+		t.Errorf("expected reload to be called synchronously once, got %d", calls)
+	}
+}
+
+func TestConfigReloader_OnWatchEvent_Debounce_CoalescesRapidEvents(t *testing.T) {
+	calls := 0
+	var mu sync.Mutex
+	notifyCount := 0
+	r := &configReloader{
+		reload: func() error {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			return nil
+		},
+		registerWatch:    func(cb func(event any, err error)) error { return nil },
+		debounceInterval: 50 * time.Millisecond,
+		notifyReload: func(err error) {
+			mu.Lock()
+			notifyCount++
+			mu.Unlock()
+		},
+	}
+
+	// Three rapid events, each well within the debounce window of the last.
+	r.onWatchEvent(nil, nil)
+	time.Sleep(10 * time.Millisecond)
+	r.onWatchEvent(nil, nil)
+	time.Sleep(10 * time.Millisecond)
+	r.onWatchEvent(nil, nil)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 0 {
+		t.Fatalf("expected reload not to fire yet while events are still coalescing, got %d calls", got)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	got = calls
+	notified := notifyCount
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("expected 3 rapid events to coalesce into exactly 1 reload, got %d", got)
+	}
+	if notified != 1 {
+		t.Errorf("expected 3 rapid events to coalesce into exactly 1 notification, got %d", notified)
+	}
+}
+
+func TestConfigReloader_OnWatchEvent_Debounce_FiresAfterInterval(t *testing.T) {
+	calls := make(chan struct{}, 10)
+	r := &configReloader{
+		reload: func() error {
+			calls <- struct{}{}
+			return nil
+		},
+		registerWatch:    func(cb func(event any, err error)) error { return nil },
+		debounceInterval: 20 * time.Millisecond,
+	}
+
+	r.onWatchEvent(nil, nil)
+
+	select {
+	case <-calls:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected reload to fire once the debounce interval elapsed, but it never did")
+	}
+}
+
+func TestConfigReloader_OnWatchEvent_Debounce_SeparateBurstsReloadSeparately(t *testing.T) {
+	calls := make(chan struct{}, 10)
+	r := &configReloader{
+		reload: func() error {
+			calls <- struct{}{}
+			return nil
+		},
+		registerWatch:    func(cb func(event any, err error)) error { return nil },
+		debounceInterval: 20 * time.Millisecond,
+	}
+
+	r.onWatchEvent(nil, nil)
+	select {
+	case <-calls:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected first burst to reload")
+	}
+
+	r.onWatchEvent(nil, nil)
+	select {
+	case <-calls:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected second, separately-timed burst to reload independently")
+	}
+}
