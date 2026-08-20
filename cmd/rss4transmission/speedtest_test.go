@@ -330,29 +330,37 @@ func TestSpeedMonitor_NilRotateIsSafe(t *testing.T) {
 
 // ---- runner ----
 
-// The whole design depends on speedtest traffic going through Gluetun; if the
-// transport isn't proxied, every measurement silently describes the wrong path.
-func TestNewSpeedtestTransport_UsesProxy(t *testing.T) {
-	tr, err := newSpeedtestTransport("http://gluetun:8888")
+// speedtest-go builds its own transport and only ever reads the Proxy string,
+// so all we can do -- and all we need to do -- is refuse a value it would
+// silently mishandle.
+func TestValidateProxyURL_AcceptsFullURL(t *testing.T) {
+	u, err := validateProxyURL("http://gluetun:8888")
 	if err != nil {
-		t.Fatalf("newSpeedtestTransport: %v", err)
+		t.Fatalf("validateProxyURL: %v", err)
 	}
-	req, _ := http.NewRequest(http.MethodGet, "https://speedtest.example.com/download", nil)
-	proxyURL, err := tr.Proxy(req)
-	if err != nil {
-		t.Fatalf("Proxy(): %v", err)
-	}
-	if proxyURL == nil {
-		t.Fatal("Proxy() = nil, want the configured proxy URL")
-	}
-	if want := (&url.URL{Scheme: "http", Host: "gluetun:8888"}).String(); proxyURL.String() != want {
-		t.Errorf("proxy = %q, want %q", proxyURL.String(), want)
+	if want := (&url.URL{Scheme: "http", Host: "gluetun:8888"}).String(); u.String() != want {
+		t.Errorf("proxy = %q, want %q", u.String(), want)
 	}
 }
 
-func TestNewSpeedtestTransport_RejectsBadURL(t *testing.T) {
-	if _, err := newSpeedtestTransport("://nope"); err == nil {
-		t.Error("newSpeedtestTransport = nil error on a malformed URL, want error")
+func TestValidateProxyURL_RejectsBadURL(t *testing.T) {
+	if _, err := validateProxyURL("://nope"); err == nil {
+		t.Error("validateProxyURL = nil error on a malformed URL, want error")
+	}
+}
+
+// url.Parse accepts "gluetun:8888" as an opaque URL with scheme "gluetun" and
+// no host. speedtest-go would take that and produce a proxy the transport
+// can't dial, so the scheme+host check has to be explicit.
+func TestValidateProxyURL_RejectsSchemelessHostPort(t *testing.T) {
+	if _, err := validateProxyURL("gluetun:8888"); err == nil {
+		t.Error("validateProxyURL = nil error for a schemeless host:port, want error")
+	}
+}
+
+func TestValidateProxyURL_RejectsEmpty(t *testing.T) {
+	if _, err := validateProxyURL(""); err == nil {
+		t.Error("validateProxyURL = nil error on an empty proxy, want error")
 	}
 }
 

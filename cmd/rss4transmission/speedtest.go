@@ -20,7 +20,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"net/url"
 	"time"
 
@@ -241,13 +240,20 @@ func (m *SpeedMonitor) decide(result SpeedResult) {
 	})
 }
 
-// newSpeedtestTransport builds the proxied transport used for measurement.
+// validateProxyURL rejects a proxy value speedtest-go would mishandle.
 //
-// It validates the proxy URL up front on purpose: speedtest-go silently
-// ignores an unparseable Proxy and falls back to ProxyFromEnvironment, which
-// would send the test over the host's own connection and report a number that
-// has nothing to do with the VPN.
-func newSpeedtestTransport(proxy string) (*http.Transport, error) {
+// We can only hand speedtest-go a Proxy string; it builds its own transport
+// (with its own DialContext, which we must not replace) and reads the string
+// from there. That makes up-front validation the only defense, and it matters
+// in two ways:
+//
+//   - On a url.Parse error speedtest-go logs a warning and falls back to
+//     http.ProxyFromEnvironment, sending the test over the host's own
+//     connection and reporting a number with nothing to do with the VPN.
+//   - url.Parse accepts "gluetun:8888" without error, as an opaque URL with
+//     scheme "gluetun" and no host, which yields a proxy that cannot be
+//     dialed. Hence the explicit scheme and host check.
+func validateProxyURL(proxy string) (*url.URL, error) {
 	u, err := url.Parse(proxy)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse Proxy %q: %w", proxy, err)
@@ -255,14 +261,7 @@ func newSpeedtestTransport(proxy string) (*http.Transport, error) {
 	if u.Scheme == "" || u.Host == "" {
 		return nil, fmt.Errorf("proxy %q must be a full URL, e.g. http://gluetun:8888", proxy)
 	}
-	return &http.Transport{
-		Proxy:                 http.ProxyURL(u),
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}, nil
+	return u, nil
 }
 
 // newSpeedtestRunner returns a speedTestFunc that performs a real speedtest.net
@@ -273,7 +272,7 @@ func newSpeedtestTransport(proxy string) (*http.Transport, error) {
 func newSpeedtestRunner(cfg SpeedTestConfig) (speedTestFunc, error) {
 	// Validate the proxy here rather than letting speedtest-go swallow a bad
 	// value and silently measure the non-VPN path.
-	if _, err := newSpeedtestTransport(cfg.Proxy); err != nil {
+	if _, err := validateProxyURL(cfg.Proxy); err != nil {
 		return nil, err
 	}
 
