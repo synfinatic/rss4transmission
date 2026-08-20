@@ -152,3 +152,26 @@ measuring".
 
 Both endpoints are unauthenticated, like the history page; keep `--private-listen` off the
 public internet.
+
+### On-demand buttons
+
+The `/speedtest` page carries two buttons for the things you most often want to do while looking
+at it:
+
+- **Run speedtest now** — queues a measurement instead of waiting for the next `Interval`. It
+  ignores `SkipWhenActive`: an explicit click means "measure now", even though an active download
+  drags the number down. It is also measure-only — the result is recorded but never fed to the
+  rotation policy, so clicking it can't cause a surprise VPN restart minutes later. Clicking again
+  while one is already queued is harmless; the requests coalesce into a single run.
+- **Rotate VPN now** — asks Gluetun to re-pick an egress immediately, rather than on the port
+  monitor's next 5-minute tick. When torrents are downloading (or rss4transmission can't reach
+  Transmission to find out), the button asks for confirmation naming the count before it does
+  anything; confirming rotates and interrupts those downloads.
+
+Each button appears only when the thing it drives exists: without Gluetun there is no rotate
+button, and with `SpeedTest.Enabled: false` there is no page at all. Both post to the private
+listener and are unauthenticated like the rest of it — anyone who can reach `--private-listen`
+can drop your VPN tunnel.
+
+Neither button blocks: both return as soon as the work is queued, and the page's 60-second
+auto-refresh is what eventually shows the new row.

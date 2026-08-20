@@ -258,7 +258,7 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, removeT removeFunc, getProg
 				log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 			}
 			privMux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, ctx.Speed != nil)
-			registerSpeedRoutes(privMux, ctx.Speed, ctx.PeerPortOpen)
+			registerSpeedRoutes(privMux, ctx.Speed, ctx.PeerPortOpen, ctx.SpeedActions)
 			go startWebServer("private", privMux, histAddr)
 		}
 	} else if cmd.PrivateListen != "" {
@@ -271,7 +271,7 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, removeT removeFunc, getProg
 			log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 		}
 		mux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, ctx.Speed != nil)
-		registerSpeedRoutes(mux, ctx.Speed, ctx.PeerPortOpen)
+		registerSpeedRoutes(mux, ctx.Speed, ctx.PeerPortOpen, ctx.SpeedActions)
 		if ctx.CancelStore != nil {
 			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Notifications, removeT, getProgress, accessLog)
 			ctx.CancelRoutesEnabled = true
@@ -425,13 +425,16 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		ctx.PeerPortOpen = portMonitor.LastOpen
 	}
 
-	startSpeedMonitor(ctx, g)
+	monitor := startSpeedMonitor(ctx, g)
 
 	// Wired after startSpeedMonitor because that is what populates ctx.Speed,
 	// which the hook backfills with the exit IP the tunnel came back up on.
 	if g != nil {
 		g.OnRotated = vpnRotatedHook(ctx.Config.Ntfy, ctx.Speed, ctx.Config.SpeedTest.RetentionDuration())
 	}
+
+	// Consumed inside setupWebServers, so this has to happen before it.
+	ctx.SpeedActions = newSpeedActions(ctx, monitor, g, portMonitor)
 
 	setupWebServers(cmd, ctx, removeT, getProgress, retryHistory, feedConfigured, feedGroups, forgetHistory, accessLog)
 

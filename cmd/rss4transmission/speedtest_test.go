@@ -461,3 +461,80 @@ func TestSpeedMonitor_NoNtfyWhenNotRotating(t *testing.T) {
 	m := NewSpeedMonitor(testSpeedCfg(), ntfy, tempSpeedFile(t), f.runTest, f.active, f.rotate)
 	m.tick(context.Background())
 }
+
+// ---- on-demand measurement ----
+
+func TestSpeedMonitor_Trigger_Coalesces(t *testing.T) {
+	m, _ := newTestMonitor(t, testSpeedCfg(), &fakeDeps{})
+
+	if !m.Trigger() {
+		t.Error("first Trigger = false, want true")
+	}
+	if m.Trigger() {
+		t.Error("second Trigger = true, want false (should coalesce)")
+	}
+}
+
+func TestSpeedMonitor_TriggerRunsMeasurement(t *testing.T) {
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 400}}
+	m, store := newTestMonitor(t, testSpeedCfg(), f)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go m.Run(ctx)
+
+	if !m.Trigger() {
+		t.Fatal("Trigger = false, want true")
+	}
+
+	// The ticker is an hour out, so a result here can only have come from the
+	// trigger.
+	deadline := time.Now().Add(5 * time.Second)
+	for len(store.GetResults()) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("triggered measurement never recorded a result")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// An explicit click means "measure now", so the manual path ignores
+// SkipWhenActive -- unlike the scheduled one, which skips.
+func TestSpeedMonitor_MeasureNowIgnoresSkipWhenActive(t *testing.T) {
+	cfg := testSpeedCfg()
+	cfg.SkipWhenActive = true
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 400}, activeDownloads: 3}
+	m, store := newTestMonitor(t, cfg, f)
+
+	m.measureNow(context.Background())
+
+	if f.testCalls != 1 {
+		t.Errorf("speed test ran %d times, want 1", f.testCalls)
+	}
+	results := store.GetResults()
+	if len(results) != 1 {
+		t.Fatalf("stored %d results, want 1", len(results))
+	}
+	if results[0].Skipped != "" {
+		t.Errorf("stored result Skipped = %q, want a real measurement", results[0].Skipped)
+	}
+}
+
+// The page has its own Rotate button, so a manual measurement must never cause
+// a VPN restart the user did not ask for -- even a very slow one.
+func TestSpeedMonitor_MeasureNowNeverRotates(t *testing.T) {
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 1.5}}
+	m, store := newTestMonitor(t, testSpeedCfg(), f)
+
+	m.measureNow(context.Background())
+
+	if len(f.rotateReasons) != 0 {
+		t.Errorf("rotate called %v, want no calls", f.rotateReasons)
+	}
+	if len(store.GetRotations()) != 0 {
+		t.Errorf("stored %d rotations, want 0", len(store.GetRotations()))
+	}
+	if len(store.GetResults()) != 1 {
+		t.Errorf("stored %d results, want 1", len(store.GetResults()))
+	}
+}

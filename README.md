@@ -49,7 +49,9 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
   cooldown, a daily cap, and a never-rotate-while-downloading rule; results are persisted, shown
   on a `/speedtest` page, and exported on a Prometheus-style `/metrics` endpoint. Every rotation
   can send a pair of ntfy alerts — one when it's requested and one naming the new exit IP once the
-  tunnel is back up. Run `rss4transmission speedtest` for a single on-demand measurement
+  tunnel is back up. The `/speedtest` page also has **Run speedtest now** and **Rotate VPN now**
+  buttons for acting immediately instead of waiting for the next interval, and
+  `rss4transmission speedtest` runs a single on-demand measurement from the CLI
 - **Torrent file cache** — avoids re-fetching `.torrent` files on every watch-loop iteration;
   pruned automatically
 - **Ordered, stop-after-dispatch processing** — feeds are processed in the order they're listed

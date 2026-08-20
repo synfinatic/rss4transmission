@@ -57,16 +57,32 @@ type speedPageData struct {
 	Rotations []speedPageRotation
 	Latest    *SpeedResult
 	ExitIP    string
+	CanRun    bool // render the "Run speedtest now" button
+	CanRotate bool // render the "Rotate VPN now" button
 }
 
-// registerSpeedRoutes adds GET /speedtest and GET /metrics to mux. Both are
-// intended for the private mux only: like GET /, they are unauthenticated and
-// rely on --private-listen not being publicly reachable.
+// speedActions are the operations the /speedtest page's buttons invoke. A nil
+// func means the button is not rendered and its route is not registered, which
+// is how a measure-only deployment (no Gluetun) loses only the rotate button.
+//
+// Both funcs must return promptly: they are called from the HTTP goroutine and
+// are expected to hand the work to the monitor that owns the state, not to do
+// it inline.
+type speedActions struct {
+	Rotate func()              // ask Gluetun to re-pick an egress, immediately
+	Run    func() bool         // queue a measurement; false => one is already queued
+	Active activeDownloadsFunc // only consulted to decide whether Rotate needs confirming
+}
+
+// registerSpeedRoutes adds GET /speedtest, GET /metrics and the page's two
+// action routes to mux. All are intended for the private mux only: like GET /,
+// they are unauthenticated and rely on --private-listen not being publicly
+// reachable.
 //
 // /metrics is registered even with a nil store so a scrape configuration does
 // not have to care whether SpeedTest is enabled; /speedtest is not, because a
 // page with nothing to show is worse than a 404.
-func registerSpeedRoutes(mux *http.ServeMux, speed *SpeedFile, portOpen portOpenFunc) {
+func registerSpeedRoutes(mux *http.ServeMux, speed *SpeedFile, portOpen portOpenFunc, actions speedActions) {
 	if speed != nil {
 		tmpl := template.Must(template.New("speedtest").Funcs(template.FuncMap{
 			"mbps":    func(v float64) string { return fmt.Sprintf("%.1f", v) },
@@ -76,16 +92,84 @@ func registerSpeedRoutes(mux *http.ServeMux, speed *SpeedFile, portOpen portOpen
 
 		mux.HandleFunc("GET /speedtest", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if err := tmpl.Execute(w, buildSpeedPageData(speed)); err != nil {
+			data := buildSpeedPageData(speed)
+			data.CanRun = actions.Run != nil
+			data.CanRotate = actions.Rotate != nil
+			if err := tmpl.Execute(w, data); err != nil {
 				log.WithError(err).Error("Failed to render speedtest template")
 			}
 		})
+
+		if actions.Run != nil {
+			mux.HandleFunc("POST /speedtest/run", makeSpeedRunHandler(actions.Run))
+		}
+		if actions.Rotate != nil {
+			mux.HandleFunc("POST /speedtest/rotate", makeSpeedRotateHandler(actions))
+		}
 	}
 
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		_, _ = w.Write([]byte(renderMetrics(speed, portOpen)))
 	})
+}
+
+// makeSpeedRunHandler queues an on-demand measurement. It answers immediately
+// rather than waiting out the ~30s test: the page's periodic refresh is what
+// eventually shows the row.
+func makeSpeedRunHandler(run func() bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		if !run() {
+			// Not an error: the monitor coalesces requests, so a second click
+			// is simply redundant.
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("A measurement is already queued."))
+			return
+		}
+		log.Info("Speedtest: on-demand measurement requested from the VPN page")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("Measurement queued; the results table updates when it finishes."))
+	}
+}
+
+// makeSpeedRotateHandler asks Gluetun to re-pick an egress. Rotating drops the
+// tunnel, so when torrents are downloading it replies 409 with a message the
+// page turns into a confirmation prompt; the client re-posts with confirm=1 to
+// go ahead. Doing it as a 409-then-repost keeps the count fresh at click time
+// without a second endpoint, and guards a bare curl of this route too.
+func makeSpeedRotateHandler(actions speedActions) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Unable to parse the request.", http.StatusBadRequest)
+			return
+		}
+
+		if r.FormValue("confirm") != "1" && actions.Active != nil {
+			// An unknown count is not the same as zero, so a failed check takes
+			// the confirm path rather than rotating on an assumption.
+			n, err := actions.Active(r.Context())
+			switch {
+			case err != nil:
+				log.WithError(err).Warn("Unable to check for active torrents before rotating")
+				http.Error(w, "Unable to check for active downloads. Rotate anyway?",
+					http.StatusConflict)
+				return
+			case n > 0:
+				http.Error(w, fmt.Sprintf(
+					"%d torrent(s) are downloading and will be interrupted. Rotate anyway?", n),
+					http.StatusConflict)
+				return
+			}
+		}
+
+		log.Warn("VPN rotation requested from the VPN page")
+		actions.Rotate()
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("Rotation requested; the VPN will reconnect shortly."))
+	}
 }
 
 // buildSpeedPageData assembles the /speedtest view, newest entries first.

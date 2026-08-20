@@ -118,6 +118,8 @@ type SpeedMonitor struct {
 	active   activeDownloadsFunc
 	rotate   rotateRequestFunc // nil => measure-only, no Gluetun configured
 	interval time.Duration
+
+	trigger chan struct{} // buffered(1): an out-of-band measurement request
 }
 
 func NewSpeedMonitor(cfg SpeedTestConfig, ntfy NtfyConfig, store *SpeedFile,
@@ -131,10 +133,27 @@ func NewSpeedMonitor(cfg SpeedTestConfig, ntfy NtfyConfig, store *SpeedFile,
 		active:   active,
 		rotate:   rotate,
 		interval: cfg.IntervalDuration(),
+		trigger:  make(chan struct{}, 1),
 	}
 }
 
-// Run blocks forever, measuring every Interval. Call it in its own goroutine.
+// Trigger asks for an on-demand measurement without waiting for the next tick.
+// It returns false when one is already queued -- the buffered channel
+// coalesces, so a burst of requests costs one measurement, not one per request.
+//
+// It is the only SpeedMonitor method safe to call from another goroutine while
+// Run() is going.
+func (m *SpeedMonitor) Trigger() bool {
+	select {
+	case m.trigger <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// Run blocks forever, measuring every Interval and whenever Trigger() is
+// called. Call it in its own goroutine.
 //
 // The first measurement is deliberately deferred by one full interval: at
 // startup Gluetun may still be establishing the tunnel, and a test against a
@@ -148,36 +167,60 @@ func (m *SpeedMonitor) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			m.tick(ctx)
+		case <-m.trigger:
+			m.measureNow(ctx)
 		}
 	}
 }
 
-// tick performs one measure-and-decide cycle.
+// tick performs one scheduled measure-and-decide cycle: gated by
+// SkipWhenActive, and its result feeds the rotation policy.
 func (m *SpeedMonitor) tick(ctx context.Context) {
-	result, canRotate := m.measure(ctx)
-
-	m.store.AddResult(result)
-
-	if result.OK() {
-		// Backfills ToExitIP on the previous rotation, so a rotation that
-		// landed back on the same server is visible rather than silent.
-		m.store.RecordExitIP(result.ExitIP)
-	}
+	result, canRotate := m.measure(ctx, m.cfg.SkipWhenActive)
+	m.record(result)
 
 	if canRotate && m.rotate != nil {
 		m.decide(result)
 	}
 
+	m.save()
+}
+
+// measureNow is the VPN page's "Run speedtest now" button. It ignores
+// SkipWhenActive -- an explicit click asked for a number, even a number dragged
+// down by an active download -- and deliberately never calls decide(): the page
+// has its own Rotate button, so a manual measurement must not cause a VPN
+// restart the user did not ask for.
+func (m *SpeedMonitor) measureNow(ctx context.Context) {
+	result, _ := m.measure(ctx, false)
+	m.record(result)
+	m.save()
+}
+
+// record stores a result and backfills the exit IP of the previous rotation,
+// so a rotation that landed back on the same server is visible rather than
+// silent.
+func (m *SpeedMonitor) record(result SpeedResult) {
+	m.store.AddResult(result)
+	if result.OK() {
+		m.store.RecordExitIP(result.ExitIP)
+	}
+}
+
+func (m *SpeedMonitor) save() {
 	if err := m.store.Save(m.cfg.RetentionDuration()); err != nil {
 		log.WithError(err).Warn("Unable to save speedtest results")
 	}
 }
 
-// measure runs the test unless the active-torrent gate blocks it. The second
-// return value reports whether the result may be acted on: when we could not
-// determine whether torrents are active we still measure, but refuse to
-// rotate, since rotating blind could interrupt an active download.
-func (m *SpeedMonitor) measure(ctx context.Context) (SpeedResult, bool) {
+// measure runs the test unless the active-torrent gate blocks it. skipWhenActive
+// is passed in rather than read from the config so both callers are explicit:
+// the scheduled path honors the setting, the manual one never does.
+//
+// The second return value reports whether the result may be acted on: when we
+// could not determine whether torrents are active we still measure, but refuse
+// to rotate, since rotating blind could interrupt an active download.
+func (m *SpeedMonitor) measure(ctx context.Context, skipWhenActive bool) (SpeedResult, bool) {
 	canRotate := true
 
 	if m.active != nil {
@@ -186,7 +229,7 @@ func (m *SpeedMonitor) measure(ctx context.Context) (SpeedResult, bool) {
 		case err != nil:
 			log.WithError(err).Warn("Unable to check for active torrents; will measure but not rotate")
 			canRotate = false
-		case n > 0 && m.cfg.SkipWhenActive:
+		case n > 0 && skipWhenActive:
 			// Testing during a download both steals bandwidth from the
 			// download and reads low because of it.
 			reason := fmt.Sprintf("%d torrent(s) downloading", n)

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,7 +13,7 @@ import (
 func speedMux(t *testing.T, s *SpeedFile, portOpen func() (bool, bool)) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, s, portOpen)
+	registerSpeedRoutes(mux, s, portOpen, speedActions{})
 	return mux
 }
 
@@ -142,7 +144,7 @@ func TestMetrics_EmptyStore(t *testing.T) {
 
 func TestMetrics_NilStore(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, nil, nil)
+	registerSpeedRoutes(mux, nil, nil, speedActions{})
 	code, _ := getBody(t, mux, "/metrics")
 	if code != http.StatusOK {
 		t.Errorf("status = %d with a nil store, want 200", code)
@@ -209,7 +211,7 @@ func TestSpeedTestPage_FlagsUnchangedExit(t *testing.T) {
 
 func TestSpeedTestPage_NilStoreNotRegistered(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, nil, nil)
+	registerSpeedRoutes(mux, nil, nil, speedActions{})
 	code, _ := getBody(t, mux, "/speedtest")
 	if code != http.StatusNotFound {
 		t.Errorf("status = %d with a nil store, want 404", code)
@@ -254,5 +256,160 @@ func TestPortMonitor_LastOpenReflectsLastCheck(t *testing.T) {
 		if open != want {
 			t.Errorf("LastOpen = %v, want %v", open, want)
 		}
+	}
+}
+
+// ---- button actions ----
+
+func actionMux(t *testing.T, actions speedActions) *http.ServeMux {
+	t.Helper()
+	mux := http.NewServeMux()
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, actions)
+	return mux
+}
+
+func postForm(t *testing.T, mux *http.ServeMux, path, body string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec.Code, rec.Body.String()
+}
+
+func TestSpeedRun_QueuesMeasurement(t *testing.T) {
+	calls := 0
+	mux := actionMux(t, speedActions{Run: func() bool { calls++; return true }})
+
+	code, body := postForm(t, mux, "/speedtest/run", "")
+	if code != http.StatusAccepted {
+		t.Errorf("status = %d, want 202", code)
+	}
+	if calls != 1 {
+		t.Errorf("Run called %d times, want 1", calls)
+	}
+	if body == "" {
+		t.Error("empty body, want a message for the page to display")
+	}
+}
+
+// A second click while a measurement is already queued is not an error: the
+// monitor coalesces, and the page should say so rather than claim a new run.
+func TestSpeedRun_AlreadyQueued(t *testing.T) {
+	mux := actionMux(t, speedActions{Run: func() bool { return false }})
+
+	code, body := postForm(t, mux, "/speedtest/run", "")
+	if code != http.StatusOK {
+		t.Errorf("status = %d, want 200", code)
+	}
+	if !strings.Contains(strings.ToLower(body), "already") {
+		t.Errorf("body = %q, want it to say a run is already queued", body)
+	}
+}
+
+func TestSpeedRun_NotRegisteredWithoutFunc(t *testing.T) {
+	code, _ := postForm(t, actionMux(t, speedActions{}), "/speedtest/run", "")
+	if code != http.StatusNotFound {
+		t.Errorf("status = %d with no Run func, want 404", code)
+	}
+}
+
+func TestSpeedRotate_NoActiveDownloads(t *testing.T) {
+	calls := 0
+	mux := actionMux(t, speedActions{
+		Rotate: func() { calls++ },
+		Active: func(context.Context) (int, error) { return 0, nil },
+	})
+
+	code, _ := postForm(t, mux, "/speedtest/rotate", "")
+	if code != http.StatusAccepted {
+		t.Errorf("status = %d, want 202", code)
+	}
+	if calls != 1 {
+		t.Errorf("Rotate called %d times, want 1", calls)
+	}
+}
+
+// Rotating drops the tunnel, so an unconfirmed request while torrents are
+// downloading has to come back for confirmation instead of acting.
+func TestSpeedRotate_ActiveDownloadsNeedConfirmation(t *testing.T) {
+	calls := 0
+	mux := actionMux(t, speedActions{
+		Rotate: func() { calls++ },
+		Active: func(context.Context) (int, error) { return 3, nil },
+	})
+
+	code, body := postForm(t, mux, "/speedtest/rotate", "")
+	if code != http.StatusConflict {
+		t.Errorf("status = %d, want 409", code)
+	}
+	if !strings.Contains(body, "3") {
+		t.Errorf("body = %q, want it to name the number of active downloads", body)
+	}
+	if calls != 0 {
+		t.Errorf("Rotate called %d times without confirmation, want 0", calls)
+	}
+}
+
+func TestSpeedRotate_ConfirmedWithActiveDownloads(t *testing.T) {
+	calls := 0
+	mux := actionMux(t, speedActions{
+		Rotate: func() { calls++ },
+		Active: func(context.Context) (int, error) { return 3, nil },
+	})
+
+	code, _ := postForm(t, mux, "/speedtest/rotate", "confirm=1")
+	if code != http.StatusAccepted {
+		t.Errorf("status = %d, want 202", code)
+	}
+	if calls != 1 {
+		t.Errorf("Rotate called %d times, want 1", calls)
+	}
+}
+
+// "Couldn't ask Transmission" is not "nothing is downloading", so an error
+// takes the confirm path rather than silently rotating.
+func TestSpeedRotate_ActiveCheckErrorNeedsConfirmation(t *testing.T) {
+	calls := 0
+	mux := actionMux(t, speedActions{
+		Rotate: func() { calls++ },
+		Active: func(context.Context) (int, error) { return 0, fmt.Errorf("rpc down") },
+	})
+
+	code, _ := postForm(t, mux, "/speedtest/rotate", "")
+	if code != http.StatusConflict {
+		t.Errorf("status = %d, want 409", code)
+	}
+	if calls != 0 {
+		t.Errorf("Rotate called %d times, want 0", calls)
+	}
+}
+
+func TestSpeedRotate_NotRegisteredWithoutFunc(t *testing.T) {
+	code, _ := postForm(t, actionMux(t, speedActions{}), "/speedtest/rotate", "")
+	if code != http.StatusNotFound {
+		t.Errorf("status = %d with no Rotate func, want 404", code)
+	}
+}
+
+func TestSpeedTestPage_RendersOnlyAvailableButtons(t *testing.T) {
+	mux := http.NewServeMux()
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, speedActions{Run: func() bool { return true }})
+	_, body := getBody(t, mux, "/speedtest")
+	if !strings.Contains(body, `id="btn-run"`) {
+		t.Error("page is missing the run button")
+	}
+	if strings.Contains(body, `id="btn-rotate"`) {
+		t.Error("page renders the rotate button with no Rotate func")
+	}
+
+	mux = http.NewServeMux()
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, speedActions{Rotate: func() {}})
+	_, body = getBody(t, mux, "/speedtest")
+	if !strings.Contains(body, `id="btn-rotate"`) {
+		t.Error("page is missing the rotate button")
+	}
+	if strings.Contains(body, `id="btn-run"`) {
+		t.Error("page renders the run button with no Run func")
 	}
 }

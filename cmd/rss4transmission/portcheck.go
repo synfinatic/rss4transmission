@@ -26,6 +26,8 @@ type PortMonitor struct {
 
 	mu       sync.Mutex // serializes check() (incl. Gluetun struct access) and lastOpen
 	lastOpen *bool      // nil until the first check
+
+	trigger chan struct{} // buffered(1): an out-of-band check request
 }
 
 func NewPortMonitor(t *transmissionrpc.Client, g *Gluetun, ntfyCfg NtfyConfig) *PortMonitor {
@@ -33,18 +35,39 @@ func NewPortMonitor(t *transmissionrpc.Client, g *Gluetun, ntfyCfg NtfyConfig) *
 		Transmission: t,
 		Gluetun:      g,
 		Ntfy:         ntfyCfg,
+		trigger:      make(chan struct{}, 1),
 	}
 }
 
-// Run blocks forever, checking the port every portCheckInterval and once
-// more, separately, after portCheckStartupGrace. Call it in its own
-// goroutine.
+// Trigger asks for a port check without waiting for the next tick. It returns
+// false when a check is already queued -- the buffered channel coalesces, so a
+// burst of requests costs one check, not one per request.
+//
+// It is the only PortMonitor method safe to call from another goroutine while
+// Run() is going; everything else that touches monitor state runs under m.mu on
+// the Run goroutine.
+func (m *PortMonitor) Trigger() bool {
+	select {
+	case m.trigger <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// Run blocks forever, checking the port every portCheckInterval, once more
+// separately after portCheckStartupGrace, and whenever Trigger() is called.
+// Call it in its own goroutine.
 func (m *PortMonitor) Run() {
 	time.AfterFunc(portCheckStartupGrace, m.checkStartup)
 
 	ticker := time.NewTicker(portCheckInterval)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-ticker.C:
+		case <-m.trigger:
+		}
 		if _, err := m.check(); err != nil {
 			log.WithError(err).Warn("Unable to check Transmission port state")
 		}

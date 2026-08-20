@@ -213,3 +213,60 @@ func TestVpnRotatedHook_RecordsSameExitIP(t *testing.T) {
 func TestVpnRotatedHook_NilStore(t *testing.T) {
 	vpnRotatedHook(NtfyConfig{}, nil, time.Hour)("1.1.1.1", "")
 }
+
+// ---- VPN page actions ----
+
+func TestNewSpeedActions_NoMonitorNoGluetun(t *testing.T) {
+	actions := newSpeedActions(enabledSpeedCtx(t), nil, nil, nil)
+
+	if actions.Run != nil {
+		t.Error("Run wired up without a speed monitor")
+	}
+	if actions.Rotate != nil {
+		t.Error("Rotate wired up without Gluetun")
+	}
+}
+
+func TestNewSpeedActions_MonitorWiresRun(t *testing.T) {
+	ctx := enabledSpeedCtx(t)
+	m, err := newSpeedMonitorFor(ctx, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	actions := newSpeedActions(ctx, m, nil, nil)
+	if actions.Run == nil {
+		t.Fatal("Run not wired up with a speed monitor")
+	}
+	if !actions.Run() {
+		t.Error("first Run() = false, want true")
+	}
+	if actions.Run() {
+		t.Error("second Run() = true, want false (should coalesce)")
+	}
+	if actions.Active == nil {
+		t.Error("Active not wired up, so Rotate could not warn about downloads")
+	}
+}
+
+// The button must not touch Gluetun from the HTTP goroutine: it records the
+// request and wakes the port monitor, which owns Gluetun's state.
+func TestNewSpeedActions_RotateGoesThroughPortMonitor(t *testing.T) {
+	ctx := enabledSpeedCtx(t)
+	g := &Gluetun{}
+	pm := NewPortMonitor(nil, g, NtfyConfig{})
+
+	actions := newSpeedActions(ctx, nil, g, pm)
+	if actions.Rotate == nil {
+		t.Fatal("Rotate not wired up with a Gluetun client")
+	}
+
+	actions.Rotate()
+
+	if got := g.PendingRotate(); got == "" {
+		t.Error("Rotate did not reach Gluetun.RequestRotate")
+	}
+	if pm.Trigger() {
+		t.Error("Rotate did not wake the port monitor: its trigger is still empty")
+	}
+}

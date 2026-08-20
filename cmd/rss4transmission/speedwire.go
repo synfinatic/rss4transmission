@@ -88,17 +88,19 @@ func newSpeedMonitorFor(ctx *RunContext, g *Gluetun) (*SpeedMonitor, error) {
 	return NewSpeedMonitor(cfg, ctx.Config.Ntfy, speed, runTest, activeDownloads(ctx), rotate), nil
 }
 
-// startSpeedMonitor launches the speed monitor when configured. A setup
-// failure is logged and swallowed: a bad speedtest config must not stop feed
-// processing, which is what the daemon is actually here to do.
-func startSpeedMonitor(ctx *RunContext, g *Gluetun) {
+// startSpeedMonitor launches the speed monitor when configured and returns it
+// so the VPN page's buttons can reach Trigger. A setup failure is logged and
+// swallowed -- a bad speedtest config must not stop feed processing, which is
+// what the daemon is actually here to do -- so nil covers both "disabled" and
+// "misconfigured".
+func startSpeedMonitor(ctx *RunContext, g *Gluetun) *SpeedMonitor {
 	monitor, err := newSpeedMonitorFor(ctx, g)
 	if err != nil {
 		log.WithError(err).Error("SpeedTest is enabled but could not be started")
-		return
+		return nil
 	}
 	if monitor == nil {
-		return
+		return nil
 	}
 
 	if g == nil {
@@ -110,6 +112,35 @@ func startSpeedMonitor(ctx *RunContext, g *Gluetun) {
 	}
 
 	go monitor.Run(context.Background())
+
+	return monitor
+}
+
+// newSpeedActions builds the operations behind the VPN page's buttons. Each is
+// left nil when the thing it drives is absent, which is how a measure-only
+// deployment renders the page without a rotate button.
+//
+// Rotate deliberately does not call into Gluetun beyond RequestRotate: Gluetun
+// has no internal locking and its state is serialized by PortMonitor.mu, so the
+// button records the request and wakes the port monitor, which performs the
+// rotation on its own goroutine along with the peer-port resync. portMonitor is
+// non-nil whenever g is, since a configured Gluetun always builds one.
+func newSpeedActions(ctx *RunContext, monitor *SpeedMonitor, g *Gluetun, portMonitor *PortMonitor) speedActions {
+	var actions speedActions
+
+	if monitor != nil {
+		actions.Run = monitor.Trigger
+		actions.Active = activeDownloads(ctx)
+	}
+
+	if g != nil && portMonitor != nil {
+		actions.Rotate = func() {
+			g.RequestRotate("requested from the VPN page")
+			portMonitor.Trigger()
+		}
+	}
+
+	return actions
 }
 
 // vpnRotatedHook builds the callback Gluetun invokes once a rotation has

@@ -253,3 +253,32 @@ func TestPortMonitor_CheckStartup_Open_DoesNotNotify(t *testing.T) {
 	m.checkStartup()
 	assert.Empty(t, *titles)
 }
+
+func TestPortMonitor_Trigger_Coalesces(t *testing.T) {
+	m := NewPortMonitor(nil, nil, NtfyConfig{})
+
+	assert.True(t, m.Trigger(), "first trigger should queue a check")
+	assert.False(t, m.Trigger(), "second trigger should coalesce into the queued one")
+}
+
+func TestPortMonitor_Trigger_RunsCheck(t *testing.T) {
+	open := true
+	transmissionSrv := portTestTransmissionServer(t, &open)
+	defer transmissionSrv.Close()
+
+	m := NewPortMonitor(newTestTransmissionClient(t, transmissionSrv.URL), nil, NtfyConfig{})
+	go m.Run()
+
+	require.True(t, m.Trigger())
+
+	// The ticker is 5 minutes out, so anything we observe here came from the
+	// trigger and not from a scheduled check.
+	require.Eventually(t, func() bool {
+		_, known := m.LastOpen()
+		return known
+	}, 5*time.Second, 10*time.Millisecond, "triggered check never ran")
+
+	gotOpen, known := m.LastOpen()
+	assert.True(t, known)
+	assert.True(t, gotOpen)
+}
