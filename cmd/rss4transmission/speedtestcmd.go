@@ -79,6 +79,16 @@ func formatSpeedResult(r SpeedResult) string {
 	return b.String()
 }
 
+// speedResultForOutput stamps a run's error onto the result before rendering,
+// mirroring what SpeedMonitor.measure does. Without it a failed run renders as
+// "Download: 0.0 Mbps" -- a dead link rather than a test that never ran.
+func speedResultForOutput(r SpeedResult, err error) SpeedResult {
+	if err != nil {
+		r.Error = err.Error()
+	}
+	return r
+}
+
 func (cmd *SpeedTestCmd) Run(ctx *RunContext) error {
 	cfg, err := oneShotSpeedConfig(ctx.Config.SpeedTest)
 	if err != nil {
@@ -93,7 +103,7 @@ func (cmd *SpeedTestCmd) Run(ctx *RunContext) error {
 	log.Infof("Running speedtest via %s (%d second capture)...", cfg.Proxy, cfg.CaptureSeconds)
 	result, testErr := runTest(context.Background())
 
-	fmt.Print(formatSpeedResult(result))
+	fmt.Print(formatSpeedResult(speedResultForOutput(result, testErr)))
 
 	// The exit IP is the only cheap proof that the proxy is really carrying
 	// traffic over the tunnel; without it every later measurement could be

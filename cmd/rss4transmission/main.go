@@ -147,6 +147,13 @@ func main() {
 		log.WithError(err).Fatalf("Unable to load %s", rc.configFile)
 	}
 
+	if !commandNeedsTransmission(ctx.Command()) {
+		if err = ctx.Run(rc); err != nil {
+			log.WithError(err).Fatalf("Error running command")
+		}
+		return
+	}
+
 	// use our SeenFile
 	seenFileName := rc.Konf.String("SeenFile")
 	if cli.SeenFile != "" {
@@ -180,6 +187,18 @@ func main() {
 	if err = ctx.Run(rc); err != nil {
 		log.WithError(err).Fatalf("Error running command")
 	}
+}
+
+// commandNeedsTransmission reports whether a subcommand needs the seen cache
+// and a Transmission client. speedtest measures the VPN link and nothing else:
+// opening the cache would warn about creating a file it never reads or writes,
+// and the RPC client would go unused.
+func commandNeedsTransmission(command string) bool {
+	switch command {
+	case "speedtest", "version":
+		return false
+	}
+	return true
 }
 
 type VersionCmd struct{}

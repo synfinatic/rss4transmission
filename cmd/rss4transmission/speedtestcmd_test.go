@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -60,5 +61,48 @@ func TestFormatSpeedResult_Error(t *testing.T) {
 
 	if !strings.Contains(out, "proxy refused") {
 		t.Errorf("output missing the error text\ngot:\n%s", out)
+	}
+}
+
+// speedtest measures the VPN link and nothing else. Opening the seen cache
+// warns about creating a file the command never reads or writes, and building
+// a Transmission client is equally pointless.
+func TestCommandNeedsTransmission(t *testing.T) {
+	tests := map[string]bool{
+		"speedtest": false,
+		"version":   false,
+		"once":      true,
+		"watch":     true,
+		"simulate":  true,
+	}
+	for command, want := range tests {
+		if got := commandNeedsTransmission(command); got != want {
+			t.Errorf("commandNeedsTransmission(%q) = %v, want %v", command, got, want)
+		}
+	}
+}
+
+// A failed run leaves DownloadMbps at zero. Rendering that as "0.0 Mbps"
+// reports a dead link when what actually happened is that no measurement was
+// taken at all, so the error has to be stamped onto the result first.
+func TestSpeedResultForOutput_StampsError(t *testing.T) {
+	r := speedResultForOutput(SpeedResult{At: time.Now()}, errors.New("proxy refused"))
+
+	if r.Error != "proxy refused" {
+		t.Errorf("Error = %q, want %q", r.Error, "proxy refused")
+	}
+	if out := formatSpeedResult(r); strings.Contains(out, "Download") {
+		t.Errorf("failed run still renders a download figure:\n%s", out)
+	}
+}
+
+func TestSpeedResultForOutput_SuccessUnchanged(t *testing.T) {
+	r := speedResultForOutput(SpeedResult{At: time.Now(), DownloadMbps: 412.5}, nil)
+
+	if r.Error != "" {
+		t.Errorf("Error = %q on a successful run, want empty", r.Error)
+	}
+	if out := formatSpeedResult(r); !strings.Contains(out, "412.5") {
+		t.Errorf("successful run lost its measurement:\n%s", out)
 	}
 }
