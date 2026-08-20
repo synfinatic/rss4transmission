@@ -317,7 +317,7 @@ func TestSpeedRun_NotRegisteredWithoutFunc(t *testing.T) {
 func TestSpeedRotate_NoActiveDownloads(t *testing.T) {
 	calls := 0
 	mux := actionMux(t, speedActions{
-		Rotate: func() { calls++ },
+		Rotate: func() bool { calls++; return true },
 		Active: func(context.Context) (int, error) { return 0, nil },
 	})
 
@@ -335,7 +335,7 @@ func TestSpeedRotate_NoActiveDownloads(t *testing.T) {
 func TestSpeedRotate_ActiveDownloadsNeedConfirmation(t *testing.T) {
 	calls := 0
 	mux := actionMux(t, speedActions{
-		Rotate: func() { calls++ },
+		Rotate: func() bool { calls++; return true },
 		Active: func(context.Context) (int, error) { return 3, nil },
 	})
 
@@ -354,7 +354,7 @@ func TestSpeedRotate_ActiveDownloadsNeedConfirmation(t *testing.T) {
 func TestSpeedRotate_ConfirmedWithActiveDownloads(t *testing.T) {
 	calls := 0
 	mux := actionMux(t, speedActions{
-		Rotate: func() { calls++ },
+		Rotate: func() bool { calls++; return true },
 		Active: func(context.Context) (int, error) { return 3, nil },
 	})
 
@@ -372,7 +372,7 @@ func TestSpeedRotate_ConfirmedWithActiveDownloads(t *testing.T) {
 func TestSpeedRotate_ActiveCheckErrorNeedsConfirmation(t *testing.T) {
 	calls := 0
 	mux := actionMux(t, speedActions{
-		Rotate: func() { calls++ },
+		Rotate: func() bool { calls++; return true },
 		Active: func(context.Context) (int, error) { return 0, fmt.Errorf("rpc down") },
 	})
 
@@ -404,12 +404,46 @@ func TestSpeedTestPage_RendersOnlyAvailableButtons(t *testing.T) {
 	}
 
 	mux = http.NewServeMux()
-	registerSpeedRoutes(mux, tempSpeedFile(t), nil, speedActions{Rotate: func() {}})
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, speedActions{Rotate: func() bool { return true }})
 	_, body = getBody(t, mux, "/speedtest")
 	if !strings.Contains(body, `id="btn-rotate"`) {
 		t.Error("page is missing the rotate button")
 	}
 	if strings.Contains(body, `id="btn-run"`) {
 		t.Error("page renders the run button with no Run func")
+	}
+}
+
+// Rotating takes about a minute, and the button comes back enabled as soon as
+// the request is accepted, so a second click has to be told "already going"
+// rather than queueing a second tunnel restart.
+func TestSpeedRotate_AlreadyInProgress(t *testing.T) {
+	mux := actionMux(t, speedActions{
+		Rotate: func() bool { return false },
+		Active: func(context.Context) (int, error) { return 0, nil },
+	})
+
+	code, body := postForm(t, mux, "/speedtest/rotate", "")
+	if code != http.StatusOK {
+		t.Errorf("status = %d, want 200", code)
+	}
+	if !strings.Contains(strings.ToLower(body), "already") {
+		t.Errorf("body = %q, want it to say a rotation is already under way", body)
+	}
+}
+
+// The rotations table used to show only speedtest-driven rotations, so the
+// reason alone identified them. Now that schedule, closed-port and manual
+// rotations share the table, the page names the source outright.
+func TestSpeedPage_ShowsRotationSource(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddRotation(RotationEvent{
+		At: time.Now(), Source: RotationSourceClosedPort,
+		Reason: "peer port closed for 3 consecutive checks", FromExitIP: "1.1.1.1", ToExitIP: "2.2.2.2",
+	})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+	if !strings.Contains(body, RotationSourceClosedPort) {
+		t.Errorf("page does not name the rotation source %q", RotationSourceClosedPort)
 	}
 }

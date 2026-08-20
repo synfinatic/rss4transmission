@@ -264,3 +264,93 @@ func TestSpeedFile_SaveWritesReadableJSON(t *testing.T) {
 		t.Error("saved file is empty")
 	}
 }
+
+// ---- rotation completion ----
+
+// RotateTime, closed-port and manual rotations have no staged event, so the
+// completion has to create one -- otherwise the history and the rotations
+// metric only ever see speedtest-driven churn.
+func TestCompleteRotation_AppendsWhenNothingStaged(t *testing.T) {
+	s := tempSpeedFile(t)
+
+	s.CompleteRotation(RotationSourceSchedule, "RotateTime elapsed", "1.1.1.1", "2.2.2.2")
+
+	rotations := s.GetRotations()
+	if len(rotations) != 1 {
+		t.Fatalf("stored %d rotations, want 1", len(rotations))
+	}
+	got := rotations[0]
+	if got.Source != RotationSourceSchedule {
+		t.Errorf("Source = %q, want %q", got.Source, RotationSourceSchedule)
+	}
+	if got.Reason != "RotateTime elapsed" {
+		t.Errorf("Reason = %q", got.Reason)
+	}
+	if got.FromExitIP != "1.1.1.1" || got.ToExitIP != "2.2.2.2" {
+		t.Errorf("exit IPs = %q -> %q, want 1.1.1.1 -> 2.2.2.2", got.FromExitIP, got.ToExitIP)
+	}
+	if got.At.IsZero() {
+		t.Error("At is zero")
+	}
+}
+
+func TestCompleteRotation_FillsTheStagedEvent(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.StageRotation(RotationEvent{
+		At: time.Now(), Source: RotationSourceSpeedtest, Reason: "too slow",
+		BeforeMbps: 12.5, FromExitIP: "1.1.1.1",
+	})
+
+	s.CompleteRotation(RotationSourceSpeedtest, "too slow", "1.1.1.1", "2.2.2.2")
+
+	rotations := s.GetRotations()
+	if len(rotations) != 1 {
+		t.Fatalf("stored %d rotations, want the staged one to be filled in, not duplicated", len(rotations))
+	}
+	if rotations[0].ToExitIP != "2.2.2.2" {
+		t.Errorf("ToExitIP = %q, want 2.2.2.2", rotations[0].ToExitIP)
+	}
+	if rotations[0].BeforeMbps != 12.5 {
+		t.Errorf("BeforeMbps = %v, want the staged measurement to survive", rotations[0].BeforeMbps)
+	}
+}
+
+// An event left with an unknown destination is not still awaiting one: a later,
+// unrelated rotation must not adopt it and report its exit IP as that older
+// rotation's destination.
+func TestCompleteRotation_DoesNotAdoptAnOlderEvent(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.StageRotation(RotationEvent{At: time.Now(), Source: RotationSourceSpeedtest, Reason: "too slow"})
+	s.CompleteRotation(RotationSourceSpeedtest, "too slow", "1.1.1.1", "") // IP lookup failed
+
+	s.CompleteRotation(RotationSourceSchedule, "RotateTime elapsed", "1.1.1.1", "3.3.3.3")
+
+	rotations := s.GetRotations()
+	if len(rotations) != 2 {
+		t.Fatalf("stored %d rotations, want 2", len(rotations))
+	}
+	if rotations[0].ToExitIP != "" {
+		t.Errorf("first rotation ToExitIP = %q, want it to stay unknown", rotations[0].ToExitIP)
+	}
+	if rotations[1].ToExitIP != "3.3.3.3" {
+		t.Errorf("second rotation ToExitIP = %q, want 3.3.3.3", rotations[1].ToExitIP)
+	}
+}
+
+// The daily cap is a budget for the daemon's own churn. A rotation the user
+// asked for explicitly is not churn, so it must not eat that budget -- but it
+// still shows up in the history and the metric.
+func TestAutomaticRotationsSince_IgnoresManualRotations(t *testing.T) {
+	s := tempSpeedFile(t)
+	now := time.Now()
+	s.AddRotation(RotationEvent{At: now.Add(-2 * time.Hour), Source: RotationSourceSpeedtest})
+	s.AddRotation(RotationEvent{At: now.Add(-1 * time.Hour), Source: RotationSourceManual})
+	s.AddRotation(RotationEvent{At: now.Add(-30 * time.Minute), Source: RotationSourceSchedule})
+
+	if got := s.AutomaticRotationsSince(now.Add(-24 * time.Hour)); got != 2 {
+		t.Errorf("AutomaticRotationsSince = %d, want 2", got)
+	}
+	if got := s.RotationsSince(now.Add(-24 * time.Hour)); got != 3 {
+		t.Errorf("RotationsSince = %d, want all 3", got)
+	}
+}

@@ -293,7 +293,7 @@ func TestRequestRotate_MakesRotateNowTrue(t *testing.T) {
 		t.Errorf("PendingRotate() = %q, want empty", reason)
 	}
 
-	g.RequestRotate("slow: 12.5 Mbps")
+	g.RequestRotate(RotationSourceSpeedtest, "slow: 12.5 Mbps")
 
 	if !g.rotateNow() {
 		t.Error("rotateNow() = false after RequestRotate, want true")
@@ -309,8 +309,8 @@ func TestRequestRotate_MakesRotateNowTrue(t *testing.T) {
 func TestRequestRotate_KeepsFirstReason(t *testing.T) {
 	g := &Gluetun{lastRotate: time.Now()}
 
-	g.RequestRotate("first")
-	g.RequestRotate("second")
+	g.RequestRotate(RotationSourceSpeedtest, "first")
+	g.RequestRotate(RotationSourceSpeedtest, "second")
 
 	if reason := g.PendingRotate(); reason != "first" {
 		t.Errorf("PendingRotate() = %q, want %q", reason, "first")
@@ -322,7 +322,7 @@ func TestRequestRotate_KeepsFirstReason(t *testing.T) {
 func TestRequestRotate_IgnoresEmptyReason(t *testing.T) {
 	g := &Gluetun{lastRotate: time.Now()}
 
-	g.RequestRotate("")
+	g.RequestRotate(RotationSourceSpeedtest, "")
 
 	if g.rotateNow() {
 		t.Error("rotateNow() = true after empty RequestRotate, want false")
@@ -341,7 +341,7 @@ func TestRotate_ClearsPendingRequest(t *testing.T) {
 	defer ts.Close()
 
 	g := newTestGluetun(ts.URL)
-	g.RequestRotate("slow")
+	g.RequestRotate(RotationSourceSpeedtest, "slow")
 
 	if err := g.rotate(); err != nil {
 		t.Fatalf("rotate() returned error: %v", err)
@@ -369,7 +369,7 @@ func TestRotate_FailureKeepsPendingRequest(t *testing.T) {
 
 	g := newTestGluetun(ts.URL)
 	g.statusPollDelay = time.Millisecond
-	g.RequestRotate("slow")
+	g.RequestRotate(RotationSourceSpeedtest, "slow")
 
 	if err := g.rotate(); err == nil {
 		t.Fatal("rotate() returned nil error, want failure when VPN stays down")
@@ -389,7 +389,7 @@ func TestRequestRotate_ConcurrentAccess(t *testing.T) {
 	go func() {
 		defer close(done)
 		for i := 0; i < 1000; i++ {
-			g.RequestRotate("slow")
+			g.RequestRotate(RotationSourceSpeedtest, "slow")
 		}
 	}()
 	for i := 0; i < 1000; i++ {
@@ -433,7 +433,8 @@ func TestRotate_ReportsNewExitIP(t *testing.T) {
 	g := newTestGluetun(ts.URL)
 	g.statusPollDelay = time.Millisecond
 	g.publicIPWait = time.Second
-	g.OnRotated = func(previousIP, newIP string) {
+	g.OnRotated = func(o RotationOutcome) {
+		previousIP, newIP := o.PreviousIP, o.NewIP
 		calls++
 		gotPrev, gotNew = previousIP, newIP
 	}
@@ -463,7 +464,8 @@ func TestRotate_ReportsSameExitIP(t *testing.T) {
 	g := newTestGluetun(ts.URL)
 	g.statusPollDelay = time.Millisecond
 	g.publicIPWait = 5 * time.Millisecond
-	g.OnRotated = func(previousIP, newIP string) {
+	g.OnRotated = func(o RotationOutcome) {
+		previousIP, newIP := o.PreviousIP, o.NewIP
 		gotPrev, gotNew = previousIP, newIP
 	}
 
@@ -487,7 +489,7 @@ func TestRotate_WaitsForExitIPToRefresh(t *testing.T) {
 	g := newTestGluetun(ts.URL)
 	g.statusPollDelay = time.Millisecond
 	g.publicIPWait = time.Second
-	g.OnRotated = func(previousIP, newIP string) { gotNew = newIP }
+	g.OnRotated = func(o RotationOutcome) { gotNew = o.NewIP }
 
 	if err := g.rotate(); err != nil {
 		t.Fatalf("rotate() returned error: %v", err)
@@ -513,7 +515,7 @@ func TestRotate_NoHookOnFailure(t *testing.T) {
 	called := false
 	g := newTestGluetun(ts.URL)
 	g.statusPollDelay = time.Millisecond
-	g.OnRotated = func(previousIP, newIP string) { called = true }
+	g.OnRotated = func(RotationOutcome) { called = true }
 
 	if err := g.rotate(); err == nil {
 		t.Fatal("rotate() returned nil error, want failure when VPN stays down")
@@ -544,9 +546,9 @@ func TestRotate_SucceedsWhenPublicIPUnavailable(t *testing.T) {
 	g := newTestGluetun(ts.URL)
 	g.statusPollDelay = time.Millisecond
 	g.publicIPWait = 5 * time.Millisecond
-	g.OnRotated = func(previousIP, newIP string) {
+	g.OnRotated = func(o RotationOutcome) {
 		called = true
-		gotNew = newIP
+		gotNew = o.NewIP
 	}
 
 	if err := g.rotate(); err != nil {
@@ -557,5 +559,144 @@ func TestRotate_SucceedsWhenPublicIPUnavailable(t *testing.T) {
 	}
 	if gotNew != "" {
 		t.Errorf("newIP = %q, want empty when Gluetun can't report one", gotNew)
+	}
+}
+
+func TestRequestRotate_ReportsWhetherAccepted(t *testing.T) {
+	g := &Gluetun{}
+
+	if !g.RequestRotate(RotationSourceSpeedtest, "first") {
+		t.Error("RequestRotate = false on an idle Gluetun, want true")
+	}
+	if g.RequestRotate(RotationSourceSpeedtest, "second") {
+		t.Error("RequestRotate = true with a request already pending, want false")
+	}
+	if g.RequestRotate(RotationSourceSpeedtest, "") {
+		t.Error("RequestRotate = true for an empty reason, want false")
+	}
+	if got := g.PendingRotate(); got != "first" {
+		t.Errorf("PendingRotate = %q, want the first reason to win", got)
+	}
+}
+
+// rotate() clears the pending request before it finishes, so the tail of a
+// rotation used to look idle: a second request landing there would be honored
+// and rotate the tunnel all over again.
+func TestRequestRotate_RefusedWhileRotationInProgress(t *testing.T) {
+	ts := newRotateServer([]string{"1.1.1.1", "2.2.2.2"})
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	g.statusPollDelay = time.Millisecond
+	g.publicIPWait = time.Second
+
+	var accepted bool
+	var pending string
+	g.OnRotated = func(RotationOutcome) {
+		accepted = g.RequestRotate(RotationSourceSpeedtest, "second click")
+		pending = g.PendingRotate()
+	}
+
+	if !g.RequestRotate(RotationSourceSpeedtest, "first click") {
+		t.Fatal("first RequestRotate = false, want true")
+	}
+	if err := g.rotate(); err != nil {
+		t.Fatalf("rotate() returned error: %v", err)
+	}
+
+	if accepted {
+		t.Error("RequestRotate = true during a rotation, want false")
+	}
+	if pending != "" {
+		t.Errorf("PendingRotate = %q during a rotation, want empty", pending)
+	}
+	if got := g.PendingRotate(); got != "" {
+		t.Errorf("PendingRotate = %q after the rotation, want empty", got)
+	}
+}
+
+func TestRequestRotate_AcceptedAgainAfterRotationFinishes(t *testing.T) {
+	ts := newRotateServer([]string{"1.1.1.1", "2.2.2.2"})
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	g.statusPollDelay = time.Millisecond
+	g.publicIPWait = time.Second
+
+	if err := g.rotate(); err != nil {
+		t.Fatalf("rotate() returned error: %v", err)
+	}
+	if !g.RequestRotate(RotationSourceSpeedtest, "later") {
+		t.Error("RequestRotate = false after the rotation finished, want true")
+	}
+}
+
+// The source has to come from rotate(), not from the caller that noticed the
+// problem: RotateTime and ClosedPortChecks rotations have no requester at all.
+func TestRotate_ReportsRequestedSource(t *testing.T) {
+	ts := newRotateServer([]string{"1.1.1.1", "2.2.2.2"})
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	g.statusPollDelay = time.Millisecond
+	g.publicIPWait = time.Second
+
+	var got RotationOutcome
+	g.OnRotated = func(o RotationOutcome) { got = o }
+	g.RequestRotate(RotationSourceManual, "requested from the VPN page")
+
+	if err := g.rotate(); err != nil {
+		t.Fatalf("rotate() returned error: %v", err)
+	}
+	if got.Source != RotationSourceManual {
+		t.Errorf("Source = %q, want %q", got.Source, RotationSourceManual)
+	}
+	if got.Reason != "requested from the VPN page" {
+		t.Errorf("Reason = %q", got.Reason)
+	}
+}
+
+func TestRotate_ReportsScheduleSource(t *testing.T) {
+	ts := newRotateServer([]string{"1.1.1.1", "2.2.2.2"})
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	g.statusPollDelay = time.Millisecond
+	g.publicIPWait = time.Second
+	g.RotateTime = time.Hour
+	g.lastRotate = time.Now().Add(-2 * time.Hour)
+
+	var got RotationOutcome
+	g.OnRotated = func(o RotationOutcome) { got = o }
+
+	if err := g.rotate(); err != nil {
+		t.Fatalf("rotate() returned error: %v", err)
+	}
+	if got.Source != RotationSourceSchedule {
+		t.Errorf("Source = %q, want %q", got.Source, RotationSourceSchedule)
+	}
+	if got.Reason == "" {
+		t.Error("Reason is empty, want an explanation for the history")
+	}
+}
+
+func TestRotate_ReportsClosedPortSource(t *testing.T) {
+	ts := newRotateServer([]string{"1.1.1.1", "2.2.2.2"})
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	g.statusPollDelay = time.Millisecond
+	g.publicIPWait = time.Second
+	g.ClosedPortChecks = 3
+	g.portCheckFailed = 4
+
+	var got RotationOutcome
+	g.OnRotated = func(o RotationOutcome) { got = o }
+
+	if err := g.rotate(); err != nil {
+		t.Fatalf("rotate() returned error: %v", err)
+	}
+	if got.Source != RotationSourceClosedPort {
+		t.Errorf("Source = %q, want %q", got.Source, RotationSourceClosedPort)
 	}
 }

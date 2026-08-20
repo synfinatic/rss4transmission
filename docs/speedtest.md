@@ -106,8 +106,15 @@ A rotation is requested only when **all** of these hold:
 
 1. The measurement succeeded — a failed or skipped run never triggers a rotation.
 2. Download throughput was below `MinDownloadMbps`.
-3. At least `Cooldown` has passed since the last rotation.
-4. Fewer than `MaxRotationsPerDay` rotations occurred in the trailing 24 hours.
+3. At least `Cooldown` has passed since the last rotation — of any kind, including one you asked
+   for from the page.
+4. Fewer than `MaxRotationsPerDay` **automatic** rotations occurred in the trailing 24 hours.
+5. No other rotation is already pending or under way.
+
+The two budgets treat a manual rotation differently on purpose. `Cooldown` exists to stop the
+tunnel being dropped repeatedly, so every rotation resets it. `MaxRotationsPerDay` is a budget on
+the daemon's own churn, so clicking **Rotate VPN now** does not spend it — otherwise a few clicks
+would silently disable the automatic rotation the setting exists to govern.
 
 With `SkipWhenActive: true` (the default), no measurement is taken at all while torrents are
 downloading, so an active download can never be interrupted by a rotation. Seeding is **not**
@@ -130,7 +137,10 @@ rebuilt on config reload; the speed monitor inherits that limitation.
 
 With `--private-listen` set, the private web server serves:
 
-- `GET /speedtest` — recent measurements, current exit IP, and the rotation log
+- `GET /speedtest` — recent measurements, current exit IP, and the rotation log. Every rotation is
+  logged, not only the speedtest-driven ones: the **Source** column reads `speedtest`, `schedule`
+  (`Gluetun.RotateTime` elapsed), `closed-port` (`Gluetun.ClosedPortChecks` exceeded) or `manual`
+  (the page's button). `rss4transmission_vpn_rotations_total` counts all four
 - `GET /metrics` — Prometheus text format, exposing:
 
 ```
@@ -166,7 +176,8 @@ at it:
 - **Rotate VPN now** — asks Gluetun to re-pick an egress immediately, rather than on the port
   monitor's next 5-minute tick. When torrents are downloading (or rss4transmission can't reach
   Transmission to find out), the button asks for confirmation naming the count before it does
-  anything; confirming rotates and interrupts those downloads.
+  anything; confirming rotates and interrupts those downloads. A rotation takes about a minute; a
+  second click while one is under way is refused rather than dropping the tunnel twice.
 
 Each button appears only when the thing it drives exists: without Gluetun there is no rotate
 button, and with `SpeedTest.Enabled: false` there is no page at all. Both post to the private

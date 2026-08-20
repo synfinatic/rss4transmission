@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -142,6 +143,8 @@ type fakeDeps struct {
 	activeDownloads int
 	activeErr       error
 	rotateReasons   []string
+	rotateSources   []string
+	rotateRefuse    bool // simulate a rotation already pending or under way
 	testCalls       int
 }
 
@@ -150,7 +153,11 @@ func (f *fakeDeps) runTest(context.Context) (SpeedResult, error) {
 	return f.result, f.testErr
 }
 func (f *fakeDeps) active(context.Context) (int, error) { return f.activeDownloads, f.activeErr }
-func (f *fakeDeps) rotate(reason string)                { f.rotateReasons = append(f.rotateReasons, reason) }
+func (f *fakeDeps) rotate(source, reason string) bool {
+	f.rotateSources = append(f.rotateSources, source)
+	f.rotateReasons = append(f.rotateReasons, reason)
+	return !f.rotateRefuse
+}
 
 func newTestMonitor(t *testing.T, cfg SpeedTestConfig, f *fakeDeps) (*SpeedMonitor, *SpeedFile) {
 	t.Helper()
@@ -537,4 +544,77 @@ func TestSpeedMonitor_MeasureNowNeverRotates(t *testing.T) {
 	if len(store.GetResults()) != 1 {
 		t.Errorf("stored %d results, want 1", len(store.GetResults()))
 	}
+}
+
+// Draining the trigger channel is not the end of the request: the measurement
+// it queued still has ~30s to run, and a click during that window would buy a
+// second full test (~250 MB) right behind the first.
+func TestSpeedMonitor_TriggerRefusedWhileMeasuring(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	store := tempSpeedFile(t)
+	m := NewSpeedMonitor(testSpeedCfg(), NtfyConfig{}, store,
+		func(context.Context) (SpeedResult, error) {
+			close(started)
+			<-release
+			return SpeedResult{DownloadMbps: 400}, nil
+		}, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		m.Run(ctx)
+		close(done)
+	}()
+
+	if !m.Trigger() {
+		t.Fatal("first Trigger = false, want true")
+	}
+	<-started
+
+	if m.Trigger() {
+		t.Error("Trigger = true while a measurement was running, want false")
+	}
+
+	// Unblock, then wait for Run to return: the measurement saves to a
+	// t.TempDir file, and t.Cleanup removes that directory as soon as the test
+	// returns.
+	close(release)
+	cancel()
+	<-done
+}
+
+// The scheduled measurement is just as expensive, so a click during one is
+// refused too rather than queueing a second test behind it.
+func TestSpeedMonitor_TriggerRefusedDuringScheduledMeasurement(t *testing.T) {
+	var once sync.Once
+	started := make(chan struct{})
+	release := make(chan struct{})
+	m := NewSpeedMonitor(testSpeedCfg(), NtfyConfig{}, tempSpeedFile(t),
+		func(context.Context) (SpeedResult, error) {
+			once.Do(func() { close(started) })
+			<-release
+			return SpeedResult{DownloadMbps: 400}, nil
+		}, nil, nil)
+	m.interval = 10 * time.Millisecond // Interval is parsed by Validate(), not settable here
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		m.Run(ctx)
+		close(done)
+	}()
+
+	<-started
+	if m.Trigger() {
+		t.Error("Trigger = true during a scheduled measurement, want false")
+	}
+
+	// Stop the loop before unblocking, so the fast ticker cannot spin up
+	// further measurements once the fake stops blocking, then wait for Run to
+	// return before t.Cleanup removes the results file out from under a save.
+	cancel()
+	close(release)
+	<-done
 }

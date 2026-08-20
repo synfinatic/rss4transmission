@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/showwin/speedtest-go/speedtest"
@@ -61,7 +62,7 @@ func (r SpeedResult) OK() bool {
 type (
 	speedTestFunc       func(ctx context.Context) (SpeedResult, error)
 	activeDownloadsFunc func(ctx context.Context) (int, error)
-	rotateRequestFunc   func(reason string)
+	rotateRequestFunc   func(source, reason string) bool
 )
 
 // shouldRotate is the whole rotation policy, kept pure so every branch is
@@ -120,6 +121,11 @@ type SpeedMonitor struct {
 	interval time.Duration
 
 	trigger chan struct{} // buffered(1): an out-of-band measurement request
+
+	// stateMu guards measuring, which is written by the Run goroutine and read
+	// by Trigger from whichever goroutine asked for a measurement.
+	stateMu   sync.Mutex
+	measuring bool
 }
 
 func NewSpeedMonitor(cfg SpeedTestConfig, ntfy NtfyConfig, store *SpeedFile,
@@ -138,18 +144,47 @@ func NewSpeedMonitor(cfg SpeedTestConfig, ntfy NtfyConfig, store *SpeedFile,
 }
 
 // Trigger asks for an on-demand measurement without waiting for the next tick.
-// It returns false when one is already queued -- the buffered channel
-// coalesces, so a burst of requests costs one measurement, not one per request.
+// It returns false when one is already queued or still running, so a burst of
+// requests costs one measurement rather than one per request.
+//
+// Covering the running case matters as much as the queued one: draining the
+// trigger channel is not the end of the request, since the measurement it
+// queued still has tens of seconds to go, and a speedtest is hundreds of
+// megabytes. The lock is what makes the check exact -- a plain flag read could
+// slip through in the instant Run() picks the request up.
 //
 // It is the only SpeedMonitor method safe to call from another goroutine while
 // Run() is going.
 func (m *SpeedMonitor) Trigger() bool {
+	m.stateMu.Lock()
+	defer m.stateMu.Unlock()
+	if m.measuring {
+		return false
+	}
+
 	select {
 	case m.trigger <- struct{}{}:
 		return true
 	default:
 		return false
 	}
+}
+
+// measuring is held across the scheduled measurement too, not just the manual
+// one: both spend the same bandwidth, so neither should have a second test
+// queued behind it.
+func (m *SpeedMonitor) whileMeasuring(f func()) {
+	m.stateMu.Lock()
+	m.measuring = true
+	m.stateMu.Unlock()
+
+	defer func() {
+		m.stateMu.Lock()
+		m.measuring = false
+		m.stateMu.Unlock()
+	}()
+
+	f()
 }
 
 // Run blocks forever, measuring every Interval and whenever Trigger() is
@@ -166,9 +201,9 @@ func (m *SpeedMonitor) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.tick(ctx)
+			m.whileMeasuring(func() { m.tick(ctx) })
 		case <-m.trigger:
-			m.measureNow(ctx)
+			m.whileMeasuring(func() { m.measureNow(ctx) })
 		}
 	}
 }
@@ -261,7 +296,10 @@ func (m *SpeedMonitor) decide(result SpeedResult) {
 	if last, ok := m.store.LastRotation(); ok {
 		lastRotation = last.At
 	}
-	rotationsToday := m.store.RotationsSince(time.Now().Add(-24 * time.Hour))
+	// Manual rotations are excluded: MaxRotationsPerDay is a budget on the
+	// daemon's own churn, and a person clicking the button has already decided
+	// the rotation is worth it.
+	rotationsToday := m.store.AutomaticRotationsSince(time.Now().Add(-24 * time.Hour))
 
 	rotate, reason := shouldRotate(m.cfg, result, lastRotation, rotationsToday, time.Now())
 	if !rotate {
@@ -269,13 +307,23 @@ func (m *SpeedMonitor) decide(result SpeedResult) {
 	}
 
 	log.Warnf("Speedtest: requesting VPN rotation: %s", reason)
-	m.store.AddRotation(RotationEvent{
+	if !m.rotate(RotationSourceSpeedtest, reason) {
+		// A rotation is already pending or under way, so this measurement
+		// changed nothing and must not be recorded or alerted as if it had.
+		log.Info("Speedtest: a VPN rotation is already in progress; not requesting another")
+		return
+	}
+
+	// Staged rather than recorded outright: all we know so far is that the
+	// rotation was asked for. vpnRotatedHook fills in where it landed once
+	// Gluetun reports the tunnel back up.
+	m.store.StageRotation(RotationEvent{
 		At:         time.Now(),
+		Source:     RotationSourceSpeedtest,
 		Reason:     reason,
 		BeforeMbps: result.DownloadMbps,
 		FromExitIP: result.ExitIP,
 	})
-	m.rotate(reason)
 	notifyVpnRotating(m.ntfy, &NtfyVpnContext{
 		Reason:       reason,
 		DownloadMbps: result.DownloadMbps,

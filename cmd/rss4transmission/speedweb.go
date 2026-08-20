@@ -69,8 +69,8 @@ type speedPageData struct {
 // are expected to hand the work to the monitor that owns the state, not to do
 // it inline.
 type speedActions struct {
-	Rotate func()              // ask Gluetun to re-pick an egress, immediately
-	Run    func() bool         // queue a measurement; false => one is already queued
+	Rotate func() bool         // re-pick an egress now; false => one is already under way
+	Run    func() bool         // queue a measurement; false => one is already queued or running
 	Active activeDownloadsFunc // only consulted to decide whether Rotate needs confirming
 }
 
@@ -166,7 +166,13 @@ func makeSpeedRotateHandler(actions speedActions) http.HandlerFunc {
 		}
 
 		log.Warn("VPN rotation requested from the VPN page")
-		actions.Rotate()
+		if !actions.Rotate() {
+			// Not an error: a rotation takes about a minute, and the button
+			// comes back long before it finishes.
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("A rotation is already in progress."))
+			return
+		}
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte("Rotation requested; the VPN will reconnect shortly."))
 	}

@@ -123,7 +123,7 @@ func TestNewSpeedMonitorFor_GluetunWiresRotate(t *testing.T) {
 		t.Fatal("rotate not wired up with a Gluetun client")
 	}
 
-	m.rotate("too slow")
+	m.rotate(RotationSourceSpeedtest, "too slow")
 	if got := g.PendingRotate(); got != "too slow" {
 		t.Errorf("rotate did not reach Gluetun.RequestRotate; pending = %q", got)
 	}
@@ -166,7 +166,9 @@ func TestVpnRotatedHook_NotifiesWithNewExitIP(t *testing.T) {
 		t.Fatalf("ntfy Validate: %v", err)
 	}
 
-	vpnRotatedHook(ntfy, nil, time.Hour)("1.1.1.1", "2.2.2.2")
+	vpnRotatedHook(ntfy, nil, time.Hour)(RotationOutcome{
+		Source: RotationSourceSpeedtest, Reason: "slow", PreviousIP: "1.1.1.1", NewIP: "2.2.2.2",
+	})
 
 	if title != "VPN Rotated" {
 		t.Errorf("Title = %q, want %q", title, "VPN Rotated")
@@ -176,15 +178,22 @@ func TestVpnRotatedHook_NotifiesWithNewExitIP(t *testing.T) {
 	}
 }
 
-// The new exit IP is also what backfills ToExitIP on the rotation the speed
-// monitor recorded, so the /speedtest page stops showing a blank destination
-// until the next hourly measurement.
+// The new exit IP completes the event the speed monitor staged, so the
+// /speedtest page stops showing a blank destination until the next hourly
+// measurement.
 func TestVpnRotatedHook_RecordsExitIPInStore(t *testing.T) {
 	store := tempSpeedFile(t)
-	store.AddRotation(RotationEvent{At: time.Now(), Reason: "slow", FromExitIP: "1.1.1.1"})
+	store.StageRotation(RotationEvent{
+		At: time.Now(), Source: RotationSourceSpeedtest, Reason: "slow", FromExitIP: "1.1.1.1",
+	})
 
-	vpnRotatedHook(NtfyConfig{}, store, 30*24*time.Hour)("1.1.1.1", "2.2.2.2")
+	vpnRotatedHook(NtfyConfig{}, store, 30*24*time.Hour)(RotationOutcome{
+		Source: RotationSourceSpeedtest, Reason: "slow", PreviousIP: "1.1.1.1", NewIP: "2.2.2.2",
+	})
 
+	if n := len(store.GetRotations()); n != 1 {
+		t.Fatalf("stored %d rotations, want the staged one completed in place", n)
+	}
 	last, ok := store.LastRotation()
 	if !ok {
 		t.Fatal("LastRotation() returned no rotation")
@@ -198,9 +207,13 @@ func TestVpnRotatedHook_RecordsExitIPInStore(t *testing.T) {
 // precisely the case worth seeing.
 func TestVpnRotatedHook_RecordsSameExitIP(t *testing.T) {
 	store := tempSpeedFile(t)
-	store.AddRotation(RotationEvent{At: time.Now(), Reason: "slow", FromExitIP: "1.1.1.1"})
+	store.StageRotation(RotationEvent{
+		At: time.Now(), Source: RotationSourceSpeedtest, Reason: "slow", FromExitIP: "1.1.1.1",
+	})
 
-	vpnRotatedHook(NtfyConfig{}, store, 30*24*time.Hour)("1.1.1.1", "1.1.1.1")
+	vpnRotatedHook(NtfyConfig{}, store, 30*24*time.Hour)(RotationOutcome{
+		Source: RotationSourceSpeedtest, Reason: "slow", PreviousIP: "1.1.1.1", NewIP: "1.1.1.1",
+	})
 
 	last, _ := store.LastRotation()
 	if last.ToExitIP != "1.1.1.1" {
@@ -211,7 +224,9 @@ func TestVpnRotatedHook_RecordsSameExitIP(t *testing.T) {
 // Rotations also fire from RotateTime and ClosedPortChecks, where there is no
 // speed store at all; the hook must still notify rather than panic.
 func TestVpnRotatedHook_NilStore(t *testing.T) {
-	vpnRotatedHook(NtfyConfig{}, nil, time.Hour)("1.1.1.1", "")
+	vpnRotatedHook(NtfyConfig{}, nil, time.Hour)(RotationOutcome{
+		Source: RotationSourceSchedule, PreviousIP: "1.1.1.1",
+	})
 }
 
 // ---- VPN page actions ----
@@ -268,5 +283,34 @@ func TestNewSpeedActions_RotateGoesThroughPortMonitor(t *testing.T) {
 	}
 	if pm.Trigger() {
 		t.Error("Rotate did not wake the port monitor: its trigger is still empty")
+	}
+}
+
+// A RotateTime or closed-port rotation has no staged event, so the hook is
+// what puts it in the history and the rotations metric.
+func TestVpnRotatedHook_RecordsUnstagedRotation(t *testing.T) {
+	srv, titles := newTestNtfyServer(t)
+	defer srv.Close()
+	store := tempSpeedFile(t)
+
+	hook := vpnRotatedHook(mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "alerts"}),
+		store, time.Hour)
+	hook(RotationOutcome{
+		Source: RotationSourceSchedule, Reason: "RotateTime elapsed",
+		PreviousIP: "1.1.1.1", NewIP: "2.2.2.2",
+	})
+
+	rotations := store.GetRotations()
+	if len(rotations) != 1 {
+		t.Fatalf("stored %d rotations, want 1", len(rotations))
+	}
+	if rotations[0].Source != RotationSourceSchedule {
+		t.Errorf("Source = %q, want %q", rotations[0].Source, RotationSourceSchedule)
+	}
+	if rotations[0].ToExitIP != "2.2.2.2" {
+		t.Errorf("ToExitIP = %q, want 2.2.2.2", rotations[0].ToExitIP)
+	}
+	if len(*titles) != 1 {
+		t.Errorf("sent %d notifications, want 1", len(*titles))
 	}
 }

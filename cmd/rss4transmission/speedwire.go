@@ -134,9 +134,15 @@ func newSpeedActions(ctx *RunContext, monitor *SpeedMonitor, g *Gluetun, portMon
 	}
 
 	if g != nil && portMonitor != nil {
-		actions.Rotate = func() {
-			g.RequestRotate("requested from the VPN page")
+		actions.Rotate = func() bool {
+			// RequestRotate refuses while a rotation is pending or running, so
+			// an impatient second click is reported back to the page rather
+			// than dropping the tunnel twice.
+			if !g.RequestRotate(RotationSourceManual, "requested from the VPN page") {
+				return false
+			}
 			portMonitor.Trigger()
+			return true
 		}
 	}
 
@@ -148,27 +154,29 @@ func newSpeedActions(ctx *RunContext, monitor *SpeedMonitor, g *Gluetun, portMon
 // alert cannot: which exit are we on now.
 //
 // It is wired for every rotation trigger, not just the speedtest one, since a
-// RotateTime or closed-port rotation changes the exit just as thoroughly.
-// store is nil when SpeedTest is disabled, in which case there is no rotation
-// history to backfill and only the notification is sent. retention is passed
-// straight to Save, which prunes on write -- it must be the configured
+// RotateTime or closed-port rotation changes the exit just as thoroughly -- and
+// since this is the one place every rotation passes through, it is also where
+// the history gets written. store is nil when SpeedTest is disabled, in which
+// case there is nothing to record and only the notification is sent. retention
+// is passed straight to Save, which prunes on write -- it must be the configured
 // retention window, never a zero value, or the save would drop every record.
-func vpnRotatedHook(ntfy NtfyConfig, store *SpeedFile, retention time.Duration) func(previousIP, newIP string) {
-	return func(previousIP, newIP string) {
+func vpnRotatedHook(ntfy NtfyConfig, store *SpeedFile, retention time.Duration) func(RotationOutcome) {
+	return func(o RotationOutcome) {
 		if store != nil {
-			// Backfills ToExitIP on the rotation the speed monitor recorded, so
-			// the /speedtest page names the new exit immediately instead of
-			// waiting for the next measurement to observe it.
-			store.RecordExitIP(newIP)
+			// Completes the event decide() staged, or records one from scratch
+			// for a rotation nothing staged: schedule, closed-port and manual
+			// rotations all arrive here with no prior event, and without this
+			// they would reach neither the /speedtest page nor the metric.
+			store.CompleteRotation(o.Source, o.Reason, o.PreviousIP, o.NewIP)
 			if err := store.Save(retention); err != nil {
 				log.WithError(err).Warn("Unable to save speedtest results after rotation")
 			}
 		}
 
 		notifyVpnRotated(ntfy, &NtfyVpnRotatedContext{
-			ExitIP:     newIP,
-			PreviousIP: previousIP,
-			SameExit:   newIP != "" && newIP == previousIP,
+			ExitIP:     o.NewIP,
+			PreviousIP: o.PreviousIP,
+			SameExit:   o.NewIP != "" && o.NewIP == o.PreviousIP,
 		})
 	}
 }
