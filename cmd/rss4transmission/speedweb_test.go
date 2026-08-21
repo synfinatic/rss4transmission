@@ -505,8 +505,10 @@ func TestSpeedTestPage_ExitIPTileUsesGluetun(t *testing.T) {
 	if strings.Contains(tile, "45.12.3.9") {
 		t.Errorf("summary shows the measurement's exit IP\ngot:\n%s", tile)
 	}
-	if !strings.Contains(tile, "Gluetun") {
-		t.Errorf("summary does not name Gluetun as the source\ngot:\n%s", tile)
+	// Unannotated: with Gluetun configured the tile is always Gluetun's answer,
+	// so naming it on every page load is noise.
+	if strings.Contains(tile, "Gluetun") {
+		t.Errorf("summary annotates the source it always has\ngot:\n%s", tile)
 	}
 	// The per-measurement value is still on the page, under its own heading.
 	if !strings.Contains(body, "45.12.3.9") {

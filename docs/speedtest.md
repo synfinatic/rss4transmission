@@ -178,7 +178,9 @@ because they do not always agree:
 
 - The **Exit IP** tile is Gluetun's own `GET /v1/publicip/ip`, refreshed on the port monitor's
   5-minute check. This is the authoritative one, and it is what the rotation log's **From** and
-  **To** columns record.
+  **To** columns record. It is unlabeled because with Gluetun configured it is always Gluetun's
+  answer; a measure-only deployment has nothing to ask, so its tile falls back to the last
+  measurement and says `(speedtest.net)`.
 - The measurements table's **Exit IP (Gluetun)** column is that same value as of when the row was
   recorded, so an old measurement stays attached to the tunnel it was taken over. It is blank for
   rows written before Gluetun first answered, and in measure-only mode.

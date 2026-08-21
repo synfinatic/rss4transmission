@@ -71,9 +71,11 @@ type speedPageData struct {
 	Rotations []speedPageRotation
 	Latest    *SpeedResult
 	ExitIP    string
-	// ExitIPSource names where ExitIP came from -- "Gluetun" or "speedtest.net".
-	// It is rendered next to the value because the two are not interchangeable:
-	// see exitIPFunc.
+	// ExitIPSource names where ExitIP came from, and is empty when that is
+	// Gluetun. With Gluetun configured the tile is always Gluetun's answer, so
+	// saying so on every page load is noise; the annotation exists to flag the
+	// one case where it is *not* -- a measure-only deployment falling back to
+	// speedtest.net's view, which is not interchangeable (see exitIPFunc).
 	ExitIPSource string
 	// ShowUpload renders the upload tile. It is driven by whether any recent
 	// measurement carries an upload leg rather than by the latest value: the
@@ -239,7 +241,7 @@ func buildSpeedPageData(speed *SpeedFile, exitIP exitIPFunc) speedPageData {
 	switch {
 	case exitIP != nil:
 		if ip, known := exitIP(); known {
-			data.ExitIP, data.ExitIPSource = ip, "Gluetun"
+			data.ExitIP = ip
 		}
 	case data.Latest != nil:
 		data.ExitIP, data.ExitIPSource = data.Latest.ExitIP, "speedtest.net"

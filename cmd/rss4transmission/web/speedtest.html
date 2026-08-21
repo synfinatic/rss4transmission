@@ -96,7 +96,7 @@
         {{- end }}
         <div>
             <span class="label">Exit IP</span>
-            <span class="value">{{ if .ExitIP }}{{ .ExitIP }} <span class="source">({{ .ExitIPSource }})</span>{{ else }}&mdash;{{ end }}</span>
+            <span class="value">{{ if .ExitIP }}{{ .ExitIP }}{{ if .ExitIPSource }} <span class="source">({{ .ExitIPSource }})</span>{{ end }}{{ else }}&mdash;{{ end }}</span>
         </div>
         <div>
             <span class="label">Rotations</span>
