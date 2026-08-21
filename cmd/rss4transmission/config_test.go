@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mmcdole/gofeed"
@@ -464,5 +465,30 @@ Feeds:
 	}
 	if rc.Config.Feeds[0].Extractor != "demo" {
 		t.Errorf("expected previous config to survive a bad reload, got Extractor=%q", rc.Config.Feeds[0].Extractor)
+	}
+}
+
+// An upload floor is meaningless without an upload measurement: DownloadOnly
+// leaves UploadMbps at zero, which would read as "always below the floor" and
+// rotate the VPN on every single measurement.
+func TestSpeedTestConfig_UploadFloorRequiresUploadTest(t *testing.T) {
+	cfg := SpeedTestConfig{
+		Enabled: true, Interval: "1h", Cooldown: "2h", Proxy: "http://gluetun:8888",
+		MinDownloadMbps: 100, MinUploadMbps: 5, CaptureSeconds: 5, DownloadOnly: true,
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() = nil with MinUploadMbps set and DownloadOnly true, want an error")
+	}
+	for _, want := range []string{"MinUploadMbps", "DownloadOnly"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+
+	cfg.DownloadOnly = false
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %q with the upload test enabled, want nil", err)
 	}
 }

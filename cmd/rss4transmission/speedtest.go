@@ -65,6 +65,29 @@ type (
 	rotateRequestFunc   func(source, reason string) bool
 )
 
+// belowThreshold reports which throughput floor this result missed, or "" when
+// it met them all. Download is tested first: it is the more common failure and
+// makes the more useful reason line when both legs are bad.
+//
+// Upload matters on its own because the two fail independently -- an exit can
+// carry download at full rate and upload nothing at all, which is invisible to
+// MinDownloadMbps and fatal on a tracker that measures ratio.
+func belowThreshold(cfg SpeedTestConfig, r SpeedResult) string {
+	if r.DownloadMbps < cfg.MinDownloadMbps {
+		return fmt.Sprintf("download %.1f Mbps below %.1f Mbps threshold",
+			r.DownloadMbps, cfg.MinDownloadMbps)
+	}
+
+	// A zero floor disables the check, which is the default: without
+	// DownloadOnly: false there is no upload measurement to compare against.
+	if cfg.MinUploadMbps > 0 && r.UploadMbps < cfg.MinUploadMbps {
+		return fmt.Sprintf("upload %.1f Mbps below %.1f Mbps threshold",
+			r.UploadMbps, cfg.MinUploadMbps)
+	}
+
+	return ""
+}
+
 // shouldRotate is the whole rotation policy, kept pure so every branch is
 // table-testable. now is passed in rather than read from the clock.
 //
@@ -79,12 +102,10 @@ func shouldRotate(cfg SpeedTestConfig, r SpeedResult, lastRotation time.Time,
 		return false, ""
 	}
 
-	if r.DownloadMbps >= cfg.MinDownloadMbps {
+	reason := belowThreshold(cfg, r)
+	if reason == "" {
 		return false, ""
 	}
-
-	reason := fmt.Sprintf("download %.1f Mbps below %.1f Mbps threshold",
-		r.DownloadMbps, cfg.MinDownloadMbps)
 
 	if !lastRotation.IsZero() {
 		if cooldown := cfg.CooldownDuration(); now.Sub(lastRotation) < cooldown {

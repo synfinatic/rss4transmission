@@ -447,3 +447,29 @@ func TestSpeedPage_ShowsRotationSource(t *testing.T) {
 		t.Errorf("page does not name the rotation source %q", RotationSourceClosedPort)
 	}
 }
+
+// A dead upload leg is the failure MinUploadMbps exists to catch, so the
+// summary has to surface it next to the download rather than burying it in a
+// table column.
+func TestSpeedPage_ShowsLastUploadWhenMeasured(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now().Add(-time.Hour), DownloadMbps: 400, UploadMbps: 42})
+	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 400, UploadMbps: -0.04})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+	if !strings.Contains(strings.ToLower(body), "last upload") {
+		t.Error("summary does not report the last upload")
+	}
+}
+
+// With DownloadOnly there is no upload leg at all, and a permanent "0.0 Mbps"
+// tile would read as a dead link rather than a disabled test.
+func TestSpeedPage_HidesLastUploadWhenNeverMeasured(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 400})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+	if strings.Contains(strings.ToLower(body), "last upload") {
+		t.Error("summary reports an upload that was never measured")
+	}
+}

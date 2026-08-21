@@ -80,6 +80,16 @@
             <span class="value muted">&mdash;</span>
             {{- end }}
         </div>
+        {{- if .ShowUpload }}
+        <div>
+            <span class="label">Last upload</span>
+            {{- if .Latest }}
+            <span class="value ok">{{ mbps .Latest.UploadMbps }} Mbps</span>
+            {{- else }}
+            <span class="value muted">&mdash;</span>
+            {{- end }}
+        </div>
+        {{- end }}
         <div>
             <span class="label">Exit IP</span>
             <span class="value">{{ if .ExitIP }}{{ .ExitIP }}{{ else }}&mdash;{{ end }}</span>
