@@ -66,6 +66,10 @@ services:
       - VPN_PORT_FORWARDING=on
       - SERVER_HOSTNAMES=XXXXX,YYYYYY,ZZZZZ
       - HTTP_CONTROL_SERVER_LOG=off
+      # HTTP proxy used by rss4transmission's SpeedTest feature to measure
+      # throughput over the tunnel. Reachable as http://gluetun:8888 from the
+      # shared compose network; no ports: entry needed.
+      - HTTPPROXY=on
     ports:
       - "0.0.0.0:9091:9091/tcp"  # expose Transmission RPC/Webui to local network
       - 51413:51413/tcp

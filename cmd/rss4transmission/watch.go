@@ -257,7 +257,9 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, removeT removeFunc, getProg
 			if ctx.History == nil {
 				log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 			}
-			go startWebServer("private", newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory), histAddr)
+			privMux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, ctx.Speed != nil)
+			registerSpeedRoutes(privMux, ctx.Speed, ctx.PeerPortOpen, ctx.SpeedActions)
+			go startWebServer("private", privMux, histAddr)
 		}
 	} else if cmd.PrivateListen != "" {
 		// Single-listener mode: history + cancel on the same port.
@@ -268,7 +270,8 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, removeT removeFunc, getProg
 		if ctx.History == nil {
 			log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 		}
-		mux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory)
+		mux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, ctx.Speed != nil)
+		registerSpeedRoutes(mux, ctx.Speed, ctx.PeerPortOpen, ctx.SpeedActions)
 		if ctx.CancelStore != nil {
 			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Notifications, removeT, getProgress, accessLog)
 			ctx.CancelRoutesEnabled = true
@@ -407,14 +410,36 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 
 	accessLog := openAccessLog(cmd.AccessLog)
 
-	setupWebServers(cmd, ctx, removeT, getProgress, retryHistory, feedConfigured, feedGroups, forgetHistory, accessLog)
-
+	// The monitors are built before the web servers so /metrics can read peer
+	// port state and ctx.Speed is populated before the mux decides whether to
+	// serve /speedtest. Note g is built once here and is not rebuilt on config
+	// reload; the speed monitor inherits that same limitation.
 	var g *Gluetun
 	if ctx.Config.Gluetun.Host != "" && ctx.Config.Gluetun.Port != 0 {
 		g = NewGluetun(ctx.Config.Gluetun, ctx.Transmission)
 	}
+
+	var portMonitor *PortMonitor
 	if g != nil || ctx.Config.PortCheck.Enabled {
-		go NewPortMonitor(ctx.Transmission, g, ctx.Config.Ntfy).Run()
+		portMonitor = NewPortMonitor(ctx.Transmission, g, ctx.Config.Ntfy)
+		ctx.PeerPortOpen = portMonitor.LastOpen
+	}
+
+	monitor := startSpeedMonitor(ctx, g)
+
+	// Wired after startSpeedMonitor because that is what populates ctx.Speed,
+	// which the hook backfills with the exit IP the tunnel came back up on.
+	if g != nil {
+		g.OnRotated = vpnRotatedHook(ctx.Config.Ntfy, ctx.Speed, ctx.Config.SpeedTest.RetentionDuration())
+	}
+
+	// Consumed inside setupWebServers, so this has to happen before it.
+	ctx.SpeedActions = newSpeedActions(ctx, monitor, g, portMonitor)
+
+	setupWebServers(cmd, ctx, removeT, getProgress, retryHistory, feedConfigured, feedGroups, forgetHistory, accessLog)
+
+	if portMonitor != nil {
+		go portMonitor.Run()
 	}
 
 	// Run once and then sleep between later runs...

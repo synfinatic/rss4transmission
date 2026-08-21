@@ -287,7 +287,9 @@ func groupHistoryRows(records []HistoryRecord, feedGroups func(name string) []Gr
 // ties in groupHistoryRows; a nil feedGroups falls back to alphabetical
 // ordering, same as if every feed had no groups.
 // The /healthz route is always registered.
-func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name string) bool, feedGroups func(name string) []Group, forget forgetFunc) *http.ServeMux {
+// speedtest reports whether registerSpeedRoutes will also be called on this
+// mux, so the history page only links /speedtest when that route exists.
+func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name string) bool, feedGroups func(name string) []Group, forget forgetFunc, speedtest bool) *http.ServeMux {
 	if feedConfigured == nil {
 		feedConfigured = func(string) bool { return true }
 	}
@@ -304,8 +306,9 @@ func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name s
 				return "skipped"
 			}
 		},
-		"feedConfigured": feedConfigured,
-		"sub":            func(a, b int) int { return a - b },
+		"feedConfigured":   feedConfigured,
+		"sub":              func(a, b int) int { return a - b },
+		"speedtestEnabled": func() bool { return speedtest },
 	}
 	tmpl := template.Must(template.New("history").Funcs(funcMap).Parse(historyTmpl))
 

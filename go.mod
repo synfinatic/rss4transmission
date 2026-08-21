@@ -12,6 +12,7 @@ require (
 	github.com/knadh/koanf/v2 v2.3.6
 	github.com/manifoldco/promptui v0.9.0
 	github.com/mmcdole/gofeed v1.4.1
+	github.com/showwin/speedtest-go v1.7.11
 	github.com/sirupsen/logrus v1.9.4
 	github.com/stretchr/testify v1.12.0
 	github.com/xhit/go-str2duration/v2 v2.1.0

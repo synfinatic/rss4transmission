@@ -22,6 +22,28 @@ type NtfyPortContext struct {
 	Reason string
 }
 
+// NtfyVpnContext holds the data available to the templates for the alert sent
+// when a rotation is requested. ExitIP is the exit we are about to leave.
+type NtfyVpnContext struct {
+	Reason       string
+	DownloadMbps float64
+	ExitIP       string
+}
+
+// NtfyVpnRotatedContext holds the data available to the templates for the alert
+// sent once the tunnel is back up. Here ExitIP is the *new* exit, which is the
+// whole reason this notification exists -- the request-time alert can only name
+// the exit being abandoned.
+//
+// ExitIP is empty when Gluetun never reported a public IP; SameExit means the
+// reconnect landed on the address we started from, which happens with a small
+// server pool and means the rotation bought nothing.
+type NtfyVpnRotatedContext struct {
+	ExitIP     string
+	PreviousIP string
+	SameExit   bool
+}
+
 // NtfyTemplateContext holds all torrent data available to notification templates.
 type NtfyTemplateContext struct {
 	Title     string
@@ -137,6 +159,24 @@ func (c *NtfyConfig) Validate() error {
 			&c.PortOpenedTitle, &c.PortOpenedBody, &c.PortOpenedPriority,
 			"Transmission Port Open", "{{.Reason}}", "default",
 			"PortOpenedTitle", "PortOpenedBody", "PortOpenedPriority")
+		if err != nil {
+			return err
+		}
+		c.vpnRotatingTitleTmpl, c.vpnRotatingBodyTmpl, err = compileNotificationTemplates(
+			&c.VpnRotatingTitle, &c.VpnRotatingBody, &c.VpnRotatingPriority,
+			"VPN Rotating", "{{.Reason}}\nExit IP: {{.ExitIP}}", "default",
+			"VpnRotatingTitle", "VpnRotatingBody", "VpnRotatingPriority")
+		if err != nil {
+			return err
+		}
+		c.vpnRotatedTitleTmpl, c.vpnRotatedBodyTmpl, err = compileNotificationTemplates(
+			&c.VpnRotatedTitle, &c.VpnRotatedBody, &c.VpnRotatedPriority,
+			"VPN Rotated",
+			"Exit IP: {{if .ExitIP}}{{.ExitIP}}{{else}}unknown{{end}}"+
+				"{{if .PreviousIP}}\nPrevious: {{.PreviousIP}}{{end}}"+
+				"{{if .SameExit}}\nReconnected to the same exit{{end}}",
+			"default",
+			"VpnRotatedTitle", "VpnRotatedBody", "VpnRotatedPriority")
 		if err != nil {
 			return err
 		}
@@ -281,6 +321,30 @@ func (c *NtfyClient) SendPortOpened(ctx *NtfyPortContext) error {
 	return c.post(c.cfg.AlertTopic, title, body, "", c.cfg.PortOpenedPriority)
 }
 
+func (c *NtfyClient) SendVpnRotating(ctx *NtfyVpnContext) error {
+	title, err := renderTemplate(c.cfg.vpnRotatingTitleTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	body, err := renderTemplate(c.cfg.vpnRotatingBodyTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	return c.post(c.cfg.AlertTopic, title, body, "", c.cfg.VpnRotatingPriority)
+}
+
+func (c *NtfyClient) SendVpnRotated(ctx *NtfyVpnRotatedContext) error {
+	title, err := renderTemplate(c.cfg.vpnRotatedTitleTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	body, err := renderTemplate(c.cfg.vpnRotatedBodyTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	return c.post(c.cfg.AlertTopic, title, body, "", c.cfg.VpnRotatedPriority)
+}
+
 // notifyConfigReload sends a config-reload outcome notification to ntfy's
 // AlertTopic. No-op when BaseURL or AlertTopic is unset. Send failures are
 // logged as warnings, never fatal — a broken notification channel must not
@@ -331,5 +395,33 @@ func notifyPortOpened(cfg NtfyConfig, reason string) {
 	client := NewNtfyClient(cfg)
 	if err := client.SendPortOpened(&NtfyPortContext{Reason: reason}); err != nil {
 		log.WithError(err).Warn("Failed to send ntfy port-opened notification")
+	}
+}
+
+// notifyVpnRotating sends the "a rotation was requested" alert to ntfy's
+// AlertTopic. No-op when BaseURL or AlertTopic is unset. Send failures are
+// logged as warnings, never fatal — a broken notification channel must not
+// block VPN rotation.
+func notifyVpnRotating(cfg NtfyConfig, ctx *NtfyVpnContext) {
+	if cfg.BaseURL == "" || cfg.AlertTopic == "" {
+		return
+	}
+
+	client := NewNtfyClient(cfg)
+	if err := client.SendVpnRotating(ctx); err != nil {
+		log.WithError(err).Warn("Failed to send ntfy vpn-rotating notification")
+	}
+}
+
+// notifyVpnRotated sends the follow-up alert naming the exit IP the tunnel came
+// back up on. Same no-op and failure rules as notifyVpnRotating.
+func notifyVpnRotated(cfg NtfyConfig, ctx *NtfyVpnRotatedContext) {
+	if cfg.BaseURL == "" || cfg.AlertTopic == "" {
+		return
+	}
+
+	client := NewNtfyClient(cfg)
+	if err := client.SendVpnRotated(ctx); err != nil {
+		log.WithError(err).Warn("Failed to send ntfy vpn-rotated notification")
 	}
 }

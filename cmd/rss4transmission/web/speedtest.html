@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="refresh" content="60">
+    <title>RSS4Transmission VPN Speed</title>
+    <style>
+        body { font-family: monospace; margin: 2em; background: #1a1a1a; color: #e0e0e0; }
+        h1 { color: #ccc; margin-bottom: 0.25em; }
+        h2 { color: #ccc; font-size: 1.1em; margin-top: 2em; }
+        p { color: #888; margin-top: 0; }
+        a { color: #6aa8e0; }
+
+        #summary {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2.5em;
+            background: #2a2a2a;
+            padding: 0.8em 1em;
+            margin-bottom: 1.5em;
+        }
+        #summary div { display: flex; flex-direction: column; gap: 0.2em; }
+        #summary .label { color: #888; font-size: 0.8em; text-transform: uppercase; }
+        #summary .value { color: #e0e0e0; font-size: 1.3em; }
+
+        table { border-collapse: collapse; width: 100%; }
+        th, td { text-align: left; padding: 4px 10px; border-bottom: 1px solid #333; }
+        th { color: #aaa; font-weight: normal; border-bottom: 1px solid #555; }
+        td.num { text-align: right; }
+
+        #actions {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.75em;
+            margin-bottom: 1.5em;
+        }
+        #actions button {
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 0.35em 1em;
+            font-family: monospace;
+            font-size: 0.85em;
+            font-weight: bold;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            transition: background-color 0.15s ease, transform 0.1s ease;
+        }
+        #actions button:active { transform: translateY(1px); }
+        #actions button:disabled {
+            background: #3a3a3a;
+            color: #777;
+            cursor: default;
+            transform: none;
+        }
+        #btn-run { background: #0668c4; }
+        #btn-run:hover:not(:disabled) { background: #1a86ec; }
+        #btn-rotate { background: #8c3b3b; }
+        #btn-rotate:hover:not(:disabled) { background: #b04b4b; }
+        #action-status.error { color: #d16a6a; }
+
+        .ok { color: #7ec87e; }
+        .skipped { color: #c8a44e; }
+        .error { color: #d16a6a; }
+        .same-exit { color: #c8a44e; }
+        .muted { color: #777; }
+    </style>
+</head>
+<body>
+    <h1>VPN Speed</h1>
+    <p>{{ len .Rows }} measurement(s) &mdash; auto-refreshes every 60 seconds. <a href="/">History</a></p>
+
+    <div id="summary">
+        <div>
+            <span class="label">Last download</span>
+            {{- if .Latest }}
+            <span class="value ok">{{ mbps .Latest.DownloadMbps }} Mbps</span>
+            {{- else }}
+            <span class="value muted">&mdash;</span>
+            {{- end }}
+        </div>
+        <div>
+            <span class="label">Exit IP</span>
+            <span class="value">{{ if .ExitIP }}{{ .ExitIP }}{{ else }}&mdash;{{ end }}</span>
+        </div>
+        <div>
+            <span class="label">Rotations</span>
+            <span class="value">{{ len .Rotations }}</span>
+        </div>
+    </div>
+
+    {{- if or .CanRun .CanRotate }}
+    <div id="actions">
+        {{- if .CanRun }}
+        <button id="btn-run">Run speedtest now</button>
+        {{- end }}
+        {{- if .CanRotate }}
+        <button id="btn-rotate">Rotate VPN now</button>
+        {{- end }}
+        <span id="action-status" class="muted"></span>
+    </div>
+    {{- end }}
+
+    <h2>Measurements</h2>
+    {{- if .Rows }}
+    <table>
+        <tr>
+            <th>When</th>
+            <th>Status</th>
+            <th class="num">Down</th>
+            <th class="num">Up</th>
+            <th class="num">Latency</th>
+            <th class="num">Jitter</th>
+            <th>Server</th>
+            <th>Exit IP</th>
+            <th>Detail</th>
+        </tr>
+        {{- range .Rows }}
+        <tr>
+            <td>{{ fmtTime .At }}</td>
+            <td class="{{ .Status }}">{{ .Status }}</td>
+            {{- if eq .Status "ok" }}
+            <td class="num">{{ mbps .DownloadMbps }}</td>
+            <td class="num">{{ if .UploadMbps }}{{ mbps .UploadMbps }}{{ else }}&mdash;{{ end }}</td>
+            <td class="num">{{ if .LatencyMs }}{{ ms .LatencyMs }}{{ else }}&mdash;{{ end }}</td>
+            <td class="num">{{ if .JitterMs }}{{ ms .JitterMs }}{{ else }}&mdash;{{ end }}</td>
+            {{- else }}
+            <td class="num muted">&mdash;</td>
+            <td class="num muted">&mdash;</td>
+            <td class="num muted">&mdash;</td>
+            <td class="num muted">&mdash;</td>
+            {{- end }}
+            <td>{{ if .ServerName }}{{ .ServerName }}{{ if .Sponsor }} ({{ .Sponsor }}){{ end }}{{ else }}&mdash;{{ end }}</td>
+            <td>{{ if .ExitIP }}{{ .ExitIP }}{{ else }}&mdash;{{ end }}</td>
+            <td class="{{ .Status }}">{{ if .Error }}{{ .Error }}{{ else if .Skipped }}{{ .Skipped }}{{ end }}</td>
+        </tr>
+        {{- end }}
+    </table>
+    {{- else }}
+    <p class="muted">No measurements recorded yet.</p>
+    {{- end }}
+
+    <h2>Rotations</h2>
+    {{- if .Rotations }}
+    <table>
+        <tr>
+            <th>When</th>
+            <th>Source</th>
+            <th>Reason</th>
+            <th class="num">Down at rotation</th>
+            <th>From</th>
+            <th>To</th>
+        </tr>
+        {{- range .Rotations }}
+        <tr>
+            <td>{{ fmtTime .At }}</td>
+            <td>{{ if .Source }}{{ .Source }}{{ else }}&mdash;{{ end }}</td>
+            <td>{{ .Reason }}</td>
+            <td class="num">{{ if .BeforeMbps }}{{ mbps .BeforeMbps }} Mbps{{ else }}&mdash;{{ end }}</td>
+            <td>{{ if .FromExitIP }}{{ .FromExitIP }}{{ else }}&mdash;{{ end }}</td>
+            {{- if .SameExit }}
+            <td class="same-exit">{{ .ToExitIP }} &mdash; same exit</td>
+            {{- else }}
+            <td>{{ if .ToExitIP }}{{ .ToExitIP }}{{ else }}<span class="muted">pending</span>{{ end }}</td>
+            {{- end }}
+        </tr>
+        {{- end }}
+    </table>
+    {{- else }}
+    <p class="muted">No rotations recorded yet.</p>
+    {{- end }}
+    {{- if or .CanRun .CanRotate }}
+    <script>
+        (function () {
+            var status = document.getElementById('action-status');
+
+            function say(msg, isError) {
+                status.textContent = msg;
+                status.className = isError ? 'error' : 'muted';
+            }
+
+            // Both actions are queued server-side and take tens of seconds to
+            // finish, so the button reports what was accepted and the page's
+            // 60s refresh is what eventually shows the result.
+            function post(btn, url, body, busyText, idleText) {
+                btn.disabled = true;
+                btn.textContent = busyText;
+                return fetch(url, { method: 'POST', body: body }).then(function (resp) {
+                    return resp.text().then(function (text) {
+                        return { status: resp.status, text: text };
+                    });
+                }).finally(function () {
+                    btn.disabled = false;
+                    btn.textContent = idleText;
+                });
+            }
+
+            {{- if .CanRun }}
+            var runBtn = document.getElementById('btn-run');
+            runBtn.addEventListener('click', function () {
+                say('');
+                post(runBtn, '/speedtest/run', new URLSearchParams(), 'Queueing…', 'Run speedtest now')
+                    .then(function (r) { say(r.text, r.status >= 400); })
+                    .catch(function (err) { say('Failed to queue: ' + err.message, true); });
+            });
+            {{- end }}
+
+            {{- if .CanRotate }}
+            var rotateBtn = document.getElementById('btn-rotate');
+            {
+                // A 409 is the server asking for confirmation (torrents are
+                // downloading, or it could not tell), not a failure: show its
+                // message and re-post with confirm=1 if the user agrees.
+                var send = function (confirmed) {
+                    var body = new URLSearchParams();
+                    if (confirmed) { body.set('confirm', '1'); }
+                    return post(rotateBtn, '/speedtest/rotate', body, 'Rotating…', 'Rotate VPN now')
+                        .then(function (r) {
+                            if (r.status === 409 && !confirmed) {
+                                if (confirm(r.text)) { return send(true); }
+                                say('Rotation cancelled.');
+                                return;
+                            }
+                            say(r.text, r.status >= 400);
+                        });
+                };
+                rotateBtn.addEventListener('click', function () {
+                    say('');
+                    send(false).catch(function (err) { say('Failed to rotate: ' + err.message, true); });
+                });
+            }
+            {{- end }}
+        })();
+    </script>
+    {{- end }}
+</body>
+</html>

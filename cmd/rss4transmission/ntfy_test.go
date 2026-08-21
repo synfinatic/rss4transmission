@@ -1011,3 +1011,92 @@ func TestNotifyConfigReload_SendFailureIsNonFatal(t *testing.T) {
 		t.Fatal("notifyConfigReload should return once the client times out, not hang forever")
 	}
 }
+
+// --- VPN rotation notifications: SendVpnRotating / SendVpnRotated ---
+
+// captureNtfyBody sends a notification to a stub server and returns the posted
+// body, for the notifications whose payload (not just the headers) matters.
+func captureNtfyBody(t *testing.T, cfg NtfyConfig, send func(*NtfyClient) error) string {
+	t.Helper()
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		require.NoError(t, err)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg.BaseURL = srv.URL
+	require.NoError(t, send(NewNtfyClient(mustValidateNtfyConfig(t, cfg))))
+	return string(body)
+}
+
+func TestSendVpnRotating_Headers(t *testing.T) {
+	captured := captureNtfyRequest(t, "alerts", func(c *NtfyClient) error {
+		return c.SendVpnRotating(&NtfyVpnContext{Reason: "slow", DownloadMbps: 12.5, ExitIP: "1.1.1.1"})
+	})
+
+	assert.Equal(t, "/alerts", captured.URL.Path)
+	assert.Equal(t, "VPN Rotating", captured.Header.Get("Title"))
+	assert.Equal(t, "default", captured.Header.Get("Priority"))
+}
+
+func TestSendVpnRotating_BodyIncludesReasonAndExitIP(t *testing.T) {
+	body := captureNtfyBody(t, NtfyConfig{AlertTopic: "alerts"}, func(c *NtfyClient) error {
+		return c.SendVpnRotating(&NtfyVpnContext{Reason: "12.5 Mbps below 100", ExitIP: "1.1.1.1"})
+	})
+
+	assert.Contains(t, body, "12.5 Mbps below 100")
+	assert.Contains(t, body, "1.1.1.1")
+}
+
+func TestSendVpnRotated_Headers(t *testing.T) {
+	captured := captureNtfyRequest(t, "alerts", func(c *NtfyClient) error {
+		return c.SendVpnRotated(&NtfyVpnRotatedContext{PreviousIP: "1.1.1.1", ExitIP: "2.2.2.2"})
+	})
+
+	assert.Equal(t, "/alerts", captured.URL.Path)
+	assert.Equal(t, "VPN Rotated", captured.Header.Get("Title"))
+	assert.Equal(t, "default", captured.Header.Get("Priority"))
+}
+
+// The whole point of the post-rotation alert: which exit are we on now.
+func TestSendVpnRotated_BodyReportsNewAndPreviousIP(t *testing.T) {
+	body := captureNtfyBody(t, NtfyConfig{AlertTopic: "alerts"}, func(c *NtfyClient) error {
+		return c.SendVpnRotated(&NtfyVpnRotatedContext{PreviousIP: "1.1.1.1", ExitIP: "2.2.2.2"})
+	})
+
+	assert.Contains(t, body, "2.2.2.2")
+	assert.Contains(t, body, "1.1.1.1")
+}
+
+func TestSendVpnRotated_UnknownExitIP(t *testing.T) {
+	body := captureNtfyBody(t, NtfyConfig{AlertTopic: "alerts"}, func(c *NtfyClient) error {
+		return c.SendVpnRotated(&NtfyVpnRotatedContext{PreviousIP: "1.1.1.1"})
+	})
+
+	assert.Contains(t, body, "unknown")
+}
+
+func TestSendVpnRotated_SameExit(t *testing.T) {
+	body := captureNtfyBody(t, NtfyConfig{AlertTopic: "alerts"}, func(c *NtfyClient) error {
+		return c.SendVpnRotated(&NtfyVpnRotatedContext{
+			PreviousIP: "1.1.1.1", ExitIP: "1.1.1.1", SameExit: true,
+		})
+	})
+
+	assert.Contains(t, body, "1.1.1.1")
+	assert.Contains(t, body, "same exit")
+}
+
+func TestSendVpnRotated_CustomTemplate(t *testing.T) {
+	body := captureNtfyBody(t, NtfyConfig{
+		AlertTopic:     "alerts",
+		VpnRotatedBody: "now on {{.ExitIP}} (was {{.PreviousIP}})",
+	}, func(c *NtfyClient) error {
+		return c.SendVpnRotated(&NtfyVpnRotatedContext{PreviousIP: "1.1.1.1", ExitIP: "2.2.2.2"})
+	})
+
+	assert.Equal(t, "now on 2.2.2.2 (was 1.1.1.1)", body)
+}

@@ -19,11 +19,14 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"text/template"
+	"time"
 
 	"github.com/mmcdole/gofeed"
+	str2duration "github.com/xhit/go-str2duration/v2"
 )
 
 var ConfigDefaults = map[string]interface{}{
@@ -35,6 +38,18 @@ var ConfigDefaults = map[string]interface{}{
 	"Transmission.Password":   "admin",
 	"SeenCacheDays":           30,
 	"Notifications.TokenTTLH": 24,
+
+	"SpeedTest.Enabled":            false,
+	"SpeedTest.Interval":           "1h",
+	"SpeedTest.Proxy":              "http://gluetun:8888",
+	"SpeedTest.MinDownloadMbps":    100.0,
+	"SpeedTest.Cooldown":           "2h",
+	"SpeedTest.MaxRotationsPerDay": 6,
+	"SpeedTest.CaptureSeconds":     5,
+	"SpeedTest.Threads":            2,
+	"SpeedTest.DownloadOnly":       true,
+	"SpeedTest.SkipWhenActive":     true,
+	"SpeedTest.RetentionDays":      30,
 }
 
 type Config struct {
@@ -45,6 +60,7 @@ type Config struct {
 	Ntfy          NtfyConfig               `koanf:"Ntfy"`
 	Notifications NotificationsConfig      `koanf:"Notifications"`
 	PortCheck     PortCheckConfig          `koanf:"PortCheck"`
+	SpeedTest     SpeedTestConfig          `koanf:"SpeedTest"`
 	SeenFile      string                   `koanf:"SeenFile"`
 	SeenCacheDays int                      `koanf:"SeenCacheDays"`
 }
@@ -76,6 +92,12 @@ type NtfyConfig struct {
 	PortOpenedTitle        string `koanf:"PortOpenedTitle"`
 	PortOpenedBody         string `koanf:"PortOpenedBody"`
 	PortOpenedPriority     string `koanf:"PortOpenedPriority"`
+	VpnRotatingTitle       string `koanf:"VpnRotatingTitle"`
+	VpnRotatingBody        string `koanf:"VpnRotatingBody"`
+	VpnRotatingPriority    string `koanf:"VpnRotatingPriority"`
+	VpnRotatedTitle        string `koanf:"VpnRotatedTitle"`
+	VpnRotatedBody         string `koanf:"VpnRotatedBody"`
+	VpnRotatedPriority     string `koanf:"VpnRotatedPriority"`
 
 	startedTitleTmpl        *template.Template
 	startedBodyTmpl         *template.Template
@@ -90,11 +112,92 @@ type NtfyConfig struct {
 	portClosedTitleTmpl     *template.Template
 	portClosedBodyTmpl      *template.Template
 	portOpenedTitleTmpl     *template.Template
+	vpnRotatingTitleTmpl    *template.Template
+	vpnRotatingBodyTmpl     *template.Template
+	vpnRotatedTitleTmpl     *template.Template
+	vpnRotatedBodyTmpl      *template.Template
 	portOpenedBodyTmpl      *template.Template
 }
 
 type PortCheckConfig struct {
 	Enabled bool `koanf:"Enabled"`
+}
+
+// SpeedTestConfig controls periodic throughput measurement over the VPN and
+// the policy for asking Gluetun to re-pick an egress when it looks bad.
+//
+// Measurement runs in-process but is routed through Gluetun's built-in HTTP
+// proxy (HTTPPROXY=on, port 8888), so the traffic egresses over the VPN while
+// rss4transmission itself stays off the VPN network and keeps fetching RSS
+// directly.
+//
+// Note the koanf keys match the field names exactly here, unlike
+// GluetunConfig.RotateTime whose key is "Rotate".
+type SpeedTestConfig struct {
+	Enabled            bool    `koanf:"Enabled"`
+	Interval           string  `koanf:"Interval"`
+	Proxy              string  `koanf:"Proxy"`
+	MinDownloadMbps    float64 `koanf:"MinDownloadMbps"`
+	Cooldown           string  `koanf:"Cooldown"`
+	MaxRotationsPerDay int     `koanf:"MaxRotationsPerDay"`
+	CaptureSeconds     int     `koanf:"CaptureSeconds"`
+	Threads            int     `koanf:"Threads"`
+	DownloadOnly       bool    `koanf:"DownloadOnly"`
+	SkipWhenActive     bool    `koanf:"SkipWhenActive"`
+	ServerID           string  `koanf:"ServerID"`
+	ResultsFile        string  `koanf:"ResultsFile"`
+	RetentionDays      int     `koanf:"RetentionDays"`
+
+	// parsed forms of Interval/Cooldown, filled in by Validate()
+	interval time.Duration
+	cooldown time.Duration
+}
+
+// Validate parses the duration strings and checks the config is usable. It
+// returns an error rather than calling log.Fatalf (as NewGluetun does) so a
+// bad live reload leaves the running config intact.
+func (s *SpeedTestConfig) Validate() error {
+	if !s.Enabled {
+		return nil
+	}
+
+	var err error
+	if s.interval, err = str2duration.ParseDuration(s.Interval); err != nil {
+		return fmt.Errorf("unable to parse Interval %q: %w", s.Interval, err)
+	}
+	if s.cooldown, err = str2duration.ParseDuration(s.Cooldown); err != nil {
+		return fmt.Errorf("unable to parse Cooldown %q: %w", s.Cooldown, err)
+	}
+
+	if s.Proxy == "" {
+		return fmt.Errorf("SpeedTest.Proxy is required when SpeedTest is enabled")
+	}
+	u, err := url.Parse(s.Proxy)
+	if err != nil {
+		return fmt.Errorf("unable to parse Proxy %q: %w", s.Proxy, err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("SpeedTest.Proxy %q must be a full URL, e.g. http://gluetun:8888", s.Proxy)
+	}
+
+	// Back-to-back tests would saturate the very link we are measuring.
+	if capture := time.Duration(s.CaptureSeconds) * time.Second; s.interval <= capture {
+		return fmt.Errorf("SpeedTest.Interval (%s) must be longer than SpeedTest.CaptureSeconds (%ds)",
+			s.Interval, s.CaptureSeconds)
+	}
+
+	return nil
+}
+
+// IntervalDuration returns the parsed Interval. Only valid after Validate().
+func (s *SpeedTestConfig) IntervalDuration() time.Duration { return s.interval }
+
+// CooldownDuration returns the parsed Cooldown. Only valid after Validate().
+func (s *SpeedTestConfig) CooldownDuration() time.Duration { return s.cooldown }
+
+// RetentionDuration is how long results and rotation events are kept.
+func (s *SpeedTestConfig) RetentionDuration() time.Duration {
+	return time.Duration(s.RetentionDays) * 24 * time.Hour
 }
 
 type NotificationsConfig struct {

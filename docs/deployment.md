@@ -203,6 +203,17 @@ Gluetun:
 https://github.com/qdm12/gluetun-wiki/blob/main/setup/advanced/vpn-port-forwarding.md) for
 this integration to work.
 
+## VPN Speed Testing
+
+Gluetun picks a VPN server from whatever filter you configured, and some of those servers are
+much slower than others. `RotateTime` and `ClosedPortChecks` react to *time* and to *port
+state* — neither one notices that the exit you landed on is only doing 20 Mbps.
+
+The optional `SpeedTest` block measures real throughput over the tunnel and asks Gluetun to
+re-pick an egress when it is slow. See
+[VPN Speed Testing & Egress Rotation](speedtest.md) for setup, configuration, bandwidth cost,
+and the rotation rules.
+
 ## Seen Cache
 
 `SeenFile` is a JSON file that records every torrent rss4transmission has dispatched. It
