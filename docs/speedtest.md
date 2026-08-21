@@ -120,8 +120,14 @@ Pass `--save` to append the result to `ResultsFile`.
 ## How rotation works
 
 Gluetun has no "switch to a different server" API. The only mechanism is to stop the VPN and
-let it auto-restart, which makes Gluetun re-pick from its filter set — the same thing
-`RotateTime` already does.
+start it again, which makes Gluetun re-pick from its filter set — the same thing `RotateTime`
+already does.
+
+Both halves are explicit: Gluetun stays stopped until it is told to start, so the stop is
+confirmed before the start is issued. If the stop is refused, or Gluetun still reports the tunnel
+running, the rotation is abandoned and the tunnel is left alone. If the status cannot be read at
+all, the start is issued anyway — a tunnel left down blocks Transmission behind the killswitch,
+which is far worse than starting one that was already running.
 
 A rotation is only *requested* by the speed monitor; it is carried out by the port-check loop on
 its next 5-minute tick, which also resyncs the new forwarded peer port into Transmission. Expect

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -331,13 +332,15 @@ func TestRequestRotate_IgnoresEmptyReason(t *testing.T) {
 }
 
 func TestRotate_ClearsPendingRequest(t *testing.T) {
+	vpn := newVPNState()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPut {
+			vpn.put(r)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		_, _ = w.Write([]byte(`{"status":"running"}`))
+		_, _ = w.Write([]byte(vpn.statusBody()))
 	}))
 	defer ts.Close()
 
@@ -403,13 +406,40 @@ func TestRequestRotate_ConcurrentAccess(t *testing.T) {
 // --- post-rotation exit IP reporting ---
 
 // newRotateServer fakes the Gluetun endpoints rotate() touches. Each call to
+// vpnState tracks what a fake control server reports, mirroring Gluetun: a PUT
+// sets the tunnel state and it stays there until the next PUT. Gluetun does not
+// restart itself, so a fake that always answers "running" would hide exactly
+// the bug these tests exist to catch.
+type vpnState struct{ running atomic.Bool }
+
+func newVPNState() *vpnState {
+	v := &vpnState{}
+	v.running.Store(true)
+	return v
+}
+
+func (v *vpnState) put(r *http.Request) {
+	var req StatusResponse
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	v.running.Store(req.Status == "running")
+}
+
+func (v *vpnState) statusBody() string {
+	if v.running.Load() {
+		return `{"status":"running"}`
+	}
+	return `{"status":"stopped"}`
+}
+
 // /v1/publicip/ip returns the next entry in ips, sticking on the last one, so a
 // test can describe "the IP changed on the second poll" as a list.
 func newRotateServer(ips []string) *httptest.Server {
 	var n int32
+	vpn := newVPNState()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPut {
+			vpn.put(r)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -421,7 +451,7 @@ func newRotateServer(ips []string) *httptest.Server {
 			_, _ = w.Write([]byte(`{"public_ip":"` + ips[i] + `"}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"status":"running"}`))
+		_, _ = w.Write([]byte(vpn.statusBody()))
 	}))
 }
 
@@ -528,6 +558,7 @@ func TestRotate_NoHookOnFailure(t *testing.T) {
 
 // getPublicIp failing must not block the rotation itself.
 func TestRotate_SucceedsWhenPublicIPUnavailable(t *testing.T) {
+	vpn := newVPNState()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/publicip/ip" {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -535,10 +566,11 @@ func TestRotate_SucceedsWhenPublicIPUnavailable(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPut {
+			vpn.put(r)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		_, _ = w.Write([]byte(`{"status":"running"}`))
+		_, _ = w.Write([]byte(vpn.statusBody()))
 	}))
 	defer ts.Close()
 
@@ -782,13 +814,21 @@ func TestRotate_FailsFastWhenRestartRejected(t *testing.T) {
 // The retry loop incremented i twice per pass, so it gave up after 5 polls
 // instead of 10 -- half the intended window for the tunnel to come back.
 func TestRotate_PollsStatusTenTimes(t *testing.T) {
+	var started bool
 	var statusPolls int
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPut:
+			var req StatusResponse
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			started = started || req.Status == "running"
 			_, _ = w.Write([]byte(`{}`))
 		case r.URL.Path == "/v1/vpn/status":
-			statusPolls++
+			// The tunnel never comes back, so every poll after the start is
+			// one of the ten this test is counting.
+			if started {
+				statusPolls++
+			}
 			_, _ = w.Write([]byte(`{"status":"stopped"}`))
 		default:
 			_, _ = w.Write([]byte(`{"public_ip":"1.2.3.4"}`))
@@ -802,5 +842,210 @@ func TestRotate_PollsStatusTenTimes(t *testing.T) {
 	}
 	if statusPolls != 10 {
 		t.Errorf("polled status %d times, want 10", statusPolls)
+	}
+}
+
+// gluetunServer models Gluetun's control server: PUT /v1/vpn/status sets the
+// tunnel state and GET reports it. Gluetun does *not* restart itself after a
+// stop, which is the behaviour that matters here.
+type gluetunServer struct {
+	mu        sync.Mutex
+	running   bool
+	puts      []string
+	events    []string
+	stopErr   int // non-zero => answer the stop with this status code
+	statusErr int // non-zero => answer every GET status with this status code
+	stopLag   int // how many GETs still report "running" after a stop request
+	lagLeft   int
+}
+
+func newGluetunServer(t *testing.T, s *gluetunServer) *httptest.Server {
+	t.Helper()
+	s.running = true
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		switch {
+		case r.URL.Path == "/v1/vpn/status" && r.Method == http.MethodPut:
+			var req StatusResponse
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("undecodable PUT body: %v", err)
+			}
+			if req.Status == "stopped" && s.stopErr != 0 {
+				w.WriteHeader(s.stopErr)
+				_, _ = w.Write([]byte("Forbidden"))
+				return
+			}
+			s.puts = append(s.puts, req.Status)
+			s.events = append(s.events, "put:"+req.Status)
+			s.running = req.Status == "running"
+			if req.Status == "stopped" {
+				s.lagLeft = s.stopLag
+			}
+			_, _ = w.Write([]byte(`{"outcome":"` + req.Status + `"}`))
+		case r.URL.Path == "/v1/vpn/status":
+			s.events = append(s.events, "get")
+			if s.statusErr != 0 {
+				w.WriteHeader(s.statusErr)
+				_, _ = w.Write([]byte("Internal Server Error"))
+				return
+			}
+			state := "stopped"
+			if s.running {
+				state = "running"
+			}
+			// Gluetun can still report the old state for a moment after
+			// accepting a stop.
+			if s.lagLeft > 0 {
+				s.lagLeft--
+				state = "running"
+			}
+			_, _ = w.Write([]byte(`{"status":"` + state + `"}`))
+		default:
+			_, _ = w.Write([]byte(`{"public_ip":"1.2.3.4"}`))
+		}
+	}))
+}
+
+func (s *gluetunServer) sentPuts() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.puts...)
+}
+
+func (s *gluetunServer) sentEvents() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.events...)
+}
+
+// Gluetun stops on request and stays stopped. Asking it to stop and then
+// waiting for it to come back on its own leaves the tunnel down and the
+// rotation reporting "VPN Failed to come back up" -- the start has to be a
+// second, explicit call.
+func TestRestartVPN_StopsThenStarts(t *testing.T) {
+	state := &gluetunServer{}
+	ts := newGluetunServer(t, state)
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	if err := g.restartVPN(); err != nil {
+		t.Fatalf("restartVPN returned error: %v", err)
+	}
+
+	want := []string{"stopped", "running"}
+	got := state.sentPuts()
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("PUT statuses = %v, want %v", got, want)
+	}
+	if !state.running {
+		t.Error("tunnel left stopped after restartVPN")
+	}
+}
+
+// A rejected stop means the tunnel is still up and serving traffic. Starting
+// what was never stopped is at best pointless, so the error has to stop there.
+func TestRestartVPN_NoStartAfterFailedStop(t *testing.T) {
+	state := &gluetunServer{stopErr: http.StatusForbidden}
+	ts := newGluetunServer(t, state)
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	if err := g.restartVPN(); err == nil {
+		t.Fatal("restartVPN succeeded despite a rejected stop")
+	}
+	if got := state.sentPuts(); len(got) != 0 {
+		t.Errorf("sent %v after a rejected stop, want nothing", got)
+	}
+}
+
+// End to end against the modelled server: the tunnel is up again and the
+// rotation reports the exit IP.
+func TestRotate_BringsTunnelBackUp(t *testing.T) {
+	state := &gluetunServer{}
+	ts := newGluetunServer(t, state)
+	defer ts.Close()
+
+	var got RotationOutcome
+	g := newTestGluetun(ts.URL)
+	g.OnRotated = func(o RotationOutcome) { got = o }
+
+	if err := g.rotate(); err != nil {
+		t.Fatalf("rotate returned error: %v", err)
+	}
+	if !state.running {
+		t.Error("tunnel left stopped after a successful rotation")
+	}
+	if got.NewIP != "1.2.3.4" {
+		t.Errorf("NewIP = %q, want 1.2.3.4", got.NewIP)
+	}
+}
+
+// The start must not be issued until Gluetun confirms the tunnel actually
+// stopped. Checking is better than sleeping a fixed interval: it costs nothing
+// when the stop lands immediately, and it does not guess wrong when it doesn't.
+func TestRestartVPN_WaitsForTheStopToLand(t *testing.T) {
+	state := &gluetunServer{stopLag: 2}
+	ts := newGluetunServer(t, state)
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	if err := g.restartVPN(); err != nil {
+		t.Fatalf("restartVPN returned error: %v", err)
+	}
+
+	// stopLag: 2 means the third GET is the first to report "stopped", so the
+	// start must not appear before it.
+	want := []string{"put:stopped", "get", "get", "get", "put:running"}
+	got := state.sentEvents()
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("events = %v, want %v", got, want)
+	}
+}
+
+// A tunnel that never stops is a tunnel that is still up and carrying traffic.
+// Abandon the rotation rather than issue a start against a running tunnel.
+func TestRestartVPN_AbortsWhenTheTunnelNeverStops(t *testing.T) {
+	state := &gluetunServer{stopLag: 100}
+	ts := newGluetunServer(t, state)
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	err := g.restartVPN()
+	if err == nil {
+		t.Fatal("restartVPN succeeded while the tunnel stayed up")
+	}
+	if !strings.Contains(err.Error(), "running") {
+		t.Errorf("error does not say the tunnel is still running: %s", err)
+	}
+	for _, p := range state.sentPuts() {
+		if p == "running" {
+			t.Error("issued a start against a tunnel that never stopped")
+		}
+	}
+}
+
+// When the status cannot be read at all, the tunnel may well be down -- and a
+// tunnel left down blocks Transmission behind the killswitch indefinitely.
+// Starting one that turns out to be running is the cheaper mistake.
+func TestRestartVPN_StartsAnywayWhenStatusIsUnreadable(t *testing.T) {
+	state := &gluetunServer{statusErr: http.StatusInternalServerError}
+	ts := newGluetunServer(t, state)
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	if err := g.restartVPN(); err != nil {
+		t.Fatalf("restartVPN returned error: %v", err)
+	}
+
+	var started bool
+	for _, p := range state.sentPuts() {
+		if p == "running" {
+			started = true
+		}
+	}
+	if !started {
+		t.Error("left the tunnel stopped when the status could not be read")
 	}
 }
