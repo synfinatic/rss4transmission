@@ -39,10 +39,14 @@ var ConfigDefaults = map[string]interface{}{
 	"SeenCacheDays":           30,
 	"Notifications.TokenTTLH": 24,
 
-	"SpeedTest.Enabled":            false,
-	"SpeedTest.Interval":           "1h",
-	"SpeedTest.Proxy":              "http://gluetun:8888",
-	"SpeedTest.MinDownloadMbps":    100.0,
+	"SpeedTest.Enabled":         false,
+	"SpeedTest.Interval":        "1h",
+	"SpeedTest.Proxy":           "http://gluetun:8888",
+	"SpeedTest.MinDownloadMbps": 100.0,
+	// 0 disables the upload floor. It has to default off: checking it costs a
+	// second measurement leg (DownloadOnly must be false), and an exit that
+	// uploads slowly is only a problem if you are seeding.
+	"SpeedTest.MinUploadMbps":      0.0,
 	"SpeedTest.Cooldown":           "2h",
 	"SpeedTest.MaxRotationsPerDay": 6,
 	"SpeedTest.CaptureSeconds":     5,
@@ -138,6 +142,7 @@ type SpeedTestConfig struct {
 	Interval           string  `koanf:"Interval"`
 	Proxy              string  `koanf:"Proxy"`
 	MinDownloadMbps    float64 `koanf:"MinDownloadMbps"`
+	MinUploadMbps      float64 `koanf:"MinUploadMbps"`
 	Cooldown           string  `koanf:"Cooldown"`
 	MaxRotationsPerDay int     `koanf:"MaxRotationsPerDay"`
 	CaptureSeconds     int     `koanf:"CaptureSeconds"`
@@ -178,6 +183,13 @@ func (s *SpeedTestConfig) Validate() error {
 	}
 	if u.Scheme == "" || u.Host == "" {
 		return fmt.Errorf("SpeedTest.Proxy %q must be a full URL, e.g. http://gluetun:8888", s.Proxy)
+	}
+
+	// Nothing measures upload under DownloadOnly, so UploadMbps stays at zero
+	// and every measurement would look like it was below the floor.
+	if s.MinUploadMbps > 0 && s.DownloadOnly {
+		return fmt.Errorf(
+			"SpeedTest.MinUploadMbps requires SpeedTest.DownloadOnly: false so upload is measured")
 	}
 
 	// Back-to-back tests would saturate the very link we are measuring.

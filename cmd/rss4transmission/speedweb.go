@@ -57,8 +57,13 @@ type speedPageData struct {
 	Rotations []speedPageRotation
 	Latest    *SpeedResult
 	ExitIP    string
-	CanRun    bool // render the "Run speedtest now" button
-	CanRotate bool // render the "Rotate VPN now" button
+	// ShowUpload renders the upload tile. It is driven by whether any recent
+	// measurement carries an upload leg rather than by the latest value: the
+	// failure worth seeing is an exit whose upload has dropped to zero, and
+	// keying off the latest value alone would hide exactly that.
+	ShowUpload bool
+	CanRun     bool // render the "Run speedtest now" button
+	CanRotate  bool // render the "Rotate VPN now" button
 }
 
 // speedActions are the operations the /speedtest page's buttons invoke. A nil
@@ -201,6 +206,13 @@ func buildSpeedPageData(speed *SpeedFile) speedPageData {
 	if latest, ok := speed.LatestSuccessful(); ok {
 		data.Latest = &latest
 		data.ExitIP = latest.ExitIP
+	}
+
+	for _, r := range results {
+		if r.OK() && r.UploadMbps > 0 {
+			data.ShowUpload = true
+			break
+		}
 	}
 
 	rotations := speed.GetRotations()

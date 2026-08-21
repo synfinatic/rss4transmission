@@ -33,6 +33,7 @@ func TestShouldRotate(t *testing.T) {
 	tests := []struct {
 		name           string
 		result         SpeedResult
+		minUploadMbps  float64 // 0 leaves the upload check disabled
 		lastRotation   time.Time
 		rotationsToday int
 		wantRotate     bool
@@ -96,10 +97,59 @@ func TestShouldRotate(t *testing.T) {
 			rotationsToday: 99,
 			wantRotate:     false,
 		},
+		{
+			// The case this knob exists for: some exits carry download fine
+			// but upload nothing at all, which is fatal on a ratio tracker
+			// and completely invisible to MinDownloadMbps.
+			name:          "fast download but dead upload rotates",
+			result:        SpeedResult{At: now, DownloadMbps: 400, UploadMbps: 0},
+			minUploadMbps: 5,
+			wantRotate:    true,
+			wantReasonHas: "upload",
+		},
+		{
+			// speedtest-go reports a tiny negative rate for an upload leg
+			// that moved nothing; it must read as slow, not as fast.
+			name:          "negative upload rotates",
+			result:        SpeedResult{At: now, DownloadMbps: 400, UploadMbps: -0.04},
+			minUploadMbps: 5,
+			wantRotate:    true,
+			wantReasonHas: "upload",
+		},
+		{
+			name:          "upload at the threshold does not rotate",
+			result:        SpeedResult{At: now, DownloadMbps: 400, UploadMbps: 5},
+			minUploadMbps: 5,
+			wantRotate:    false,
+		},
+		{
+			// Default config: no upload floor, so a zero upload -- which is
+			// also what DownloadOnly records -- must never rotate.
+			name:       "zero upload does not rotate while the check is disabled",
+			result:     SpeedResult{At: now, DownloadMbps: 400, UploadMbps: 0},
+			wantRotate: false,
+		},
+		{
+			// Download is checked first: it is the more common failure and
+			// makes the better reason line.
+			name:          "both below threshold reports the download",
+			result:        SpeedResult{At: now, DownloadMbps: 12.5, UploadMbps: 0},
+			minUploadMbps: 5,
+			wantRotate:    true,
+			wantReasonHas: "download",
+		},
+		{
+			name:          "errored result does not rotate on its zero upload",
+			result:        SpeedResult{At: now, Error: "proxy refused"},
+			minUploadMbps: 5,
+			wantRotate:    false,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			cfg := cfg
+			cfg.MinUploadMbps = tc.minUploadMbps
 			got, reason := shouldRotate(cfg, tc.result, tc.lastRotation, tc.rotationsToday, now)
 			if got != tc.wantRotate {
 				t.Errorf("shouldRotate = %v (%q), want %v", got, reason, tc.wantRotate)

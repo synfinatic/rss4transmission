@@ -36,6 +36,7 @@ SpeedTest:
   Interval:           1h                     # how often to measure
   Proxy:              http://gluetun:8888    # gluetun's HTTP proxy
   MinDownloadMbps:    100                    # rotate below this
+  MinUploadMbps:      0                      # 0 disables the upload floor
   Cooldown:           2h                     # minimum time between rotations
   MaxRotationsPerDay: 6                      # 0 means unlimited
   CaptureSeconds:     5                      # bounds bandwidth used per test
@@ -52,12 +53,13 @@ SpeedTest:
 | `Enabled` | Master switch. Defaults to `false`. |
 | `Interval` | Measurement cadence. Must be longer than `CaptureSeconds`. |
 | `Proxy` | Full URL of Gluetun's HTTP proxy. Required when enabled. |
-| `MinDownloadMbps` | Measurements below this make a rotation eligible. |
+| `MinDownloadMbps` | Download measurements below this make a rotation eligible. |
+| `MinUploadMbps` | Same for upload. `0` (default) disables it; needs `DownloadOnly: false`. |
 | `Cooldown` | Suppresses a rotation this soon after the previous one. |
 | `MaxRotationsPerDay` | Cap on rotations in the trailing 24 hours; `0` disables the cap. |
 | `CaptureSeconds` | Duration of each transfer leg. This is what controls bandwidth cost. |
 | `Threads` | Parallel connections. Raise if a single stream can't saturate the link. |
-| `DownloadOnly` | Skip the upload test. Roughly a 10% bandwidth saving. |
+| `DownloadOnly` | Skip the upload test: ~10% less bandwidth, but a dead upload leg goes unseen. |
 | `SkipWhenActive` | Record a "skipped" result instead of measuring while torrents download. |
 | `ServerID` | Pin a speedtest.net server ID instead of taking the nearest one. |
 | `ResultsFile` | JSON file of measurements and rotation events. Required when enabled. |
@@ -78,6 +80,29 @@ scales with your line speed, not with the test count alone:
 much, raise `Interval` to `6h`; decision quality barely changes, because `Cooldown` and
 `MaxRotationsPerDay` already dominate how often a rotation can actually fire.
 
+### Watching upload separately
+
+The two directions fail independently. An exit can carry download at full rate while uploading
+essentially nothing — the measurements table shows `-0.0` in the **Up** column, which is what
+speedtest-go reports for a leg that moved no data. `MinDownloadMbps` cannot see this, so the
+daemon happily sits on a dead exit.
+
+That matters if you seed on a private tracker: nothing uploads, and your ratio decays while every
+download-side metric looks healthy. Setting a floor rotates away from such an exit:
+
+```yaml
+SpeedTest:
+  DownloadOnly:  false   # required: nothing measures upload without it
+  MinUploadMbps: 5
+```
+
+Pick a floor well under your real upstream — the point is to catch *dead*, not merely slow. A
+line that normally uploads 40 Mbps is well served by `5`.
+
+`MinUploadMbps` with `DownloadOnly: true` is rejected at startup rather than silently rotating on
+every measurement: with no upload leg, `UploadMbps` stays at zero and would always read as below
+the floor.
+
 ## Verifying the setup
 
 Run a single measurement before enabling the background monitor:
@@ -95,8 +120,14 @@ Pass `--save` to append the result to `ResultsFile`.
 ## How rotation works
 
 Gluetun has no "switch to a different server" API. The only mechanism is to stop the VPN and
-let it auto-restart, which makes Gluetun re-pick from its filter set — the same thing
-`RotateTime` already does.
+start it again, which makes Gluetun re-pick from its filter set — the same thing `RotateTime`
+already does.
+
+Both halves are explicit: Gluetun stays stopped until it is told to start, so the stop is
+confirmed before the start is issued. If the stop is refused, or Gluetun still reports the tunnel
+running, the rotation is abandoned and the tunnel is left alone. If the status cannot be read at
+all, the start is issued anyway — a tunnel left down blocks Transmission behind the killswitch,
+which is far worse than starting one that was already running.
 
 A rotation is only *requested* by the speed monitor; it is carried out by the port-check loop on
 its next 5-minute tick, which also resyncs the new forwarded peer port into Transmission. Expect
@@ -105,7 +136,8 @@ up to a 5-minute delay between the decision and the restart.
 A rotation is requested only when **all** of these hold:
 
 1. The measurement succeeded — a failed or skipped run never triggers a rotation.
-2. Download throughput was below `MinDownloadMbps`.
+2. Throughput was below a configured floor: download below `MinDownloadMbps`, or upload below
+   `MinUploadMbps`. Download is reported when both are.
 3. At least `Cooldown` has passed since the last rotation — of any kind, including one you asked
    for from the page.
 4. Fewer than `MaxRotationsPerDay` **automatic** rotations occurred in the trailing 24 hours.

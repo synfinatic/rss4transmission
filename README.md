@@ -45,8 +45,10 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
   polled every 5 minutes and logged/alerted on (also available without Gluetun via
   `PortCheck.Enabled`)
 - **VPN speed testing & egress rotation** — periodically measures real speedtest.net throughput
-  over the Gluetun tunnel and asks Gluetun to re-pick an egress when the link is slow, gated by a
-  cooldown, a daily cap, and a never-rotate-while-downloading rule; results are persisted, shown
+  over the Gluetun tunnel and asks Gluetun to re-pick an egress when the link is slow in either
+  direction — a separate `MinUploadMbps` floor catches an exit that downloads fine while uploading
+  nothing, which is what silently wrecks a ratio on a private tracker — gated by a cooldown, a
+  daily cap, and a never-rotate-while-downloading rule; results are persisted, shown
   on a `/speedtest` page, and exported on a Prometheus-style `/metrics` endpoint. Every rotation
   can send a pair of ntfy alerts — one when it's requested and one naming the new exit IP once the
   tunnel is back up. The `/speedtest` page also has **Run speedtest now** and **Rotate VPN now**
