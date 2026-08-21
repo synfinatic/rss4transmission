@@ -96,7 +96,7 @@
         {{- end }}
         <div>
             <span class="label">Exit IP</span>
-            <span class="value">{{ if .ExitIP }}{{ .ExitIP }} <span class="source">via {{ .ExitIPSource }}</span>{{ else }}&mdash;{{ end }}</span>
+            <span class="value">{{ if .ExitIP }}{{ .ExitIP }} <span class="source">({{ .ExitIPSource }})</span>{{ else }}&mdash;{{ end }}</span>
         </div>
         <div>
             <span class="label">Rotations</span>
@@ -128,7 +128,7 @@
             <th class="num">Jitter</th>
             <th>Server</th>
             <th>Exit IP (Gluetun)</th>
-            <th>Seen by speedtest.net</th>
+            <th>Exit IP (speedtest.net)</th>
             <th>Detail</th>
         </tr>
         {{- range .Rows }}

@@ -182,12 +182,12 @@ because they do not always agree:
 - The measurements table's **Exit IP (Gluetun)** column is that same value as of when the row was
   recorded, so an old measurement stays attached to the tunnel it was taken over. It is blank for
   rows written before Gluetun first answered, and in measure-only mode.
-- The measurements table's **Seen by speedtest.net** column is the address speedtest.net observed
+- The measurements table's **Exit IP (speedtest.net)** column is the address speedtest.net observed
   for that particular run, through Gluetun's HTTP proxy. When it matches the Gluetun column the
   cell reads `same`, so the rows worth a second look are the ones showing an address.
 
 Some VPN providers NAT per destination, in which case the second value drifts between measurements
-over a tunnel that never rotated at all. A changing **Seen by speedtest.net** is therefore not
+over a tunnel that never rotated at all. A changing **Exit IP (speedtest.net)** is therefore not
 evidence of a rotation, and an unchanging one is not evidence against it — check Gluetun's value,
 the rotation log, or Gluetun's own log instead.
 

@@ -576,8 +576,12 @@ func TestSpeedTestPage_ShowsBothExitIPsPerMeasurement(t *testing.T) {
 
 	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
 
+	// The two headers are deliberately parallel: each names the value and then
+	// who was asked for it, so neither column depends on the other to be read.
 	table := measurementsSection(t, body)
-	for _, want := range []string{"185.9.9.9", "45.12.3.9", "Gluetun", "speedtest.net"} {
+	for _, want := range []string{
+		"185.9.9.9", "45.12.3.9", "Exit IP (Gluetun)", "Exit IP (speedtest.net)",
+	} {
 		if !strings.Contains(table, want) {
 			t.Errorf("measurements table missing %q\ngot:\n%s", want, table)
 		}
