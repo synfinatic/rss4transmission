@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -111,6 +112,39 @@ func (g *Gluetun) newRequest(method, url string, body io.Reader) (*http.Request,
 	return req, nil
 }
 
+// control performs a request against Gluetun's control server and returns the
+// response body. A non-2xx reply is an error naming the status and what the
+// server said: Gluetun answers a request it will not serve -- unauthenticated,
+// or authenticated for a role that does not include this route -- with a
+// plain-text body, which otherwise surfaces as an unhelpful JSON parse error,
+// or on a request whose body nobody parses, not at all.
+func (g *Gluetun) control(method, path string, body io.Reader) ([]byte, error) {
+	req, err := g.newRequest(method, g.URL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req) // nolint:gosec
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read body: %s", err.Error())
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		said := strings.TrimSpace(string(bodyBytes))
+		if len(said) > 256 {
+			said = said[:256] + "..."
+		}
+		return nil, fmt.Errorf("%s %s: %s: %s", method, path, resp.Status, said)
+	}
+	return bodyBytes, nil
+}
+
 var ForceRotate bool // flag to force rotation again due to failure
 
 // checkVpnTunnel restarts / rotates the VPN tunnel as necessary. It returns
@@ -180,21 +214,9 @@ type PortResponse struct {
 
 // getPort returns the forwarded port from Gluetun
 func (g *Gluetun) getPort() (int64, error) {
-	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/portforward", g.URL), nil)
+	bodyBytes, err := g.control(http.MethodGet, "/v1/portforward", nil)
 	if err != nil {
 		return int64(0), err
-	}
-	resp, err := http.DefaultClient.Do(req) // nolint:gosec
-	if err != nil {
-		return int64(0), err
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return int64(0), fmt.Errorf("unable to read body: %s", err.Error())
 	}
 
 	pr := PortResponse{}
@@ -214,21 +236,9 @@ type StatusResponse struct {
 
 // getStatus returns the status of the VPN tunnel from Gluetun
 func (g *Gluetun) getStatus() (VPNStatus, error) {
-	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/vpn/status", g.URL), nil)
+	bodyBytes, err := g.control(http.MethodGet, "/v1/vpn/status", nil)
 	if err != nil {
 		return VPNDown, err
-	}
-	resp, err := http.DefaultClient.Do(req) // nolint:gosec
-	if err != nil {
-		return VPNDown, err
-	}
-
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return VPNDown, fmt.Errorf("unable to read body: %s", err.Error())
 	}
 
 	sr := StatusResponse{}
@@ -252,15 +262,8 @@ func (g *Gluetun) restartVPN() error {
 	body := []byte("{\"status\":\"stopped\"}")
 
 	log.Infof("restarting VPN tunnel")
-	req, err := g.newRequest(http.MethodPut, fmt.Sprintf("%s/v1/vpn/status", g.URL), bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	resp, err := http.DefaultClient.Do(req) // nolint:gosec
-	if err != nil {
-		return err
-	}
-	return resp.Body.Close()
+	_, err := g.control(http.MethodPut, "/v1/vpn/status", bytes.NewReader(body))
+	return err
 }
 
 // updatePort queries Gluetun and updates the peer port in Transmission if it changed
@@ -288,20 +291,9 @@ func (g *Gluetun) updatePort() error {
 }
 
 func (g *Gluetun) getPublicIp() (string, error) {
-	req, err := g.newRequest(http.MethodGet, fmt.Sprintf("%s/v1/publicip/ip", g.URL), nil)
+	bodyBytes, err := g.control(http.MethodGet, "/v1/publicip/ip", nil)
 	if err != nil {
 		return "", err
-	}
-	resp, err := http.DefaultClient.Do(req) // nolint:gosec
-	if err != nil {
-		return "", err
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("unable to read body: %s", err.Error())
 	}
 
 	type IPResponse struct {
@@ -462,7 +454,7 @@ func (g *Gluetun) rotate() error {
 	// leave" is half of what makes the post-rotation report useful.
 	previousIP, ipErr := g.getPublicIp()
 	if ipErr != nil {
-		log.WithError(ipErr).Debug("Unable to read the pre-rotation public IP")
+		log.WithError(ipErr).Warn("Unable to read the pre-rotation public IP")
 	}
 
 	err := g.restartVPN()
@@ -472,8 +464,6 @@ func (g *Gluetun) rotate() error {
 
 	status := VPNDown
 	for i := 0; status != VPNUp && i < 10; i++ {
-		i += 1
-
 		status, err = g.getStatus()
 		if err != nil {
 			log.WithError(err).Errorf("Unable to GetStatus")

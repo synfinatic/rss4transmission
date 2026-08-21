@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -698,5 +699,108 @@ func TestRotate_ReportsClosedPortSource(t *testing.T) {
 	}
 	if got.Source != RotationSourceClosedPort {
 		t.Errorf("Source = %q, want %q", got.Source, RotationSourceClosedPort)
+	}
+}
+
+// Gluetun's control server answers an unauthorized request with a plain-text
+// body and a 401. Parsing that as JSON produced "invalid character 'U'", which
+// says nothing about the real problem -- and restartVPN() did not look at the
+// status at all, so a rejected PUT read as a successful one and the rotation
+// went on to wait for a tunnel it had never asked to stop. Every control call
+// must fail loudly, naming the status and what the server said.
+func TestControlCalls_RejectNon2xx(t *testing.T) {
+	tests := []struct {
+		name string
+		code int
+		body string
+		call func(*Gluetun) error
+	}{
+		{"getPort", http.StatusUnauthorized, "Unauthorized",
+			func(g *Gluetun) error { _, err := g.getPort(); return err }},
+		{"getStatus", http.StatusUnauthorized, "Unauthorized",
+			func(g *Gluetun) error { _, err := g.getStatus(); return err }},
+		{"getPublicIp", http.StatusUnauthorized, "Unauthorized",
+			func(g *Gluetun) error { _, err := g.getPublicIp(); return err }},
+		// The role that grants the GET routes need not grant the PUT, so this
+		// is the one that fails on a working-looking deployment.
+		{"restartVPN", http.StatusForbidden, "Forbidden",
+			func(g *Gluetun) error { return g.restartVPN() }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.code)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer ts.Close()
+
+			err := tc.call(newTestGluetun(ts.URL))
+			if err == nil {
+				t.Fatal("no error for a rejected control request")
+			}
+			if !strings.Contains(err.Error(), fmt.Sprintf("%d", tc.code)) {
+				t.Errorf("error does not name the HTTP status: %s", err)
+			}
+			if !strings.Contains(err.Error(), tc.body) {
+				t.Errorf("error does not repeat what the server said: %s", err)
+			}
+		})
+	}
+}
+
+// A rejected restartVPN() must abort the rotation immediately rather than
+// polling for 30 seconds -- the tunnel was never asked to stop.
+func TestRotate_FailsFastWhenRestartRejected(t *testing.T) {
+	var statusPolls int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut:
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte("Forbidden"))
+		case r.URL.Path == "/v1/vpn/status":
+			statusPolls++
+			_, _ = w.Write([]byte(`{"status":"running"}`))
+		default:
+			_, _ = w.Write([]byte(`{"public_ip":"1.2.3.4"}`))
+		}
+	}))
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	err := g.rotate()
+	if err == nil {
+		t.Fatal("rotate() succeeded despite a rejected restart")
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Errorf("error does not name the rejection: %s", err)
+	}
+	if statusPolls != 0 {
+		t.Errorf("polled status %d times after a rejected restart, want 0", statusPolls)
+	}
+}
+
+// The retry loop incremented i twice per pass, so it gave up after 5 polls
+// instead of 10 -- half the intended window for the tunnel to come back.
+func TestRotate_PollsStatusTenTimes(t *testing.T) {
+	var statusPolls int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut:
+			_, _ = w.Write([]byte(`{}`))
+		case r.URL.Path == "/v1/vpn/status":
+			statusPolls++
+			_, _ = w.Write([]byte(`{"status":"stopped"}`))
+		default:
+			_, _ = w.Write([]byte(`{"public_ip":"1.2.3.4"}`))
+		}
+	}))
+	defer ts.Close()
+
+	g := newTestGluetun(ts.URL)
+	if err := g.rotate(); err == nil {
+		t.Fatal("rotate() succeeded while the tunnel stayed down")
+	}
+	if statusPolls != 10 {
+		t.Errorf("polled status %d times, want 10", statusPolls)
 	}
 }
