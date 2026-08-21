@@ -24,6 +24,7 @@
         #summary div { display: flex; flex-direction: column; gap: 0.2em; }
         #summary .label { color: #888; font-size: 0.8em; text-transform: uppercase; }
         #summary .value { color: #e0e0e0; font-size: 1.3em; }
+        #summary .source { color: #888; font-size: 0.65em; }
 
         table { border-collapse: collapse; width: 100%; }
         th, td { text-align: left; padding: 4px 10px; border-bottom: 1px solid #333; }
@@ -95,7 +96,7 @@
         {{- end }}
         <div>
             <span class="label">Exit IP</span>
-            <span class="value">{{ if .ExitIP }}{{ .ExitIP }}{{ else }}&mdash;{{ end }}</span>
+            <span class="value">{{ if .ExitIP }}{{ .ExitIP }} <span class="source">via {{ .ExitIPSource }}</span>{{ else }}&mdash;{{ end }}</span>
         </div>
         <div>
             <span class="label">Rotations</span>
@@ -126,7 +127,7 @@
             <th class="num">Latency</th>
             <th class="num">Jitter</th>
             <th>Server</th>
-            <th>Exit IP</th>
+            <th>Seen by speedtest.net</th>
             <th>Detail</th>
         </tr>
         {{- range .Rows }}

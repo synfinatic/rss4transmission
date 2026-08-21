@@ -85,7 +85,12 @@ func newSpeedMonitorFor(ctx *RunContext, g *Gluetun) (*SpeedMonitor, error) {
 		rotate = g.RequestRotate
 	}
 
-	return NewSpeedMonitor(cfg, ctx.Config.Ntfy, speed, runTest, activeDownloads(ctx), rotate), nil
+	monitor := NewSpeedMonitor(cfg, ctx.Config.Ntfy, speed, runTest, activeDownloads(ctx), rotate)
+	// Gluetun's own view of the exit, cached by the port monitor. nil in
+	// measure-only mode, where the rotation alert has no exit to name anyway.
+	monitor.ExitIP = ctx.ExitIP
+
+	return monitor, nil
 }
 
 // startSpeedMonitor launches the speed monitor when configured and returns it

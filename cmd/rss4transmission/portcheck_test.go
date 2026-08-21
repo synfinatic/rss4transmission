@@ -282,3 +282,105 @@ func TestPortMonitor_Trigger_RunsCheck(t *testing.T) {
 	assert.True(t, known)
 	assert.True(t, gotOpen)
 }
+
+// gluetunPublicIPServer answers the port-forward and public-IP control routes.
+// ip is read through a pointer so a test can change the reported exit between
+// checks; an empty ip makes /v1/publicip/ip fail, which is how the "Gluetun
+// stopped answering" case is simulated.
+func gluetunPublicIPServer(t *testing.T, ip *string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/publicip/ip" {
+			if *ip == "" {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"public_ip":"` + *ip + `"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ports":[54321]}`))
+	}))
+}
+
+func newPublicIPPortMonitor(t *testing.T, ip *string) *PortMonitor {
+	t.Helper()
+	open := true
+	transmissionSrv := portTestTransmissionServer(t, &open)
+	t.Cleanup(transmissionSrv.Close)
+	gluetunSrv := gluetunPublicIPServer(t, ip)
+	t.Cleanup(gluetunSrv.Close)
+
+	client := newTestTransmissionClient(t, transmissionSrv.URL)
+	g := &Gluetun{
+		URL:           gluetunSrv.URL,
+		Transmission:  client,
+		lastRotate:    time.Now(),
+		peerPort:      -1,
+		retryAttempts: 1,
+		retryDelay:    time.Millisecond,
+	}
+	return NewPortMonitor(client, g, NtfyConfig{})
+}
+
+func TestPortMonitor_LastPublicIPUnknownBeforeFirstCheck(t *testing.T) {
+	ip := "1.2.3.4"
+	m := newPublicIPPortMonitor(t, &ip)
+
+	got, known := m.LastPublicIP()
+	assert.False(t, known)
+	assert.Empty(t, got)
+}
+
+func TestPortMonitor_CheckRecordsGluetunPublicIP(t *testing.T) {
+	ip := "1.2.3.4"
+	m := newPublicIPPortMonitor(t, &ip)
+
+	_, err := m.check()
+	require.NoError(t, err)
+
+	got, known := m.LastPublicIP()
+	assert.True(t, known)
+	assert.Equal(t, "1.2.3.4", got)
+
+	// A later check picks up a changed exit.
+	ip = "5.6.7.8"
+	_, err = m.check()
+	require.NoError(t, err)
+	got, known = m.LastPublicIP()
+	assert.True(t, known)
+	assert.Equal(t, "5.6.7.8", got)
+}
+
+// An unreachable control server does not mean the exit changed, so the last
+// address we did see is kept rather than blanked.
+func TestPortMonitor_CheckKeepsPublicIPWhenGluetunFails(t *testing.T) {
+	ip := "1.2.3.4"
+	m := newPublicIPPortMonitor(t, &ip)
+
+	_, err := m.check()
+	require.NoError(t, err)
+
+	ip = ""
+	_, err = m.check()
+	require.NoError(t, err)
+
+	got, known := m.LastPublicIP()
+	assert.True(t, known)
+	assert.Equal(t, "1.2.3.4", got)
+}
+
+func TestPortMonitor_LastPublicIPUnknownWithoutGluetun(t *testing.T) {
+	open := true
+	transmissionSrv := portTestTransmissionServer(t, &open)
+	defer transmissionSrv.Close()
+
+	m := NewPortMonitor(newTestTransmissionClient(t, transmissionSrv.URL), nil, NtfyConfig{})
+	_, err := m.check()
+	require.NoError(t, err)
+
+	got, known := m.LastPublicIP()
+	assert.False(t, known)
+	assert.Empty(t, got)
+}

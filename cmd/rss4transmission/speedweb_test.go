@@ -13,7 +13,7 @@ import (
 func speedMux(t *testing.T, s *SpeedFile, portOpen func() (bool, bool)) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, s, portOpen, speedActions{})
+	registerSpeedRoutes(mux, s, portOpen, nil, speedActions{})
 	return mux
 }
 
@@ -144,7 +144,7 @@ func TestMetrics_EmptyStore(t *testing.T) {
 
 func TestMetrics_NilStore(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, nil, nil, speedActions{})
+	registerSpeedRoutes(mux, nil, nil, nil, speedActions{})
 	code, _ := getBody(t, mux, "/metrics")
 	if code != http.StatusOK {
 		t.Errorf("status = %d with a nil store, want 200", code)
@@ -211,7 +211,7 @@ func TestSpeedTestPage_FlagsUnchangedExit(t *testing.T) {
 
 func TestSpeedTestPage_NilStoreNotRegistered(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, nil, nil, speedActions{})
+	registerSpeedRoutes(mux, nil, nil, nil, speedActions{})
 	code, _ := getBody(t, mux, "/speedtest")
 	if code != http.StatusNotFound {
 		t.Errorf("status = %d with a nil store, want 404", code)
@@ -264,7 +264,7 @@ func TestPortMonitor_LastOpenReflectsLastCheck(t *testing.T) {
 func actionMux(t *testing.T, actions speedActions) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, tempSpeedFile(t), nil, actions)
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, actions)
 	return mux
 }
 
@@ -394,7 +394,7 @@ func TestSpeedRotate_NotRegisteredWithoutFunc(t *testing.T) {
 
 func TestSpeedTestPage_RendersOnlyAvailableButtons(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, tempSpeedFile(t), nil, speedActions{Run: func() bool { return true }})
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, speedActions{Run: func() bool { return true }})
 	_, body := getBody(t, mux, "/speedtest")
 	if !strings.Contains(body, `id="btn-run"`) {
 		t.Error("page is missing the run button")
@@ -404,7 +404,7 @@ func TestSpeedTestPage_RendersOnlyAvailableButtons(t *testing.T) {
 	}
 
 	mux = http.NewServeMux()
-	registerSpeedRoutes(mux, tempSpeedFile(t), nil, speedActions{Rotate: func() bool { return true }})
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, speedActions{Rotate: func() bool { return true }})
 	_, body = getBody(t, mux, "/speedtest")
 	if !strings.Contains(body, `id="btn-rotate"`) {
 		t.Error("page is missing the rotate button")
@@ -483,4 +483,84 @@ func TestSpeedPage_LinksHistoryOnItsOwnLine(t *testing.T) {
 	if !strings.Contains(body, `<p id="nav"><a href="/">History</a></p>`) {
 		t.Error("VPN page does not carry the History link on its own nav line")
 	}
+}
+
+// The headline Exit IP is what Gluetun says about itself. It must not fall back
+// to the measurement's ExitIP when both are available: some providers NAT per
+// destination, so speedtest.net's view drifts over a tunnel that never moved.
+func TestSpeedTestPage_ExitIPTileUsesGluetun(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{
+		At: time.Now(), DownloadMbps: 412.5, ServerName: "Los Angeles", ExitIP: "45.12.3.9",
+	})
+
+	mux := http.NewServeMux()
+	registerSpeedRoutes(mux, s, nil, func() (string, bool) { return "185.9.9.9", true }, speedActions{})
+	_, body := getBody(t, mux, "/speedtest")
+
+	tile := summarySection(t, body)
+	if !strings.Contains(tile, "185.9.9.9") {
+		t.Errorf("summary does not show Gluetun's exit IP\ngot:\n%s", tile)
+	}
+	if strings.Contains(tile, "45.12.3.9") {
+		t.Errorf("summary shows the measurement's exit IP\ngot:\n%s", tile)
+	}
+	if !strings.Contains(tile, "Gluetun") {
+		t.Errorf("summary does not name Gluetun as the source\ngot:\n%s", tile)
+	}
+	// The per-measurement value is still on the page, under its own heading.
+	if !strings.Contains(body, "45.12.3.9") {
+		t.Errorf("measurements table lost the speedtest exit IP\ngot:\n%s", body)
+	}
+	if !strings.Contains(body, "speedtest.net") {
+		t.Errorf("measurements column is not labeled as speedtest.net's view\ngot:\n%s", body)
+	}
+}
+
+// Measure-only deployments have no Gluetun to ask, so the tile falls back to the
+// measurement -- and says so, rather than passing it off as the tunnel's view.
+func TestSpeedTestPage_ExitIPTileFallsBackToSpeedtest(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 412.5, ExitIP: "45.12.3.9"})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+
+	tile := summarySection(t, body)
+	if !strings.Contains(tile, "45.12.3.9") {
+		t.Errorf("summary does not fall back to the measurement's exit IP\ngot:\n%s", tile)
+	}
+	if !strings.Contains(tile, "speedtest.net") {
+		t.Errorf("summary does not name speedtest.net as the source\ngot:\n%s", tile)
+	}
+}
+
+// Gluetun configured but not yet asked (or answering) is not the same as no
+// Gluetun: there is nothing to show, and the measurement's IP is not a stand-in.
+func TestSpeedTestPage_ExitIPTileUnknown(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 412.5, ExitIP: "45.12.3.9"})
+
+	mux := http.NewServeMux()
+	registerSpeedRoutes(mux, s, nil, func() (string, bool) { return "", false }, speedActions{})
+	_, body := getBody(t, mux, "/speedtest")
+
+	tile := summarySection(t, body)
+	if strings.Contains(tile, "45.12.3.9") {
+		t.Errorf("summary substituted the measurement's exit IP\ngot:\n%s", tile)
+	}
+}
+
+// summarySection returns just the tiles at the top of the page, so an assertion
+// about the headline Exit IP can't be satisfied by the measurements table.
+func summarySection(t *testing.T, body string) string {
+	t.Helper()
+	start := strings.Index(body, `<div id="summary">`)
+	if start < 0 {
+		t.Fatalf("page has no summary block:\n%s", body)
+	}
+	end := strings.Index(body[start:], "<h2>")
+	if end < 0 {
+		t.Fatalf("page has no section after the summary block:\n%s", body)
+	}
+	return body[start : start+end]
 }

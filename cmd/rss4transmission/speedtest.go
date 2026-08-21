@@ -141,6 +141,16 @@ type SpeedMonitor struct {
 	rotate   rotateRequestFunc // nil => measure-only, no Gluetun configured
 	interval time.Duration
 
+	// ExitIP reports which exit Gluetun says we are on, for the rotation alert
+	// that names the exit we are leaving. It is set after construction (like
+	// Gluetun.OnRotated) because the port monitor that caches it is built
+	// separately; nil, or unknown, simply leaves the exit out of the alert.
+	//
+	// A measurement's own ExitIP is not a substitute: that is speedtest.net's
+	// view through the proxy, which on some providers drifts per destination
+	// over a tunnel that never moved.
+	ExitIP exitIPFunc
+
 	trigger chan struct{} // buffered(1): an out-of-band measurement request
 
 	// stateMu guards measuring, which is written by the Run goroutine and read
@@ -253,14 +263,25 @@ func (m *SpeedMonitor) measureNow(ctx context.Context) {
 	m.save()
 }
 
-// record stores a result and backfills the exit IP of the previous rotation,
-// so a rotation that landed back on the same server is visible rather than
-// silent.
+// record stores a result.
+//
+// It deliberately does not touch the rotation history: a measurement's ExitIP
+// is speedtest.net's view, and only Gluetun can say which exit a rotation
+// actually landed on. vpnRotatedHook fills that in.
 func (m *SpeedMonitor) record(result SpeedResult) {
 	m.store.AddResult(result)
-	if result.OK() {
-		m.store.RecordExitIP(result.ExitIP)
+}
+
+// currentExitIP returns Gluetun's view of the exit we are on, or "" when there
+// is no Gluetun to ask or it has not answered yet.
+func (m *SpeedMonitor) currentExitIP() string {
+	if m.ExitIP == nil {
+		return ""
 	}
+	if ip, known := m.ExitIP(); known {
+		return ip
+	}
+	return ""
 }
 
 func (m *SpeedMonitor) save() {
@@ -337,18 +358,20 @@ func (m *SpeedMonitor) decide(result SpeedResult) {
 
 	// Staged rather than recorded outright: all we know so far is that the
 	// rotation was asked for. vpnRotatedHook fills in where it landed once
-	// Gluetun reports the tunnel back up.
+	// Gluetun reports the tunnel back up, and replaces the exit below with the
+	// one rotate() reads immediately before dropping the tunnel.
+	exitIP := m.currentExitIP()
 	m.store.StageRotation(RotationEvent{
 		At:         time.Now(),
 		Source:     RotationSourceSpeedtest,
 		Reason:     reason,
 		BeforeMbps: result.DownloadMbps,
-		FromExitIP: result.ExitIP,
+		FromExitIP: exitIP,
 	})
 	notifyVpnRotating(m.ntfy, &NtfyVpnContext{
 		Reason:       reason,
 		DownloadMbps: result.DownloadMbps,
-		ExitIP:       result.ExitIP,
+		ExitIP:       exitIP,
 	})
 }
 

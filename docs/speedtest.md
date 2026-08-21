@@ -115,6 +115,10 @@ This works even while `SpeedTest.Enabled` is `false`. Check the reported exit IP
 your *home* public IP rather than the VPN's, the proxy is not being used and every subsequent
 measurement would be meaningless.
 
+That address is speedtest.net's view of the connection through Gluetun's proxy, which is not
+necessarily the same as the address Gluetun reports for itself — see
+[Two views of the exit IP](#two-views-of-the-exit-ip) below.
+
 Pass `--save` to append the result to `ResultsFile`.
 
 ## How rotation works
@@ -154,7 +158,9 @@ protected — a rotation always drops the tunnel and changes the forwarded peer 
 
 Note that with a narrow server filter such as `SERVER_CITIES=Los Angeles`, a restart can land on
 the same server. The `/speedtest` page flags rotations whose exit IP did not change, which is the
-signal to widen the filter rather than to rotate more.
+signal to widen the filter rather than to rotate more. Both ends of that comparison come from
+Gluetun, read either side of the restart, so an unchanged pair really does mean an unchanged
+tunnel.
 
 Two ntfy alerts bracket each rotation: one when it is requested, naming the exit being left, and
 one once the tunnel is back up, naming the exit it landed on. The second alert also flags a
@@ -165,12 +171,29 @@ Without a `Gluetun` block, `SpeedTest` still runs in measure-only mode: results 
 served, but nothing rotates. Note that the Gluetun client is built once at startup and is not
 rebuilt on config reload; the speed monitor inherits that limitation.
 
+## Two views of the exit IP
+
+There are two different answers to "which exit are we on", and the `/speedtest` page shows both
+because they do not always agree:
+
+- The **Exit IP** tile is Gluetun's own `GET /v1/publicip/ip`, refreshed on the port monitor's
+  5-minute check. This is the authoritative one, and it is what the rotation log's **From** and
+  **To** columns record.
+- The measurements table's **Seen by speedtest.net** column is the address speedtest.net observed
+  for that particular run, through Gluetun's HTTP proxy.
+
+Some VPN providers NAT per destination, in which case the second value drifts between measurements
+over a tunnel that never rotated at all. A changing **Seen by speedtest.net** is therefore not
+evidence of a rotation, and an unchanging one is not evidence against it — check Gluetun's value,
+the rotation log, or Gluetun's own log instead.
+
 ## Viewing results
 
 With `--private-listen` set, the private web server serves:
 
-- `GET /speedtest` — recent measurements, current exit IP, and the rotation log. Every rotation is
-  logged, not only the speedtest-driven ones: the **Source** column reads `speedtest`, `schedule`
+- `GET /speedtest` — recent measurements, the current exit IP as reported by Gluetun, and the
+  rotation log. Every rotation is logged, not only the speedtest-driven ones: the **Source**
+  column reads `speedtest`, `schedule`
   (`Gluetun.RotateTime` elapsed), `closed-port` (`Gluetun.ClosedPortChecks` exceeded) or `manual`
   (the page's button). `rss4transmission_vpn_rotations_total` counts all four
 - `GET /metrics` — Prometheus text format, exposing:

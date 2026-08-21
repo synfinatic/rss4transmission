@@ -217,8 +217,9 @@ func newTestMonitor(t *testing.T, cfg SpeedTestConfig, f *fakeDeps) (*SpeedMonit
 }
 
 func TestSpeedMonitor_SlowResultRequestsRotation(t *testing.T) {
-	f := &fakeDeps{result: SpeedResult{DownloadMbps: 12.5, ExitIP: "1.1.1.1"}}
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 12.5, ExitIP: "45.12.3.9"}}
 	m, store := newTestMonitor(t, testSpeedCfg(), f)
+	m.ExitIP = func() (string, bool) { return "1.1.1.1", true }
 
 	m.tick(context.Background())
 
@@ -235,8 +236,28 @@ func TestSpeedMonitor_SlowResultRequestsRotation(t *testing.T) {
 	if rot.BeforeMbps != 12.5 {
 		t.Errorf("BeforeMbps = %v, want 12.5", rot.BeforeMbps)
 	}
+	// Gluetun's view of the exit, not the measurement's: speedtest.net sees a
+	// different address on a provider that NATs per destination.
 	if rot.FromExitIP != "1.1.1.1" {
-		t.Errorf("FromExitIP = %q, want 1.1.1.1", rot.FromExitIP)
+		t.Errorf("FromExitIP = %q, want Gluetun's 1.1.1.1", rot.FromExitIP)
+	}
+}
+
+// Without Gluetun to ask, the rotation is staged with no From at all rather
+// than with speedtest.net's address standing in for it.
+func TestSpeedMonitor_StagesNoFromExitIPWhenGluetunIsSilent(t *testing.T) {
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 12.5, ExitIP: "45.12.3.9"}}
+	m, store := newTestMonitor(t, testSpeedCfg(), f)
+	m.ExitIP = func() (string, bool) { return "", false }
+
+	m.tick(context.Background())
+
+	rot, ok := store.LastRotation()
+	if !ok {
+		t.Fatal("no rotation staged")
+	}
+	if rot.FromExitIP != "" {
+		t.Errorf("FromExitIP = %q, want it left unknown", rot.FromExitIP)
 	}
 }
 
@@ -354,18 +375,22 @@ func TestSpeedMonitor_RespectsDailyCapFromStore(t *testing.T) {
 	}
 }
 
-// The exit IP seen on a successful run backfills the previous rotation, which
-// is how a rotation that landed on the same server becomes visible.
-func TestSpeedMonitor_BackfillsExitIPAfterRotation(t *testing.T) {
-	f := &fakeDeps{result: SpeedResult{DownloadMbps: 400, ExitIP: "2.2.2.2"}}
+// A measurement must not backfill a rotation's destination. Its ExitIP is
+// speedtest.net's view, which drifts on a provider that NATs per destination --
+// writing it here made a rotation that never completed render as a finished one,
+// and a rotation that did complete render against an address it never used.
+// Only vpnRotatedHook, fed by Gluetun, fills ToExitIP.
+func TestSpeedMonitor_DoesNotBackfillExitIPAfterRotation(t *testing.T) {
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 400, ExitIP: "45.12.3.9"}}
 	m, store := newTestMonitor(t, testSpeedCfg(), f)
+	m.ExitIP = func() (string, bool) { return "9.9.9.9", true }
 	store.AddRotation(RotationEvent{At: time.Now().Add(-1 * time.Hour), FromExitIP: "1.1.1.1"})
 
 	m.tick(context.Background())
 
 	rot, _ := store.LastRotation()
-	if rot.ToExitIP != "2.2.2.2" {
-		t.Errorf("ToExitIP = %q, want 2.2.2.2", rot.ToExitIP)
+	if rot.ToExitIP != "" {
+		t.Errorf("ToExitIP = %q, want it left for Gluetun to fill", rot.ToExitIP)
 	}
 }
 
@@ -469,8 +494,9 @@ func TestSpeedMonitor_SendsNtfyOnRotation(t *testing.T) {
 		t.Fatalf("ntfy Validate: %v", err)
 	}
 
-	f := &fakeDeps{result: SpeedResult{DownloadMbps: 12.5, ExitIP: "1.1.1.1"}}
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 12.5, ExitIP: "45.12.3.9"}}
 	m := NewSpeedMonitor(testSpeedCfg(), ntfy, tempSpeedFile(t), f.runTest, f.active, f.rotate)
+	m.ExitIP = func() (string, bool) { return "1.1.1.1", true }
 
 	m.tick(context.Background())
 
@@ -483,7 +509,10 @@ func TestSpeedMonitor_SendsNtfyOnRotation(t *testing.T) {
 			t.Error("Title header is empty")
 		}
 		if !contains(c.body, "1.1.1.1") {
-			t.Errorf("body = %q, want it to mention the exit IP", c.body)
+			t.Errorf("body = %q, want it to mention Gluetun's exit IP", c.body)
+		}
+		if contains(c.body, "45.12.3.9") {
+			t.Errorf("body = %q, want it to not use speedtest.net's view of the exit", c.body)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("no ntfy notification sent on rotation")
