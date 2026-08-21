@@ -9,6 +9,8 @@
         h1 { color: #ccc; margin-bottom: 0.25em; }
         h2 { color: #ccc; font-size: 1.1em; margin-top: 2em; }
         p { color: #888; margin-top: 0; }
+        #nav { margin: 0 0 1em 0; }
+        #nav a { color: #6aa8e0; text-decoration: underline; }
         a { color: #6aa8e0; }
 
         #summary {
@@ -69,7 +71,8 @@
 </head>
 <body>
     <h1>VPN Speed</h1>
-    <p>{{ len .Rows }} measurement(s) &mdash; auto-refreshes every 60 seconds. <a href="/">History</a></p>
+    <p id="count">{{ len .Rows }} measurement(s) &mdash; auto-refreshes every 60 seconds.</p>
+    <p id="nav"><a href="/">History</a></p>
 
     <div id="summary">
         <div>

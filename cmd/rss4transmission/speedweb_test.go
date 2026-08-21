@@ -473,3 +473,14 @@ func TestSpeedPage_HidesLastUploadWhenNeverMeasured(t *testing.T) {
 		t.Error("summary reports an upload that was never measured")
 	}
 }
+
+// The two pages cross-link to each other, and the link belongs in the same
+// place on both: its own line under the record count, not trailing the count
+// sentence.
+func TestSpeedPage_LinksHistoryOnItsOwnLine(t *testing.T) {
+	_, body := getBody(t, speedMux(t, tempSpeedFile(t), nil), "/speedtest")
+
+	if !strings.Contains(body, `<p id="nav"><a href="/">History</a></p>`) {
+		t.Error("VPN page does not carry the History link on its own nav line")
+	}
+}
