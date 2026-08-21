@@ -222,7 +222,7 @@ loop's next 5-minute tick, so expect a gap of up to five minutes before the seco
 |---|---|---|
 | `{{.Reason}}` | `string` | Why the rotation fired, e.g. `"download 42.1 Mbps below 100.0 Mbps threshold"` |
 | `{{.DownloadMbps}}` | `float64` | The measured download throughput that triggered the rotation |
-| `{{.ExitIP}}` | `string` | The VPN exit IP being rotated away from |
+| `{{.ExitIP}}` | `string` | The VPN exit IP being rotated away from, as last reported by Gluetun; empty if it hasn't answered yet |
 
 ### Rotation Complete
 

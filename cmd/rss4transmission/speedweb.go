@@ -36,10 +36,24 @@ var speedTmpl string
 // corresponding metric is omitted rather than published as a guess.
 type portOpenFunc func() (open bool, known bool)
 
+// exitIPFunc reports the VPN exit IP Gluetun claims for itself, as cached by
+// the port monitor. known is false until Gluetun has answered once, and always
+// when there is no Gluetun to ask.
+//
+// This is deliberately separate from SpeedResult.ExitIP, which is speedtest.net's
+// view of the connection through Gluetun's proxy. The two disagree on providers
+// that NAT per destination, where speedtest.net's address drifts over a tunnel
+// that never rotated -- so only Gluetun's answers "which exit are we on".
+type exitIPFunc func() (ip string, known bool)
+
 // speedPageRow is one measurement as rendered on the /speedtest page.
 type speedPageRow struct {
 	SpeedResult
 	Status string // "ok", "skipped" or "error"
+	// SameExitIP is true when Gluetun and speedtest.net named the same address,
+	// which is the uninteresting case: the row then prints it once rather than
+	// twice, so the eye is drawn only to the rows where the two disagree.
+	SameExitIP bool
 }
 
 // speedPageRotation is one rotation event plus whether it actually moved us.
@@ -57,6 +71,12 @@ type speedPageData struct {
 	Rotations []speedPageRotation
 	Latest    *SpeedResult
 	ExitIP    string
+	// ExitIPSource names where ExitIP came from, and is empty when that is
+	// Gluetun. With Gluetun configured the tile is always Gluetun's answer, so
+	// saying so on every page load is noise; the annotation exists to flag the
+	// one case where it is *not* -- a measure-only deployment falling back to
+	// speedtest.net's view, which is not interchangeable (see exitIPFunc).
+	ExitIPSource string
 	// ShowUpload renders the upload tile. It is driven by whether any recent
 	// measurement carries an upload leg rather than by the latest value: the
 	// failure worth seeing is an exit whose upload has dropped to zero, and
@@ -87,7 +107,9 @@ type speedActions struct {
 // /metrics is registered even with a nil store so a scrape configuration does
 // not have to care whether SpeedTest is enabled; /speedtest is not, because a
 // page with nothing to show is worse than a 404.
-func registerSpeedRoutes(mux *http.ServeMux, speed *SpeedFile, portOpen portOpenFunc, actions speedActions) {
+func registerSpeedRoutes(mux *http.ServeMux, speed *SpeedFile, portOpen portOpenFunc,
+	exitIP exitIPFunc, actions speedActions,
+) {
 	if speed != nil {
 		tmpl := template.Must(template.New("speedtest").Funcs(template.FuncMap{
 			"mbps":    func(v float64) string { return fmt.Sprintf("%.1f", v) },
@@ -97,7 +119,7 @@ func registerSpeedRoutes(mux *http.ServeMux, speed *SpeedFile, portOpen portOpen
 
 		mux.HandleFunc("GET /speedtest", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			data := buildSpeedPageData(speed)
+			data := buildSpeedPageData(speed, exitIP)
 			data.CanRun = actions.Run != nil
 			data.CanRotate = actions.Rotate != nil
 			if err := tmpl.Execute(w, data); err != nil {
@@ -184,7 +206,7 @@ func makeSpeedRotateHandler(actions speedActions) http.HandlerFunc {
 }
 
 // buildSpeedPageData assembles the /speedtest view, newest entries first.
-func buildSpeedPageData(speed *SpeedFile) speedPageData {
+func buildSpeedPageData(speed *SpeedFile, exitIP exitIPFunc) speedPageData {
 	results := speed.GetResults()
 	data := speedPageData{
 		Rows:      make([]speedPageRow, 0, len(results)),
@@ -200,12 +222,29 @@ func buildSpeedPageData(speed *SpeedFile) speedPageData {
 		case r.Skipped != "":
 			status = "skipped"
 		}
-		data.Rows = append(data.Rows, speedPageRow{SpeedResult: r, Status: status})
+		data.Rows = append(data.Rows, speedPageRow{
+			SpeedResult: r,
+			Status:      status,
+			SameExitIP:  r.GluetunExitIP != "" && r.GluetunExitIP == r.ExitIP,
+		})
 	}
 
 	if latest, ok := speed.LatestSuccessful(); ok {
 		data.Latest = &latest
-		data.ExitIP = latest.ExitIP
+	}
+
+	// Gluetun is the only source that answers "which exit are we on"; a
+	// measurement's ExitIP is speedtest.net's view and can differ without the
+	// tunnel having moved. Falling back to it keeps the tile useful in a
+	// measure-only deployment, where there is no Gluetun to ask -- but only when
+	// there is genuinely nothing to ask, and the tile says which it is showing.
+	switch {
+	case exitIP != nil:
+		if ip, known := exitIP(); known {
+			data.ExitIP = ip
+		}
+	case data.Latest != nil:
+		data.ExitIP, data.ExitIPSource = data.Latest.ExitIP, "speedtest.net"
 	}
 
 	for _, r := range results {

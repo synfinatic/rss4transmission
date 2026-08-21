@@ -173,40 +173,6 @@ func TestSpeedFile_LastRotation(t *testing.T) {
 	}
 }
 
-// ToExitIP is backfilled by the next successful measurement, which is how we
-// detect that a rotation landed back on the same server.
-func TestSpeedFile_RecordExitIPBackfillsLastRotation(t *testing.T) {
-	s := tempSpeedFile(t)
-	s.AddRotation(RotationEvent{At: time.Now(), Reason: "slow", FromExitIP: "1.1.1.1"})
-
-	s.RecordExitIP("2.2.2.2")
-
-	got, _ := s.LastRotation()
-	if got.ToExitIP != "2.2.2.2" {
-		t.Errorf("ToExitIP = %q, want 2.2.2.2", got.ToExitIP)
-	}
-}
-
-// Backfill happens once: a later measurement must not overwrite the exit IP
-// that was observed immediately after the rotation.
-func TestSpeedFile_RecordExitIPOnlyBackfillsOnce(t *testing.T) {
-	s := tempSpeedFile(t)
-	s.AddRotation(RotationEvent{At: time.Now(), Reason: "slow", FromExitIP: "1.1.1.1"})
-
-	s.RecordExitIP("2.2.2.2")
-	s.RecordExitIP("3.3.3.3")
-
-	got, _ := s.LastRotation()
-	if got.ToExitIP != "2.2.2.2" {
-		t.Errorf("ToExitIP = %q, want 2.2.2.2 (first observation wins)", got.ToExitIP)
-	}
-}
-
-func TestSpeedFile_RecordExitIPNoRotationsIsSafe(t *testing.T) {
-	s := tempSpeedFile(t)
-	s.RecordExitIP("2.2.2.2") // must not panic
-}
-
 // The SpeedMonitor goroutine writes while web handlers read; unlike CacheFile
 // there is no external lock serializing them, so SpeedFile must be self-synchronized.
 func TestSpeedFile_ConcurrentAccess(t *testing.T) {
@@ -224,7 +190,7 @@ func TestSpeedFile_ConcurrentAccess(t *testing.T) {
 				_, _ = s.LastRotation()
 				_ = s.RotationsSince(time.Now().Add(-time.Hour))
 				_ = s.GetResults()
-				s.RecordExitIP("1.1.1.1")
+				s.CompleteRotation(RotationSourceSchedule, "churn", "1.1.1.1", "2.2.2.2")
 			}
 		}()
 	}
@@ -312,6 +278,42 @@ func TestCompleteRotation_FillsTheStagedEvent(t *testing.T) {
 	}
 	if rotations[0].BeforeMbps != 12.5 {
 		t.Errorf("BeforeMbps = %v, want the staged measurement to survive", rotations[0].BeforeMbps)
+	}
+}
+
+// The staged FromExitIP is the port monitor's cached view, up to one check
+// old. rotate() reads the real one immediately before tearing the tunnel down,
+// so when it has an answer that answer wins.
+func TestCompleteRotation_PrefersTheRotationsOwnFromIP(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.StageRotation(RotationEvent{
+		At: time.Now(), Source: RotationSourceSpeedtest, Reason: "too slow", FromExitIP: "1.1.1.1",
+	})
+
+	s.CompleteRotation(RotationSourceSpeedtest, "too slow", "9.9.9.9", "2.2.2.2")
+
+	rotations := s.GetRotations()
+	if len(rotations) != 1 {
+		t.Fatalf("stored %d rotations, want 1", len(rotations))
+	}
+	if rotations[0].FromExitIP != "9.9.9.9" {
+		t.Errorf("FromExitIP = %q, want 9.9.9.9", rotations[0].FromExitIP)
+	}
+}
+
+// ...but a rotation that could not read its own pre-rotation IP keeps the
+// staged one rather than blanking a value we do have.
+func TestCompleteRotation_KeepsStagedFromIPWhenUnknown(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.StageRotation(RotationEvent{
+		At: time.Now(), Source: RotationSourceSpeedtest, Reason: "too slow", FromExitIP: "1.1.1.1",
+	})
+
+	s.CompleteRotation(RotationSourceSpeedtest, "too slow", "", "2.2.2.2")
+
+	rotations := s.GetRotations()
+	if rotations[0].FromExitIP != "1.1.1.1" {
+		t.Errorf("FromExitIP = %q, want the staged 1.1.1.1 to survive", rotations[0].FromExitIP)
 	}
 }
 

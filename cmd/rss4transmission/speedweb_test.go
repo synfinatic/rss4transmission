@@ -13,7 +13,7 @@ import (
 func speedMux(t *testing.T, s *SpeedFile, portOpen func() (bool, bool)) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, s, portOpen, speedActions{})
+	registerSpeedRoutes(mux, s, portOpen, nil, speedActions{})
 	return mux
 }
 
@@ -144,7 +144,7 @@ func TestMetrics_EmptyStore(t *testing.T) {
 
 func TestMetrics_NilStore(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, nil, nil, speedActions{})
+	registerSpeedRoutes(mux, nil, nil, nil, speedActions{})
 	code, _ := getBody(t, mux, "/metrics")
 	if code != http.StatusOK {
 		t.Errorf("status = %d with a nil store, want 200", code)
@@ -211,7 +211,7 @@ func TestSpeedTestPage_FlagsUnchangedExit(t *testing.T) {
 
 func TestSpeedTestPage_NilStoreNotRegistered(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, nil, nil, speedActions{})
+	registerSpeedRoutes(mux, nil, nil, nil, speedActions{})
 	code, _ := getBody(t, mux, "/speedtest")
 	if code != http.StatusNotFound {
 		t.Errorf("status = %d with a nil store, want 404", code)
@@ -264,7 +264,7 @@ func TestPortMonitor_LastOpenReflectsLastCheck(t *testing.T) {
 func actionMux(t *testing.T, actions speedActions) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, tempSpeedFile(t), nil, actions)
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, actions)
 	return mux
 }
 
@@ -394,7 +394,7 @@ func TestSpeedRotate_NotRegisteredWithoutFunc(t *testing.T) {
 
 func TestSpeedTestPage_RendersOnlyAvailableButtons(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, tempSpeedFile(t), nil, speedActions{Run: func() bool { return true }})
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, speedActions{Run: func() bool { return true }})
 	_, body := getBody(t, mux, "/speedtest")
 	if !strings.Contains(body, `id="btn-run"`) {
 		t.Error("page is missing the run button")
@@ -404,7 +404,7 @@ func TestSpeedTestPage_RendersOnlyAvailableButtons(t *testing.T) {
 	}
 
 	mux = http.NewServeMux()
-	registerSpeedRoutes(mux, tempSpeedFile(t), nil, speedActions{Rotate: func() bool { return true }})
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, speedActions{Rotate: func() bool { return true }})
 	_, body = getBody(t, mux, "/speedtest")
 	if !strings.Contains(body, `id="btn-rotate"`) {
 		t.Error("page is missing the rotate button")
@@ -482,5 +482,196 @@ func TestSpeedPage_LinksHistoryOnItsOwnLine(t *testing.T) {
 
 	if !strings.Contains(body, `<p id="nav"><a href="/">History</a></p>`) {
 		t.Error("VPN page does not carry the History link on its own nav line")
+	}
+}
+
+// The headline Exit IP is what Gluetun says about itself. It must not fall back
+// to the measurement's ExitIP when both are available: some providers NAT per
+// destination, so speedtest.net's view drifts over a tunnel that never moved.
+func TestSpeedTestPage_ExitIPTileUsesGluetun(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{
+		At: time.Now(), DownloadMbps: 412.5, ServerName: "Los Angeles", ExitIP: "45.12.3.9",
+	})
+
+	mux := http.NewServeMux()
+	registerSpeedRoutes(mux, s, nil, func() (string, bool) { return "185.9.9.9", true }, speedActions{})
+	_, body := getBody(t, mux, "/speedtest")
+
+	tile := summarySection(t, body)
+	if !strings.Contains(tile, "185.9.9.9") {
+		t.Errorf("summary does not show Gluetun's exit IP\ngot:\n%s", tile)
+	}
+	if strings.Contains(tile, "45.12.3.9") {
+		t.Errorf("summary shows the measurement's exit IP\ngot:\n%s", tile)
+	}
+	// Unannotated: with Gluetun configured the tile is always Gluetun's answer,
+	// so naming it on every page load is noise.
+	if strings.Contains(tile, "Gluetun") {
+		t.Errorf("summary annotates the source it always has\ngot:\n%s", tile)
+	}
+	// The per-measurement value is still on the page, under its own heading.
+	if !strings.Contains(body, "45.12.3.9") {
+		t.Errorf("measurements table lost the speedtest exit IP\ngot:\n%s", body)
+	}
+	if !strings.Contains(body, "speedtest.net") {
+		t.Errorf("measurements column is not labeled as speedtest.net's view\ngot:\n%s", body)
+	}
+}
+
+// Measure-only deployments have no Gluetun to ask, so the tile falls back to the
+// measurement -- and says so, rather than passing it off as the tunnel's view.
+func TestSpeedTestPage_ExitIPTileFallsBackToSpeedtest(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 412.5, ExitIP: "45.12.3.9"})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+
+	tile := summarySection(t, body)
+	if !strings.Contains(tile, "45.12.3.9") {
+		t.Errorf("summary does not fall back to the measurement's exit IP\ngot:\n%s", tile)
+	}
+	if !strings.Contains(tile, "speedtest.net") {
+		t.Errorf("summary does not name speedtest.net as the source\ngot:\n%s", tile)
+	}
+}
+
+// Gluetun configured but not yet asked (or answering) is not the same as no
+// Gluetun: there is nothing to show, and the measurement's IP is not a stand-in.
+func TestSpeedTestPage_ExitIPTileUnknown(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 412.5, ExitIP: "45.12.3.9"})
+
+	mux := http.NewServeMux()
+	registerSpeedRoutes(mux, s, nil, func() (string, bool) { return "", false }, speedActions{})
+	_, body := getBody(t, mux, "/speedtest")
+
+	tile := summarySection(t, body)
+	if strings.Contains(tile, "45.12.3.9") {
+		t.Errorf("summary substituted the measurement's exit IP\ngot:\n%s", tile)
+	}
+}
+
+// summarySection returns just the tiles at the top of the page, so an assertion
+// about the headline Exit IP can't be satisfied by the measurements table.
+func summarySection(t *testing.T, body string) string {
+	t.Helper()
+	start := strings.Index(body, `<div id="summary">`)
+	if start < 0 {
+		t.Fatalf("page has no summary block:\n%s", body)
+	}
+	end := strings.Index(body[start:], "<h2>")
+	if end < 0 {
+		t.Fatalf("page has no section after the summary block:\n%s", body)
+	}
+	return body[start : start+end]
+}
+
+// A row records both views of the exit: Gluetun's, which is what the tunnel
+// actually is, and speedtest.net's, which on a provider that NATs per
+// destination can be a different address over the very same tunnel.
+func TestSpeedTestPage_ShowsBothExitIPsPerMeasurement(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{
+		At: time.Now(), DownloadMbps: 412.5, ExitIP: "45.12.3.9", GluetunExitIP: "185.9.9.9",
+	})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+
+	// The two headers are deliberately parallel: each names the value and then
+	// who was asked for it, so neither column depends on the other to be read.
+	table := measurementsSection(t, body)
+	for _, want := range []string{
+		"185.9.9.9", "45.12.3.9", "Exit IP (Gluetun)", "Exit IP (speedtest.net)",
+	} {
+		if !strings.Contains(table, want) {
+			t.Errorf("measurements table missing %q\ngot:\n%s", want, table)
+		}
+	}
+}
+
+// When the two agree there is nothing to compare, so the row says so instead of
+// printing the same address twice and inviting a second look.
+func TestSpeedTestPage_CollapsesMatchingExitIPs(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{
+		At: time.Now(), DownloadMbps: 412.5, ExitIP: "185.9.9.9", GluetunExitIP: "185.9.9.9",
+	})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+
+	table := measurementsSection(t, body)
+	row := table[strings.Index(table, "<tr>\n            <td>"):]
+	if n := strings.Count(row, "185.9.9.9"); n != 1 {
+		t.Errorf("exit IP rendered %d times in the row, want 1\ngot:\n%s", n, row)
+	}
+	if !strings.Contains(row, "same") {
+		t.Errorf("row does not say the two views agree\ngot:\n%s", row)
+	}
+}
+
+// A measurement taken before Gluetun answered, or in measure-only mode, still
+// renders -- with the Gluetun column blank rather than filled in from the other.
+func TestSpeedTestPage_MeasurementWithoutGluetunExitIP(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 412.5, ExitIP: "45.12.3.9"})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+
+	table := measurementsSection(t, body)
+	if !strings.Contains(table, "45.12.3.9") {
+		t.Errorf("measurements table lost speedtest.net's exit IP\ngot:\n%s", table)
+	}
+	if strings.Contains(table, "same") {
+		t.Errorf("table claims the two views agree when only one exists\ngot:\n%s", table)
+	}
+}
+
+// measurementsSection returns just the measurements table, so an assertion about
+// a row can't be satisfied by the summary tiles or the rotations table.
+func measurementsSection(t *testing.T, body string) string {
+	t.Helper()
+	start := strings.Index(body, "<h2>Measurements</h2>")
+	if start < 0 {
+		t.Fatalf("page has no measurements section:\n%s", body)
+	}
+	end := strings.Index(body[start+1:], "<h2>")
+	if end < 0 {
+		t.Fatalf("page has no section after the measurements table:\n%s", body)
+	}
+	return body[start : start+1+end]
+}
+
+// The Detail column carries the rotation verdict for a slow measurement, so a
+// row below the floor is never ambiguous about whether it cost a rotation.
+func TestSpeedTestPage_ShowsRotationNoteInDetail(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{
+		At: time.Now(), DownloadMbps: 12.5,
+		RotationNote: "no rotation: 6 automatic rotations in the last 24h (max 6)",
+	})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+
+	table := measurementsSection(t, body)
+	if !strings.Contains(table, "max 6") {
+		t.Errorf("Detail column does not carry the rotation note\ngot:\n%s", table)
+	}
+}
+
+// An error still wins the Detail cell: a run that never measured has no rotation
+// verdict worth reporting over the reason it failed.
+func TestSpeedTestPage_ErrorOutranksRotationNoteInDetail(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), Error: "proxy refused", RotationNote: "unreachable"})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+
+	table := measurementsSection(t, body)
+	if !strings.Contains(table, "proxy refused") {
+		t.Errorf("Detail column lost the error\ngot:\n%s", table)
+	}
+	if strings.Contains(table, "unreachable") {
+		t.Errorf("Detail column showed a rotation note over the error\ngot:\n%s", table)
 	}
 }

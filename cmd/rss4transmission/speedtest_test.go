@@ -150,15 +150,15 @@ func TestShouldRotate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := cfg
 			cfg.MinUploadMbps = tc.minUploadMbps
-			got, reason := shouldRotate(cfg, tc.result, tc.lastRotation, tc.rotationsToday, now)
-			if got != tc.wantRotate {
-				t.Errorf("shouldRotate = %v (%q), want %v", got, reason, tc.wantRotate)
+			d := shouldRotate(cfg, tc.result, tc.lastRotation, tc.rotationsToday, now)
+			if d.Rotate != tc.wantRotate {
+				t.Errorf("shouldRotate = %v (%q), want %v", d.Rotate, d.Reason, tc.wantRotate)
 			}
-			if tc.wantRotate && reason == "" {
+			if tc.wantRotate && d.Reason == "" {
 				t.Error("shouldRotate returned true with an empty reason")
 			}
-			if tc.wantReasonHas != "" && !contains(reason, tc.wantReasonHas) {
-				t.Errorf("reason = %q, want it to mention %q", reason, tc.wantReasonHas)
+			if tc.wantReasonHas != "" && !contains(d.Reason, tc.wantReasonHas) {
+				t.Errorf("reason = %q, want it to mention %q", d.Reason, tc.wantReasonHas)
 			}
 		})
 	}
@@ -168,8 +168,8 @@ func TestShouldRotate(t *testing.T) {
 // "rotated at the epoch, so we're inside no cooldown" nor block the first rotation.
 func TestShouldRotate_NeverRotatedIsNotInCooldown(t *testing.T) {
 	cfg := testSpeedCfg()
-	got, _ := shouldRotate(cfg, SpeedResult{DownloadMbps: 5}, time.Time{}, 0, time.Now())
-	if !got {
+	d := shouldRotate(cfg, SpeedResult{DownloadMbps: 5}, time.Time{}, 0, time.Now())
+	if !d.Rotate {
 		t.Error("shouldRotate = false when never rotated before, want true")
 	}
 }
@@ -179,8 +179,8 @@ func TestShouldRotate_NeverRotatedIsNotInCooldown(t *testing.T) {
 func TestShouldRotate_ZeroDailyCapMeansUnlimited(t *testing.T) {
 	cfg := testSpeedCfg()
 	cfg.MaxRotationsPerDay = 0
-	got, _ := shouldRotate(cfg, SpeedResult{DownloadMbps: 5}, time.Time{}, 100, time.Now())
-	if !got {
+	d := shouldRotate(cfg, SpeedResult{DownloadMbps: 5}, time.Time{}, 100, time.Now())
+	if !d.Rotate {
 		t.Error("shouldRotate = false with MaxRotationsPerDay 0, want true (unlimited)")
 	}
 }
@@ -217,8 +217,9 @@ func newTestMonitor(t *testing.T, cfg SpeedTestConfig, f *fakeDeps) (*SpeedMonit
 }
 
 func TestSpeedMonitor_SlowResultRequestsRotation(t *testing.T) {
-	f := &fakeDeps{result: SpeedResult{DownloadMbps: 12.5, ExitIP: "1.1.1.1"}}
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 12.5, ExitIP: "45.12.3.9"}}
 	m, store := newTestMonitor(t, testSpeedCfg(), f)
+	m.ExitIP = func() (string, bool) { return "1.1.1.1", true }
 
 	m.tick(context.Background())
 
@@ -235,8 +236,28 @@ func TestSpeedMonitor_SlowResultRequestsRotation(t *testing.T) {
 	if rot.BeforeMbps != 12.5 {
 		t.Errorf("BeforeMbps = %v, want 12.5", rot.BeforeMbps)
 	}
+	// Gluetun's view of the exit, not the measurement's: speedtest.net sees a
+	// different address on a provider that NATs per destination.
 	if rot.FromExitIP != "1.1.1.1" {
-		t.Errorf("FromExitIP = %q, want 1.1.1.1", rot.FromExitIP)
+		t.Errorf("FromExitIP = %q, want Gluetun's 1.1.1.1", rot.FromExitIP)
+	}
+}
+
+// Without Gluetun to ask, the rotation is staged with no From at all rather
+// than with speedtest.net's address standing in for it.
+func TestSpeedMonitor_StagesNoFromExitIPWhenGluetunIsSilent(t *testing.T) {
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 12.5, ExitIP: "45.12.3.9"}}
+	m, store := newTestMonitor(t, testSpeedCfg(), f)
+	m.ExitIP = func() (string, bool) { return "", false }
+
+	m.tick(context.Background())
+
+	rot, ok := store.LastRotation()
+	if !ok {
+		t.Fatal("no rotation staged")
+	}
+	if rot.FromExitIP != "" {
+		t.Errorf("FromExitIP = %q, want it left unknown", rot.FromExitIP)
 	}
 }
 
@@ -354,18 +375,22 @@ func TestSpeedMonitor_RespectsDailyCapFromStore(t *testing.T) {
 	}
 }
 
-// The exit IP seen on a successful run backfills the previous rotation, which
-// is how a rotation that landed on the same server becomes visible.
-func TestSpeedMonitor_BackfillsExitIPAfterRotation(t *testing.T) {
-	f := &fakeDeps{result: SpeedResult{DownloadMbps: 400, ExitIP: "2.2.2.2"}}
+// A measurement must not backfill a rotation's destination. Its ExitIP is
+// speedtest.net's view, which drifts on a provider that NATs per destination --
+// writing it here made a rotation that never completed render as a finished one,
+// and a rotation that did complete render against an address it never used.
+// Only vpnRotatedHook, fed by Gluetun, fills ToExitIP.
+func TestSpeedMonitor_DoesNotBackfillExitIPAfterRotation(t *testing.T) {
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 400, ExitIP: "45.12.3.9"}}
 	m, store := newTestMonitor(t, testSpeedCfg(), f)
+	m.ExitIP = func() (string, bool) { return "9.9.9.9", true }
 	store.AddRotation(RotationEvent{At: time.Now().Add(-1 * time.Hour), FromExitIP: "1.1.1.1"})
 
 	m.tick(context.Background())
 
 	rot, _ := store.LastRotation()
-	if rot.ToExitIP != "2.2.2.2" {
-		t.Errorf("ToExitIP = %q, want 2.2.2.2", rot.ToExitIP)
+	if rot.ToExitIP != "" {
+		t.Errorf("ToExitIP = %q, want it left for Gluetun to fill", rot.ToExitIP)
 	}
 }
 
@@ -469,8 +494,9 @@ func TestSpeedMonitor_SendsNtfyOnRotation(t *testing.T) {
 		t.Fatalf("ntfy Validate: %v", err)
 	}
 
-	f := &fakeDeps{result: SpeedResult{DownloadMbps: 12.5, ExitIP: "1.1.1.1"}}
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 12.5, ExitIP: "45.12.3.9"}}
 	m := NewSpeedMonitor(testSpeedCfg(), ntfy, tempSpeedFile(t), f.runTest, f.active, f.rotate)
+	m.ExitIP = func() (string, bool) { return "1.1.1.1", true }
 
 	m.tick(context.Background())
 
@@ -483,7 +509,10 @@ func TestSpeedMonitor_SendsNtfyOnRotation(t *testing.T) {
 			t.Error("Title header is empty")
 		}
 		if !contains(c.body, "1.1.1.1") {
-			t.Errorf("body = %q, want it to mention the exit IP", c.body)
+			t.Errorf("body = %q, want it to mention Gluetun's exit IP", c.body)
+		}
+		if contains(c.body, "45.12.3.9") {
+			t.Errorf("body = %q, want it to not use speedtest.net's view of the exit", c.body)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("no ntfy notification sent on rotation")
@@ -667,4 +696,196 @@ func TestSpeedMonitor_TriggerRefusedDuringScheduledMeasurement(t *testing.T) {
 	cancel()
 	close(release)
 	<-done
+}
+
+// Every measurement is stamped with Gluetun's own view of the exit at the time
+// it was taken, so a row can be read against the tunnel it went over rather
+// than against whatever address speedtest.net saw through the proxy.
+func TestSpeedMonitor_StampsGluetunExitIPOnResults(t *testing.T) {
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 400, ExitIP: "45.12.3.9"}}
+	m, store := newTestMonitor(t, testSpeedCfg(), f)
+	m.ExitIP = func() (string, bool) { return "185.9.9.9", true }
+
+	m.tick(context.Background())
+	m.measureNow(context.Background())
+
+	results := store.GetResults()
+	if len(results) != 2 {
+		t.Fatalf("stored %d results, want 2", len(results))
+	}
+	for i, r := range results {
+		if r.GluetunExitIP != "185.9.9.9" {
+			t.Errorf("results[%d].GluetunExitIP = %q, want Gluetun's 185.9.9.9", i, r.GluetunExitIP)
+		}
+		if r.ExitIP != "45.12.3.9" {
+			t.Errorf("results[%d].ExitIP = %q, want speedtest.net's own view kept", i, r.ExitIP)
+		}
+	}
+}
+
+// No Gluetun to ask, or one that has not answered yet, leaves the field empty
+// rather than borrowing speedtest.net's address for it.
+func TestSpeedMonitor_LeavesGluetunExitIPEmptyWhenUnknown(t *testing.T) {
+	tests := []struct {
+		name   string
+		exitIP exitIPFunc
+	}{
+		{name: "measure-only", exitIP: nil},
+		{name: "gluetun silent", exitIP: func() (string, bool) { return "", false }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeDeps{result: SpeedResult{DownloadMbps: 400, ExitIP: "45.12.3.9"}}
+			m, store := newTestMonitor(t, testSpeedCfg(), f)
+			m.ExitIP = tt.exitIP
+
+			m.tick(context.Background())
+
+			results := store.GetResults()
+			if len(results) != 1 {
+				t.Fatalf("stored %d results, want 1", len(results))
+			}
+			if results[0].GluetunExitIP != "" {
+				t.Errorf("GluetunExitIP = %q, want empty", results[0].GluetunExitIP)
+			}
+		})
+	}
+}
+
+// ---- rotation notes ----
+
+// A measurement that missed a throughput floor carries the policy's verdict, so
+// a slow row on the page says whether it cost a rotation and, if not, what
+// stopped it. Rows that met the floors have no story and stay blank.
+func TestSpeedMonitor_RotationNotes(t *testing.T) {
+	twoHoursAgo := time.Now().Add(-2 * time.Hour)
+
+	tests := []struct {
+		name           string
+		download       float64
+		skipWhenActive bool
+		active         int
+		activeErr      error
+		rotateRefuse   bool
+		rotations      []RotationEvent
+		wantNoteHas    string // "" means the row must carry no note at all
+		wantRotations  int    // rotations staged by this tick
+	}{
+		{
+			name:          "rotation requested",
+			download:      12.5,
+			wantNoteHas:   "rotation requested",
+			wantRotations: 1,
+		},
+		{
+			name:        "fast enough says nothing",
+			download:    400,
+			wantNoteHas: "",
+		},
+		{
+			name:     "daily cap reached",
+			download: 12.5,
+			// Older than the 2h cooldown, so the cap is what blocks it.
+			rotations: []RotationEvent{
+				{At: twoHoursAgo.Add(-time.Hour), Source: RotationSourceSpeedtest},
+				{At: twoHoursAgo.Add(-time.Hour), Source: RotationSourceSpeedtest},
+				{At: twoHoursAgo.Add(-time.Hour), Source: RotationSourceSpeedtest},
+				{At: twoHoursAgo.Add(-time.Hour), Source: RotationSourceSpeedtest},
+				{At: twoHoursAgo.Add(-time.Hour), Source: RotationSourceSpeedtest},
+				{At: twoHoursAgo.Add(-time.Hour), Source: RotationSourceSpeedtest},
+			},
+			wantNoteHas: "max 6",
+		},
+		{
+			name:        "cooldown",
+			download:    12.5,
+			rotations:   []RotationEvent{{At: time.Now().Add(-10 * time.Minute)}},
+			wantNoteHas: "cooldown",
+		},
+		{
+			name:        "active downloads block the rotation",
+			download:    12.5,
+			active:      2,
+			wantNoteHas: "2 torrent(s) downloading",
+		},
+		{
+			name:        "unknown torrent count blocks the rotation",
+			download:    12.5,
+			activeErr:   errors.New("rpc down"),
+			wantNoteHas: "could not check",
+		},
+		{
+			name:         "another rotation already under way",
+			download:     12.5,
+			rotateRefuse: true,
+			wantNoteHas:  "already in progress",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testSpeedCfg()
+			cfg.SkipWhenActive = tt.skipWhenActive
+			f := &fakeDeps{
+				result:          SpeedResult{DownloadMbps: tt.download},
+				activeDownloads: tt.active,
+				activeErr:       tt.activeErr,
+				rotateRefuse:    tt.rotateRefuse,
+			}
+			m, store := newTestMonitor(t, cfg, f)
+			for _, e := range tt.rotations {
+				store.AddRotation(e)
+			}
+			before := len(store.GetRotations())
+
+			m.tick(context.Background())
+
+			results := store.GetResults()
+			if len(results) != 1 {
+				t.Fatalf("stored %d results, want 1", len(results))
+			}
+			note := results[0].RotationNote
+			switch {
+			case tt.wantNoteHas == "" && note != "":
+				t.Errorf("RotationNote = %q, want none", note)
+			case tt.wantNoteHas != "" && !strings.Contains(note, tt.wantNoteHas):
+				t.Errorf("RotationNote = %q, want it to mention %q", note, tt.wantNoteHas)
+			}
+			if got := len(store.GetRotations()) - before; got != tt.wantRotations {
+				t.Errorf("staged %d rotations, want %d", got, tt.wantRotations)
+			}
+		})
+	}
+}
+
+// Measure-only deployments have no rotation policy, so a slow row there must not
+// claim one was considered.
+func TestSpeedMonitor_NoRotationNoteWithoutRotateFunc(t *testing.T) {
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 12.5}}
+	store := tempSpeedFile(t)
+	m := NewSpeedMonitor(testSpeedCfg(), NtfyConfig{}, store, f.runTest, f.active, nil)
+
+	m.tick(context.Background())
+
+	if note := store.GetResults()[0].RotationNote; note != "" {
+		t.Errorf("RotationNote = %q in measure-only mode, want none", note)
+	}
+}
+
+// The page's "Run speedtest now" button never rotates by design, so a slow row
+// from one says that rather than leaving the reader to guess.
+func TestSpeedMonitor_MeasureNowSaysItNeverRotates(t *testing.T) {
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 12.5}}
+	m, store := newTestMonitor(t, testSpeedCfg(), f)
+
+	m.measureNow(context.Background())
+
+	note := store.GetResults()[0].RotationNote
+	if !strings.Contains(note, "on-demand") {
+		t.Errorf("RotationNote = %q, want it to say the run was on-demand", note)
+	}
+	if len(store.GetRotations()) != 0 {
+		t.Error("measureNow staged a rotation")
+	}
 }

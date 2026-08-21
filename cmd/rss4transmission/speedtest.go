@@ -42,9 +42,22 @@ type SpeedResult struct {
 	ServerID     string    `json:"ServerID,omitempty"`
 	ServerName   string    `json:"ServerName,omitempty"`
 	Sponsor      string    `json:"Sponsor,omitempty"`
-	ExitIP       string    `json:"ExitIP,omitempty"`
-	Error        string    `json:"Error,omitempty"`
-	Skipped      string    `json:"Skipped,omitempty"`
+	// ExitIP is speedtest.net's view of the connection through Gluetun's proxy,
+	// and GluetunExitIP is what Gluetun said about itself when the measurement
+	// was recorded (empty in measure-only mode, or before Gluetun first
+	// answered). They are kept apart rather than reconciled: providers that NAT
+	// per destination hand speedtest.net a different address over the very same
+	// tunnel, so a change in ExitIP alone is not a rotation.
+	ExitIP        string `json:"ExitIP,omitempty"`
+	GluetunExitIP string `json:"GluetunExitIP,omitempty"`
+	Error         string `json:"Error,omitempty"`
+	Skipped       string `json:"Skipped,omitempty"`
+	// RotationNote is what the rotation policy did about a measurement that
+	// missed a throughput floor: "rotation requested", or "no rotation: ..."
+	// naming what stopped it. It is empty for a run that met the floors, one
+	// that measured nothing, and in measure-only mode -- in all of which there
+	// is no verdict to report.
+	RotationNote string `json:"RotationNote,omitempty"`
 }
 
 // OK reports whether this result carries a usable measurement.
@@ -64,6 +77,16 @@ type (
 	activeDownloadsFunc func(ctx context.Context) (int, error)
 	rotateRequestFunc   func(source, reason string) bool
 )
+
+// rotationDecision is what the rotation policy concluded about one measurement.
+// Note is filled in only when the policy declined: it is the human-readable
+// verdict the measurements table shows, and it exists so a slow row can say
+// what stopped the rotation rather than only that none happened.
+type rotationDecision struct {
+	Rotate bool
+	Reason string // why it should rotate; empty unless Rotate
+	Note   string // what happened, for SpeedResult.RotationNote
+}
 
 // belowThreshold reports which throughput floor this result missed, or "" when
 // it met them all. Download is tested first: it is the more common failure and
@@ -94,24 +117,26 @@ func belowThreshold(cfg SpeedTestConfig, r SpeedResult) string {
 // lastRotation is the zero time when we have never rotated.
 func shouldRotate(cfg SpeedTestConfig, r SpeedResult, lastRotation time.Time,
 	rotationsToday int, now time.Time,
-) (bool, string) {
+) rotationDecision {
 	// A failed or skipped run measured nothing. Its zero DownloadMbps must
 	// never be read as "the link is slow", or every proxy hiccup would
 	// restart the VPN.
 	if !r.OK() {
-		return false, ""
+		return rotationDecision{}
 	}
 
 	reason := belowThreshold(cfg, r)
 	if reason == "" {
-		return false, ""
+		return rotationDecision{}
 	}
 
 	if !lastRotation.IsZero() {
 		if cooldown := cfg.CooldownDuration(); now.Sub(lastRotation) < cooldown {
+			ago := now.Sub(lastRotation).Round(time.Second)
 			log.Infof("Speedtest: %s, but last rotation was %s ago (cooldown %s); not rotating",
-				reason, now.Sub(lastRotation).Round(time.Second), cooldown)
-			return false, ""
+				reason, ago, cooldown)
+			return rotationDecision{Note: fmt.Sprintf(
+				"no rotation: in cooldown, last was %s ago (cooldown %s)", ago, cooldown)}
 		}
 	}
 
@@ -120,10 +145,12 @@ func shouldRotate(cfg SpeedTestConfig, r SpeedResult, lastRotation time.Time,
 	if cfg.MaxRotationsPerDay > 0 && rotationsToday >= cfg.MaxRotationsPerDay {
 		log.Infof("Speedtest: %s, but already rotated %d times in the last 24h (max %d); not rotating",
 			reason, rotationsToday, cfg.MaxRotationsPerDay)
-		return false, ""
+		return rotationDecision{Note: fmt.Sprintf(
+			"no rotation: %d automatic rotations in the last 24h (max %d)",
+			rotationsToday, cfg.MaxRotationsPerDay)}
 	}
 
-	return true, reason
+	return rotationDecision{Rotate: true, Reason: reason}
 }
 
 // SpeedMonitor periodically measures throughput over the VPN and asks Gluetun
@@ -140,6 +167,16 @@ type SpeedMonitor struct {
 	active   activeDownloadsFunc
 	rotate   rotateRequestFunc // nil => measure-only, no Gluetun configured
 	interval time.Duration
+
+	// ExitIP reports which exit Gluetun says we are on, for the rotation alert
+	// that names the exit we are leaving. It is set after construction (like
+	// Gluetun.OnRotated) because the port monitor that caches it is built
+	// separately; nil, or unknown, simply leaves the exit out of the alert.
+	//
+	// A measurement's own ExitIP is not a substitute: that is speedtest.net's
+	// view through the proxy, which on some providers drifts per destination
+	// over a tunnel that never moved.
+	ExitIP exitIPFunc
 
 	trigger chan struct{} // buffered(1): an out-of-band measurement request
 
@@ -232,13 +269,15 @@ func (m *SpeedMonitor) Run(ctx context.Context) {
 // tick performs one scheduled measure-and-decide cycle: gated by
 // SkipWhenActive, and its result feeds the rotation policy.
 func (m *SpeedMonitor) tick(ctx context.Context) {
-	result, canRotate := m.measure(ctx, m.cfg.SkipWhenActive)
-	m.record(result)
+	result, blocked := m.measure(ctx, m.cfg.SkipWhenActive)
 
-	if canRotate && m.rotate != nil {
-		m.decide(result)
+	// decide() runs before record() so its verdict is stored on the row it
+	// describes; in measure-only mode there is no policy to report on.
+	if m.rotate != nil {
+		result.RotationNote = m.decide(result, blocked)
 	}
 
+	m.record(result)
 	m.save()
 }
 
@@ -249,18 +288,40 @@ func (m *SpeedMonitor) tick(ctx context.Context) {
 // restart the user did not ask for.
 func (m *SpeedMonitor) measureNow(ctx context.Context) {
 	result, _ := m.measure(ctx, false)
+	// Never rotates, so a slow row from here says as much: otherwise it looks
+	// identical to a scheduled run whose rotation was silently declined.
+	if m.rotate != nil && result.OK() && belowThreshold(m.cfg, result) != "" {
+		result.RotationNote = "no rotation: on-demand measurement"
+	}
 	m.record(result)
 	m.save()
 }
 
-// record stores a result and backfills the exit IP of the previous rotation,
-// so a rotation that landed back on the same server is visible rather than
-// silent.
+// record stores a result.
+//
+// It deliberately does not touch the rotation history: a measurement's ExitIP
+// is speedtest.net's view, and only Gluetun can say which exit a rotation
+// actually landed on. vpnRotatedHook fills that in.
 func (m *SpeedMonitor) record(result SpeedResult) {
+	// Stamped here rather than in the runner: the runner talks to speedtest.net
+	// through the proxy and has no way to ask Gluetun anything. The value is the
+	// port monitor's cache, so it can be up to one check (5 minutes) old --
+	// close enough to attribute a measurement to a tunnel, since a rotation
+	// refreshes it.
+	result.GluetunExitIP = m.currentExitIP()
 	m.store.AddResult(result)
-	if result.OK() {
-		m.store.RecordExitIP(result.ExitIP)
+}
+
+// currentExitIP returns Gluetun's view of the exit we are on, or "" when there
+// is no Gluetun to ask or it has not answered yet.
+func (m *SpeedMonitor) currentExitIP() string {
+	if m.ExitIP == nil {
+		return ""
 	}
+	if ip, known := m.ExitIP(); known {
+		return ip
+	}
+	return ""
 }
 
 func (m *SpeedMonitor) save() {
@@ -273,26 +334,28 @@ func (m *SpeedMonitor) save() {
 // is passed in rather than read from the config so both callers are explicit:
 // the scheduled path honors the setting, the manual one never does.
 //
-// The second return value reports whether the result may be acted on: when we
-// could not determine whether torrents are active we still measure, but refuse
-// to rotate, since rotating blind could interrupt an active download.
-func (m *SpeedMonitor) measure(ctx context.Context, skipWhenActive bool) (SpeedResult, bool) {
-	canRotate := true
+// The second return value is why this run may not rotate, or "" when it may:
+// when we could not determine whether torrents are active we still measure but
+// refuse to rotate, since rotating blind could interrupt an active download. It
+// is phrased for display -- decide() puts it on the measurement so the page can
+// say what stopped the rotation.
+func (m *SpeedMonitor) measure(ctx context.Context, skipWhenActive bool) (SpeedResult, string) {
+	blocked := ""
 
 	if m.active != nil {
 		n, err := m.active(ctx)
 		switch {
 		case err != nil:
 			log.WithError(err).Warn("Unable to check for active torrents; will measure but not rotate")
-			canRotate = false
+			blocked = "could not check for active downloads"
 		case n > 0 && skipWhenActive:
 			// Testing during a download both steals bandwidth from the
 			// download and reads low because of it.
 			reason := fmt.Sprintf("%d torrent(s) downloading", n)
 			log.Infof("Speedtest: skipping, %s", reason)
-			return SpeedResult{At: time.Now(), Skipped: reason}, false
+			return SpeedResult{At: time.Now(), Skipped: reason}, reason
 		case n > 0:
-			canRotate = false
+			blocked = fmt.Sprintf("%d torrent(s) downloading", n)
 		}
 	}
 
@@ -301,18 +364,31 @@ func (m *SpeedMonitor) measure(ctx context.Context, skipWhenActive bool) (SpeedR
 	if err != nil {
 		log.WithError(err).Warn("Speedtest failed")
 		result.Error = err.Error()
-		return result, false
+		return result, "the measurement failed"
 	}
 
 	log.Infof("Speedtest: %.1f Mbps down, %.1f Mbps up, %.0f ms latency via %s (exit %s)",
 		result.DownloadMbps, result.UploadMbps, result.LatencyMs, result.ServerName, result.ExitIP)
 
-	return result, canRotate
+	return result, blocked
 }
 
 // decide applies the rotation policy to a fresh result and, when it says so,
 // records the event and asks Gluetun to rotate.
-func (m *SpeedMonitor) decide(result SpeedResult) {
+//
+// blocked is why this particular run may not rotate whatever the policy says
+// ("" when it may). The returned string is the verdict to store on the
+// measurement; see SpeedResult.RotationNote.
+func (m *SpeedMonitor) decide(result SpeedResult, blocked string) string {
+	// Only a run that actually missed a floor has a rotation story: everything
+	// else would be reporting on a decision that was never in play.
+	if !result.OK() || belowThreshold(m.cfg, result) == "" {
+		return ""
+	}
+	if blocked != "" {
+		return "no rotation: " + blocked
+	}
+
 	var lastRotation time.Time
 	if last, ok := m.store.LastRotation(); ok {
 		lastRotation = last.At
@@ -322,34 +398,38 @@ func (m *SpeedMonitor) decide(result SpeedResult) {
 	// the rotation is worth it.
 	rotationsToday := m.store.AutomaticRotationsSince(time.Now().Add(-24 * time.Hour))
 
-	rotate, reason := shouldRotate(m.cfg, result, lastRotation, rotationsToday, time.Now())
-	if !rotate {
-		return
+	decision := shouldRotate(m.cfg, result, lastRotation, rotationsToday, time.Now())
+	if !decision.Rotate {
+		return decision.Note
 	}
 
-	log.Warnf("Speedtest: requesting VPN rotation: %s", reason)
-	if !m.rotate(RotationSourceSpeedtest, reason) {
+	log.Warnf("Speedtest: requesting VPN rotation: %s", decision.Reason)
+	if !m.rotate(RotationSourceSpeedtest, decision.Reason) {
 		// A rotation is already pending or under way, so this measurement
 		// changed nothing and must not be recorded or alerted as if it had.
 		log.Info("Speedtest: a VPN rotation is already in progress; not requesting another")
-		return
+		return "no rotation: one is already in progress"
 	}
 
 	// Staged rather than recorded outright: all we know so far is that the
 	// rotation was asked for. vpnRotatedHook fills in where it landed once
-	// Gluetun reports the tunnel back up.
+	// Gluetun reports the tunnel back up, and replaces the exit below with the
+	// one rotate() reads immediately before dropping the tunnel.
+	exitIP := m.currentExitIP()
 	m.store.StageRotation(RotationEvent{
 		At:         time.Now(),
 		Source:     RotationSourceSpeedtest,
-		Reason:     reason,
+		Reason:     decision.Reason,
 		BeforeMbps: result.DownloadMbps,
-		FromExitIP: result.ExitIP,
+		FromExitIP: exitIP,
 	})
 	notifyVpnRotating(m.ntfy, &NtfyVpnContext{
-		Reason:       reason,
+		Reason:       decision.Reason,
 		DownloadMbps: result.DownloadMbps,
-		ExitIP:       result.ExitIP,
+		ExitIP:       exitIP,
 	})
+
+	return "rotation requested"
 }
 
 // validateProxyURL rejects a proxy value speedtest-go would mishandle.

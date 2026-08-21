@@ -27,6 +27,13 @@ type PortMonitor struct {
 	mu       sync.Mutex // serializes check() (incl. Gluetun struct access) and lastOpen
 	lastOpen *bool      // nil until the first check
 
+	// lastPublicIP is the exit IP Gluetun last reported for itself, refreshed
+	// on every check. The VPN page reads it through LastPublicIP rather than
+	// querying Gluetun from the HTTP goroutine: Gluetun has no locking of its
+	// own, and everything that touches it is serialized by mu.
+	lastPublicIP string
+	publicIPErr  bool // the last refresh failed; used to log the transition once
+
 	trigger chan struct{} // buffered(1): an out-of-band check request
 }
 
@@ -105,6 +112,11 @@ func (m *PortMonitor) check() (bool, error) {
 	} else {
 		open, err = m.Transmission.PortTest(context.TODO())
 	}
+	// Refreshed before the error return: a flaky port-test says nothing about
+	// which exit we are on, and blanking the IP because of one would make the
+	// VPN page look like the tunnel went away.
+	m.refreshPublicIP()
+
 	if err != nil {
 		return false, err
 	}
@@ -125,6 +137,49 @@ func (m *PortMonitor) check() (bool, error) {
 	m.lastOpen = &open
 
 	return open, nil
+}
+
+// refreshPublicIP asks Gluetun which exit it is on and caches the answer. It
+// must be called with m.mu held.
+//
+// A failed query keeps the previous address: an unreachable control server (or
+// an API key whose role does not cover the publicip route) says nothing about
+// whether the tunnel moved, and showing a blank exit IP would read as one. For
+// the same reason the failure is logged only on the transition into it --
+// otherwise a permanently missing route would warn every portCheckInterval
+// forever.
+func (m *PortMonitor) refreshPublicIP() {
+	if m.Gluetun == nil {
+		return
+	}
+
+	ip, err := m.Gluetun.getPublicIp()
+	if err != nil {
+		if !m.publicIPErr {
+			log.WithError(err).Warn("Unable to read the VPN exit IP from Gluetun")
+			m.publicIPErr = true
+		}
+		return
+	}
+	m.publicIPErr = false
+
+	if ip != "" {
+		m.lastPublicIP = ip
+	}
+}
+
+// LastPublicIP reports the VPN exit IP Gluetun last claimed for itself. known
+// is false until the first successful query, and always when Gluetun is not
+// configured, so callers can say "not known yet" rather than render an empty
+// address as fact.
+//
+// This is deliberately not the exit IP a speedtest observed: some providers NAT
+// per destination, so speedtest.net's view drifts over a tunnel that never
+// moved.
+func (m *PortMonitor) LastPublicIP() (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastPublicIP, m.lastPublicIP != ""
 }
 
 // LastOpen reports the peer-port state observed by the most recent check.

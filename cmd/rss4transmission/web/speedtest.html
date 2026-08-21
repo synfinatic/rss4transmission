@@ -24,6 +24,7 @@
         #summary div { display: flex; flex-direction: column; gap: 0.2em; }
         #summary .label { color: #888; font-size: 0.8em; text-transform: uppercase; }
         #summary .value { color: #e0e0e0; font-size: 1.3em; }
+        #summary .source { color: #888; font-size: 0.65em; }
 
         table { border-collapse: collapse; width: 100%; }
         th, td { text-align: left; padding: 4px 10px; border-bottom: 1px solid #333; }
@@ -95,7 +96,7 @@
         {{- end }}
         <div>
             <span class="label">Exit IP</span>
-            <span class="value">{{ if .ExitIP }}{{ .ExitIP }}{{ else }}&mdash;{{ end }}</span>
+            <span class="value">{{ if .ExitIP }}{{ .ExitIP }}{{ if .ExitIPSource }} <span class="source">({{ .ExitIPSource }})</span>{{ end }}{{ else }}&mdash;{{ end }}</span>
         </div>
         <div>
             <span class="label">Rotations</span>
@@ -126,7 +127,8 @@
             <th class="num">Latency</th>
             <th class="num">Jitter</th>
             <th>Server</th>
-            <th>Exit IP</th>
+            <th>Exit IP (Gluetun)</th>
+            <th>Exit IP (speedtest.net)</th>
             <th>Detail</th>
         </tr>
         {{- range .Rows }}
@@ -145,8 +147,13 @@
             <td class="num muted">&mdash;</td>
             {{- end }}
             <td>{{ if .ServerName }}{{ .ServerName }}{{ if .Sponsor }} ({{ .Sponsor }}){{ end }}{{ else }}&mdash;{{ end }}</td>
+            <td>{{ if .GluetunExitIP }}{{ .GluetunExitIP }}{{ else }}&mdash;{{ end }}</td>
+            {{- if .SameExitIP }}
+            <td class="muted">same</td>
+            {{- else }}
             <td>{{ if .ExitIP }}{{ .ExitIP }}{{ else }}&mdash;{{ end }}</td>
-            <td class="{{ .Status }}">{{ if .Error }}{{ .Error }}{{ else if .Skipped }}{{ .Skipped }}{{ end }}</td>
+            {{- end }}
+            <td class="{{ .Status }}">{{ if .Error }}{{ .Error }}{{ else if .Skipped }}{{ .Skipped }}{{ else }}{{ .RotationNote }}{{ end }}</td>
         </tr>
         {{- end }}
     </table>

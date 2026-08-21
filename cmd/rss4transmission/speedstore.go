@@ -61,8 +61,11 @@ const (
 
 // RotationEvent records a VPN rotation.
 //
-// ToExitIP is empty when Gluetun could not report the new exit; the next
-// successful measurement backfills it. With a narrow Gluetun server filter
+// Both IPs come from Gluetun's /v1/publicip/ip, read either side of the
+// restart, and stay empty when it could not answer -- nothing backfills them
+// later. A measurement's own ExitIP is not a stand-in: that is speedtest.net's
+// view through the proxy, which on some providers drifts per destination over a
+// tunnel that never moved. With a narrow Gluetun server filter
 // (e.g. SERVER_CITIES=Los Angeles) a restart can reconnect to the same server,
 // so ToExitIP == FromExitIP is the signal that rotating isn't actually buying
 // anything.
@@ -133,7 +136,11 @@ func (s *SpeedFile) CompleteRotation(source, reason, fromIP, toIP string) {
 
 	if s.staged && len(s.Rotations) > 0 {
 		last := &s.Rotations[len(s.Rotations)-1]
-		if last.FromExitIP == "" {
+		// fromIP was read immediately before the tunnel came down, so it beats
+		// the address staged at request time -- which came from the port
+		// monitor's cache and can be a check old. An empty one means the lookup
+		// failed, in which case the staged value is the better of the two.
+		if fromIP != "" {
 			last.FromExitIP = fromIP
 		}
 		last.ToExitIP = toIP
@@ -212,24 +219,6 @@ func (s *SpeedFile) LastRotation() (RotationEvent, bool) {
 		return RotationEvent{}, false
 	}
 	return s.Rotations[len(s.Rotations)-1], true
-}
-
-// RecordExitIP backfills the exit IP observed after the most recent rotation.
-// Only the first observation counts -- later measurements describe the same
-// tunnel, and overwriting would hide a rotation that changed nothing.
-func (s *SpeedFile) RecordExitIP(ip string) {
-	if ip == "" {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.Rotations) == 0 {
-		return
-	}
-	last := &s.Rotations[len(s.Rotations)-1]
-	if last.ToExitIP == "" {
-		last.ToExitIP = ip
-	}
 }
 
 // GetResults returns a copy of the results, safe for a handler to render while
