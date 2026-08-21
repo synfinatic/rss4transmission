@@ -314,3 +314,37 @@ func TestVpnRotatedHook_RecordsUnstagedRotation(t *testing.T) {
 		t.Errorf("sent %d notifications, want 1", len(*titles))
 	}
 }
+
+// PortCheck alone builds a port monitor with no Gluetun behind it, so its
+// LastPublicIP can only ever answer "unknown". Handing that to the page would
+// suppress the fallback to the last measurement and leave the Exit IP tile
+// empty, so a measure-only deployment must get no source at all.
+func TestExitIPSource_NilWithoutGluetun(t *testing.T) {
+	m := NewPortMonitor(nil, nil, NtfyConfig{})
+
+	if got := exitIPSource(nil, m); got != nil {
+		t.Error("exitIPSource() with no Gluetun is non-nil, want nil so the page can fall back")
+	}
+}
+
+func TestExitIPSource_ReadsThePortMonitorsCache(t *testing.T) {
+	g := &Gluetun{URL: "http://gluetun:8000"}
+	m := NewPortMonitor(nil, g, NtfyConfig{})
+	m.lastPublicIP = "185.9.9.9"
+
+	f := exitIPSource(g, m)
+	if f == nil {
+		t.Fatal("exitIPSource() = nil with Gluetun configured")
+	}
+	ip, known := f()
+	if !known || ip != "185.9.9.9" {
+		t.Errorf("exitIPSource()() = (%q, %v), want (185.9.9.9, true)", ip, known)
+	}
+}
+
+// No port monitor means nothing is polling Gluetun, whatever the config says.
+func TestExitIPSource_NilWithoutPortMonitor(t *testing.T) {
+	if got := exitIPSource(&Gluetun{URL: "http://gluetun:8000"}, nil); got != nil {
+		t.Error("exitIPSource() with no port monitor is non-nil, want nil")
+	}
+}

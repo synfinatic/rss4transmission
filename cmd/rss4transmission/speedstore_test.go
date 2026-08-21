@@ -173,8 +173,6 @@ func TestSpeedFile_LastRotation(t *testing.T) {
 	}
 }
 
-// ToExitIP is backfilled by the next successful measurement, which is how we
-// detect that a rotation landed back on the same server.
 // The SpeedMonitor goroutine writes while web handlers read; unlike CacheFile
 // there is no external lock serializing them, so SpeedFile must be self-synchronized.
 func TestSpeedFile_ConcurrentAccess(t *testing.T) {

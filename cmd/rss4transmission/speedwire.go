@@ -154,6 +154,22 @@ func newSpeedActions(ctx *RunContext, monitor *SpeedMonitor, g *Gluetun, portMon
 	return actions
 }
 
+// exitIPSource returns where the VPN page reads Gluetun's own view of the exit
+// IP, or nil when there is nothing to read it from.
+//
+// nil matters as much as the func does: the page treats a source that answers
+// "unknown" as Gluetun not having replied yet and leaves the tile empty rather
+// than substituting speedtest.net's view. PortCheck on its own still builds a
+// port monitor, but one with no Gluetun to poll, so its LastPublicIP could only
+// ever answer "unknown" -- handing that to the page would blank the tile in a
+// measure-only deployment instead of falling back to the last measurement.
+func exitIPSource(g *Gluetun, m *PortMonitor) exitIPFunc {
+	if g == nil || m == nil {
+		return nil
+	}
+	return m.LastPublicIP
+}
+
 // vpnRotatedHook builds the callback Gluetun invokes once a rotation has
 // completed and the tunnel is back up. It answers the question the request-time
 // alert cannot: which exit are we on now.

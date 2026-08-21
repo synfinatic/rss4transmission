@@ -425,7 +425,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		ctx.PeerPortOpen = portMonitor.LastOpen
 		// Set before startSpeedMonitor: that is what builds the SpeedMonitor,
 		// which reads it for the exit IP its rotation alerts name.
-		ctx.ExitIP = portMonitor.LastPublicIP
+		ctx.ExitIP = exitIPSource(g, portMonitor)
 	}
 
 	monitor := startSpeedMonitor(ctx, g)
