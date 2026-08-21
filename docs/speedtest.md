@@ -156,6 +156,13 @@ With `SkipWhenActive: true` (the default), no measurement is taken at all while 
 downloading, so an active download can never be interrupted by a rotation. Seeding is **not**
 protected — a rotation always drops the tunnel and changes the forwarded peer port.
 
+Every measurement that missed a floor records what the policy did about it, shown in the
+measurements table's **Detail** column: `rotation requested`, or `no rotation:` followed by what
+stopped it — in cooldown, the daily cap, torrents downloading, an unreadable torrent count, a
+rotation already under way, or an on-demand run (the **Run speedtest now** button never rotates).
+Rows that met the floors have no verdict and stay blank, and a failed or skipped run shows its own
+reason instead.
+
 Note that with a narrow server filter such as `SERVER_CITIES=Los Angeles`, a restart can land on
 the same server. The `/speedtest` page flags rotations whose exit IP did not change, which is the
 signal to widen the filter rather than to rotate more. Both ends of that comparison come from

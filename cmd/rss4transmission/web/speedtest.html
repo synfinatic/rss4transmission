@@ -153,7 +153,7 @@
             {{- else }}
             <td>{{ if .ExitIP }}{{ .ExitIP }}{{ else }}&mdash;{{ end }}</td>
             {{- end }}
-            <td class="{{ .Status }}">{{ if .Error }}{{ .Error }}{{ else if .Skipped }}{{ .Skipped }}{{ end }}</td>
+            <td class="{{ .Status }}">{{ if .Error }}{{ .Error }}{{ else if .Skipped }}{{ .Skipped }}{{ else }}{{ .RotationNote }}{{ end }}</td>
         </tr>
         {{- end }}
     </table>

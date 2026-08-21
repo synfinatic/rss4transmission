@@ -641,3 +641,37 @@ func measurementsSection(t *testing.T, body string) string {
 	}
 	return body[start : start+1+end]
 }
+
+// The Detail column carries the rotation verdict for a slow measurement, so a
+// row below the floor is never ambiguous about whether it cost a rotation.
+func TestSpeedTestPage_ShowsRotationNoteInDetail(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{
+		At: time.Now(), DownloadMbps: 12.5,
+		RotationNote: "no rotation: 6 automatic rotations in the last 24h (max 6)",
+	})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+
+	table := measurementsSection(t, body)
+	if !strings.Contains(table, "max 6") {
+		t.Errorf("Detail column does not carry the rotation note\ngot:\n%s", table)
+	}
+}
+
+// An error still wins the Detail cell: a run that never measured has no rotation
+// verdict worth reporting over the reason it failed.
+func TestSpeedTestPage_ErrorOutranksRotationNoteInDetail(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), Error: "proxy refused", RotationNote: "unreachable"})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+
+	table := measurementsSection(t, body)
+	if !strings.Contains(table, "proxy refused") {
+		t.Errorf("Detail column lost the error\ngot:\n%s", table)
+	}
+	if strings.Contains(table, "unreachable") {
+		t.Errorf("Detail column showed a rotation note over the error\ngot:\n%s", table)
+	}
+}
