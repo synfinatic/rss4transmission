@@ -50,6 +50,10 @@ type exitIPFunc func() (ip string, known bool)
 type speedPageRow struct {
 	SpeedResult
 	Status string // "ok", "skipped" or "error"
+	// SameExitIP is true when Gluetun and speedtest.net named the same address,
+	// which is the uninteresting case: the row then prints it once rather than
+	// twice, so the eye is drawn only to the rows where the two disagree.
+	SameExitIP bool
 }
 
 // speedPageRotation is one rotation event plus whether it actually moved us.
@@ -216,7 +220,11 @@ func buildSpeedPageData(speed *SpeedFile, exitIP exitIPFunc) speedPageData {
 		case r.Skipped != "":
 			status = "skipped"
 		}
-		data.Rows = append(data.Rows, speedPageRow{SpeedResult: r, Status: status})
+		data.Rows = append(data.Rows, speedPageRow{
+			SpeedResult: r,
+			Status:      status,
+			SameExitIP:  r.GluetunExitIP != "" && r.GluetunExitIP == r.ExitIP,
+		})
 	}
 
 	if latest, ok := speed.LatestSuccessful(); ok {

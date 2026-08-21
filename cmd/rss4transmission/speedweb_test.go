@@ -564,3 +564,74 @@ func summarySection(t *testing.T, body string) string {
 	}
 	return body[start : start+end]
 }
+
+// A row records both views of the exit: Gluetun's, which is what the tunnel
+// actually is, and speedtest.net's, which on a provider that NATs per
+// destination can be a different address over the very same tunnel.
+func TestSpeedTestPage_ShowsBothExitIPsPerMeasurement(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{
+		At: time.Now(), DownloadMbps: 412.5, ExitIP: "45.12.3.9", GluetunExitIP: "185.9.9.9",
+	})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+
+	table := measurementsSection(t, body)
+	for _, want := range []string{"185.9.9.9", "45.12.3.9", "Gluetun", "speedtest.net"} {
+		if !strings.Contains(table, want) {
+			t.Errorf("measurements table missing %q\ngot:\n%s", want, table)
+		}
+	}
+}
+
+// When the two agree there is nothing to compare, so the row says so instead of
+// printing the same address twice and inviting a second look.
+func TestSpeedTestPage_CollapsesMatchingExitIPs(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{
+		At: time.Now(), DownloadMbps: 412.5, ExitIP: "185.9.9.9", GluetunExitIP: "185.9.9.9",
+	})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+
+	table := measurementsSection(t, body)
+	row := table[strings.Index(table, "<tr>\n            <td>"):]
+	if n := strings.Count(row, "185.9.9.9"); n != 1 {
+		t.Errorf("exit IP rendered %d times in the row, want 1\ngot:\n%s", n, row)
+	}
+	if !strings.Contains(row, "same") {
+		t.Errorf("row does not say the two views agree\ngot:\n%s", row)
+	}
+}
+
+// A measurement taken before Gluetun answered, or in measure-only mode, still
+// renders -- with the Gluetun column blank rather than filled in from the other.
+func TestSpeedTestPage_MeasurementWithoutGluetunExitIP(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 412.5, ExitIP: "45.12.3.9"})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+
+	table := measurementsSection(t, body)
+	if !strings.Contains(table, "45.12.3.9") {
+		t.Errorf("measurements table lost speedtest.net's exit IP\ngot:\n%s", table)
+	}
+	if strings.Contains(table, "same") {
+		t.Errorf("table claims the two views agree when only one exists\ngot:\n%s", table)
+	}
+}
+
+// measurementsSection returns just the measurements table, so an assertion about
+// a row can't be satisfied by the summary tiles or the rotations table.
+func measurementsSection(t *testing.T, body string) string {
+	t.Helper()
+	start := strings.Index(body, "<h2>Measurements</h2>")
+	if start < 0 {
+		t.Fatalf("page has no measurements section:\n%s", body)
+	}
+	end := strings.Index(body[start+1:], "<h2>")
+	if end < 0 {
+		t.Fatalf("page has no section after the measurements table:\n%s", body)
+	}
+	return body[start : start+1+end]
+}

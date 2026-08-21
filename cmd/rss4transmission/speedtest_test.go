@@ -697,3 +697,58 @@ func TestSpeedMonitor_TriggerRefusedDuringScheduledMeasurement(t *testing.T) {
 	close(release)
 	<-done
 }
+
+// Every measurement is stamped with Gluetun's own view of the exit at the time
+// it was taken, so a row can be read against the tunnel it went over rather
+// than against whatever address speedtest.net saw through the proxy.
+func TestSpeedMonitor_StampsGluetunExitIPOnResults(t *testing.T) {
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 400, ExitIP: "45.12.3.9"}}
+	m, store := newTestMonitor(t, testSpeedCfg(), f)
+	m.ExitIP = func() (string, bool) { return "185.9.9.9", true }
+
+	m.tick(context.Background())
+	m.measureNow(context.Background())
+
+	results := store.GetResults()
+	if len(results) != 2 {
+		t.Fatalf("stored %d results, want 2", len(results))
+	}
+	for i, r := range results {
+		if r.GluetunExitIP != "185.9.9.9" {
+			t.Errorf("results[%d].GluetunExitIP = %q, want Gluetun's 185.9.9.9", i, r.GluetunExitIP)
+		}
+		if r.ExitIP != "45.12.3.9" {
+			t.Errorf("results[%d].ExitIP = %q, want speedtest.net's own view kept", i, r.ExitIP)
+		}
+	}
+}
+
+// No Gluetun to ask, or one that has not answered yet, leaves the field empty
+// rather than borrowing speedtest.net's address for it.
+func TestSpeedMonitor_LeavesGluetunExitIPEmptyWhenUnknown(t *testing.T) {
+	tests := []struct {
+		name   string
+		exitIP exitIPFunc
+	}{
+		{name: "measure-only", exitIP: nil},
+		{name: "gluetun silent", exitIP: func() (string, bool) { return "", false }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &fakeDeps{result: SpeedResult{DownloadMbps: 400, ExitIP: "45.12.3.9"}}
+			m, store := newTestMonitor(t, testSpeedCfg(), f)
+			m.ExitIP = tt.exitIP
+
+			m.tick(context.Background())
+
+			results := store.GetResults()
+			if len(results) != 1 {
+				t.Fatalf("stored %d results, want 1", len(results))
+			}
+			if results[0].GluetunExitIP != "" {
+				t.Errorf("GluetunExitIP = %q, want empty", results[0].GluetunExitIP)
+			}
+		})
+	}
+}

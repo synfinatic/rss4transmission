@@ -42,9 +42,16 @@ type SpeedResult struct {
 	ServerID     string    `json:"ServerID,omitempty"`
 	ServerName   string    `json:"ServerName,omitempty"`
 	Sponsor      string    `json:"Sponsor,omitempty"`
-	ExitIP       string    `json:"ExitIP,omitempty"`
-	Error        string    `json:"Error,omitempty"`
-	Skipped      string    `json:"Skipped,omitempty"`
+	// ExitIP is speedtest.net's view of the connection through Gluetun's proxy,
+	// and GluetunExitIP is what Gluetun said about itself when the measurement
+	// was recorded (empty in measure-only mode, or before Gluetun first
+	// answered). They are kept apart rather than reconciled: providers that NAT
+	// per destination hand speedtest.net a different address over the very same
+	// tunnel, so a change in ExitIP alone is not a rotation.
+	ExitIP        string `json:"ExitIP,omitempty"`
+	GluetunExitIP string `json:"GluetunExitIP,omitempty"`
+	Error         string `json:"Error,omitempty"`
+	Skipped       string `json:"Skipped,omitempty"`
 }
 
 // OK reports whether this result carries a usable measurement.
@@ -269,6 +276,12 @@ func (m *SpeedMonitor) measureNow(ctx context.Context) {
 // is speedtest.net's view, and only Gluetun can say which exit a rotation
 // actually landed on. vpnRotatedHook fills that in.
 func (m *SpeedMonitor) record(result SpeedResult) {
+	// Stamped here rather than in the runner: the runner talks to speedtest.net
+	// through the proxy and has no way to ask Gluetun anything. The value is the
+	// port monitor's cache, so it can be up to one check (5 minutes) old --
+	// close enough to attribute a measurement to a tunnel, since a rotation
+	// refreshes it.
+	result.GluetunExitIP = m.currentExitIP()
 	m.store.AddResult(result)
 }
 

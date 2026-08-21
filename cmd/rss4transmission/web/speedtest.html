@@ -127,6 +127,7 @@
             <th class="num">Latency</th>
             <th class="num">Jitter</th>
             <th>Server</th>
+            <th>Exit IP (Gluetun)</th>
             <th>Seen by speedtest.net</th>
             <th>Detail</th>
         </tr>
@@ -146,7 +147,12 @@
             <td class="num muted">&mdash;</td>
             {{- end }}
             <td>{{ if .ServerName }}{{ .ServerName }}{{ if .Sponsor }} ({{ .Sponsor }}){{ end }}{{ else }}&mdash;{{ end }}</td>
+            <td>{{ if .GluetunExitIP }}{{ .GluetunExitIP }}{{ else }}&mdash;{{ end }}</td>
+            {{- if .SameExitIP }}
+            <td class="muted">same</td>
+            {{- else }}
             <td>{{ if .ExitIP }}{{ .ExitIP }}{{ else }}&mdash;{{ end }}</td>
+            {{- end }}
             <td class="{{ .Status }}">{{ if .Error }}{{ .Error }}{{ else if .Skipped }}{{ .Skipped }}{{ end }}</td>
         </tr>
         {{- end }}
