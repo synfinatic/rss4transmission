@@ -40,6 +40,13 @@ import (
 //go:embed web/history.html
 var historyTmpl string
 
+// navTmpl is the nav bar every page shares. It is parsed into each page's
+// template set alongside the page itself, and needs a speedtestEnabled func in
+// that set's FuncMap to decide whether the VPN pages are linked.
+//
+//go:embed web/nav.html
+var navTmpl string
+
 //go:embed web/cancel.html
 var cancelTmpl string
 
@@ -310,7 +317,8 @@ func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name s
 		"sub":              func(a, b int) int { return a - b },
 		"speedtestEnabled": func() bool { return speedtest },
 	}
-	tmpl := template.Must(template.New("history").Funcs(funcMap).Parse(historyTmpl))
+	tmpl := template.Must(template.Must(
+		template.New("history").Funcs(funcMap).Parse(navTmpl)).Parse(historyTmpl))
 
 	mux := http.NewServeMux()
 

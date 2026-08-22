@@ -37,9 +37,10 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
   transitions open/closed or is still closed 60s after startup; notification title, body, and
   priority are user-defined via `text/template` strings in the config file, with full access to
   torrent metadata (labels, size, feed name, GUID, and more)
-- **History web UI** — browsable record of every processed feed item with outcome and extracted
-  labels; skipped, excluded, and error items can be re-submitted to Transmission with a Torrent
-  button
+- **History web UI** — the **Torrents** page: a browsable record of every processed feed item with
+  outcome and extracted labels; skipped, excluded, and error items can be re-submitted to
+  Transmission with a Torrent button. Cross-links the **VPN Speed** and **Rotations** pages when
+  speed testing is enabled
 - **Gluetun VPN integration** — automatically restarts the VPN and syncs the peer port into
   Transmission when running behind [Gluetun](https://github.com/qdm12/gluetun); port state is
   polled every 5 minutes and logged/alerted on (also available without Gluetun via

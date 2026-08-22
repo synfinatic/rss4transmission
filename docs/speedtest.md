@@ -164,7 +164,7 @@ Rows that met the floors have no verdict and stay blank, and a failed or skipped
 reason instead.
 
 Note that with a narrow server filter such as `SERVER_CITIES=Los Angeles`, a restart can land on
-the same server. The `/speedtest` page flags rotations whose exit IP did not change, which is the
+the same server. The `/rotations` page flags rotations whose exit IP did not change, which is the
 signal to widen the filter rather than to rotate more. Both ends of that comparison come from
 Gluetun, read either side of the restart, so an unchanged pair really does mean an unchanged
 tunnel.
@@ -184,7 +184,7 @@ There are two different answers to "which exit are we on", and the `/speedtest` 
 because they do not always agree:
 
 - The **Exit IP** tile is Gluetun's own `GET /v1/publicip/ip`, refreshed on the port monitor's
-  5-minute check. This is the authoritative one, and it is what the rotation log's **From** and
+  5-minute check. This is the authoritative one, and it is what the `/rotations` log's **From** and
   **To** columns record. It is unlabeled because with Gluetun configured it is always Gluetun's
   answer; a measure-only deployment has nothing to ask, so its tile falls back to the last
   measurement and says `(speedtest.net)`.
@@ -209,11 +209,14 @@ the tunnel's peer either. Gluetun's own startup log is the only place that addre
 
 With `--private-listen` set, the private web server serves:
 
-- `GET /speedtest` — recent measurements, the current exit IP as reported by Gluetun, and the
-  rotation log. Every rotation is logged, not only the speedtest-driven ones: the **Source**
-  column reads `speedtest`, `schedule`
-  (`Gluetun.RotateTime` elapsed), `closed-port` (`Gluetun.ClosedPortChecks` exceeded) or `manual`
-  (the page's button). `rss4transmission_vpn_rotations_total` counts all four
+- `GET /speedtest` — recent measurements, the current exit IP as reported by Gluetun, and a
+  **Last rotation** tile giving the date, time and source of the most recent rotation
+- `GET /rotations` — the rotation log, on its own page because measurements arrive every
+  `Interval` while rotations are rare, and one combined page meant scrolling past hours of rows to
+  reach them. Every rotation is logged, not only the speedtest-driven ones: the **Source** column
+  reads `speedtest`, `schedule` (`Gluetun.RotateTime` elapsed), `closed-port`
+  (`Gluetun.ClosedPortChecks` exceeded) or `manual` (the page's button).
+  `rss4transmission_vpn_rotations_total` counts all four
 - `GET /metrics` — Prometheus text format, exposing:
 
 ```
@@ -233,8 +236,9 @@ never scraped as a dead link. `rss4transmission_speedtest_last_run_timestamp_sec
 every attempt including failures, which is how you tell "measuring badly" apart from "stopped
 measuring".
 
-Both endpoints are unauthenticated, like the history page; keep `--private-listen` off the
-public internet.
+All three endpoints are unauthenticated, like the torrents page at `/`; keep `--private-listen`
+off the public internet. Every page carries the same nav bar — **Torrents**, **VPN Speed**,
+**Rotations** — with the page you are on named but not linked.
 
 ### On-demand buttons
 
