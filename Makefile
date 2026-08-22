@@ -129,6 +129,11 @@ fmt: ## Format Go code
 .PHONY: test-fmt
 test-fmt: ## Test to make sure code is formatted correctly
 	@UNFORMATTED=`gofmt -l cmd`; \
+	STATUS=$$?; \
+	if [ $$STATUS -ne 0 ]; then \
+	    echo "gofmt failed" ; \
+	    exit 1 ; \
+	fi; \
 	if [ -n "$$UNFORMATTED" ]; then \
 	    echo "The following files are not formatted. Run 'make fmt' to fix:" ; \
 	    echo "$$UNFORMATTED" ; \
@@ -137,14 +142,14 @@ test-fmt: ## Test to make sure code is formatted correctly
 
 .PHONY: test-tidy
 test-tidy:  ## Test to make sure go.mod is tidy
-	@cp go.mod /tmp/go.mod.orig.$$$$; \
-	go mod tidy; \
-	if ! diff -q go.mod /tmp/go.mod.orig.$$$$ >/dev/null; then \
+	@TMPFILE=`mktemp`; \
+	trap 'rm -f "$$TMPFILE"' EXIT; \
+	cp go.mod "$$TMPFILE" || exit 1; \
+	go mod tidy || exit 1; \
+	if ! diff -q go.mod "$$TMPFILE" >/dev/null; then \
 	    echo "Need to run 'go mod tidy' to clean up go.mod" ; \
-	    rm -f /tmp/go.mod.orig.$$$$ ; \
 	    exit 1 ; \
-	fi; \
-	rm -f /tmp/go.mod.orig.$$$$
+	fi
 
 coverage: coverage.out
 coverage.out: .build_files
