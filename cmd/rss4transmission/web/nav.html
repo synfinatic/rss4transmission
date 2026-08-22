@@ -1,5 +1,6 @@
 {{- define "nav" -}}
-{{- /* The dot is the current page: "torrents", "speedtest" or "rotations".
+{{- /* The dot is the current page: "torrents", "speedtest", "rotations" or
+       "transmission".
        The page you are on is named but not linked, so the bar reads the same
        everywhere and still says where you are. The VPN pages only exist when a
        speed store is configured, so their links are gated on the same flag that
@@ -14,6 +15,11 @@
         &middot;
         {{- if eq . "rotations" }} <span class="here">Rotations</span>
         {{- else }} <a href="/rotations">Rotations</a>{{ end }}
+        {{- end }}
+        {{- if transmissionEnabled }}
+        &middot;
+        {{- if eq . "transmission" }} <span class="here">Transmission</span>
+        {{- else }} <a href="/transmission">Transmission</a>{{ end }}
         {{- end }}
     </p>
 {{- end -}}

@@ -36,6 +36,7 @@ var ConfigDefaults = map[string]interface{}{
 	"Transmission.Path":       "/transmission/rpc",
 	"Transmission.Username":   "admin",
 	"Transmission.Password":   "admin",
+	"Transmission.WebUI":      true,
 	"SeenCacheDays":           30,
 	"Notifications.TokenTTLH": 24,
 
@@ -225,6 +226,12 @@ type Transmission struct {
 	Path     string `koanf:"Path"`
 	Username string `koanf:"Username"`
 	Password string `koanf:"Password"` // nolint:gosec
+	// WebUI serves the Transmission page and its reverse proxy on the
+	// private listener. Turn it off when Transmission is already reachable
+	// through a proxy of your own, or when the private port is not
+	// trustworthy: the proxy attaches the credentials above to every
+	// request it forwards.
+	WebUI bool `koanf:"WebUI"`
 }
 
 type GluetunConfig struct {

@@ -41,6 +41,10 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
   outcome and extracted labels; skipped, excluded, and error items can be re-submitted to
   Transmission with a Torrent button. Cross-links the **VPN Speed** and **Rotations** pages when
   speed testing is enabled
+- **Embedded Transmission client** — the **Transmission** page shows the Transmission web client
+  in a frame, so one nav bar covers both tools. A built-in reverse proxy reaches Transmission on
+  your behalf and signs in with the configured credentials, which works even when the browser
+  cannot resolve `Transmission.Host`. Turn it off with `Transmission.WebUI: false`
 - **Gluetun VPN integration** — automatically restarts the VPN and syncs the peer port into
   Transmission when running behind [Gluetun](https://github.com/qdm12/gluetun); port state is
   polled every 5 minutes and logged/alerted on (also available without Gluetun via

@@ -230,6 +230,12 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, removeT removeFunc, getProg
 	retryHistory retryFunc, feedConfigured func(string) bool, feedGroups func(string) []Group,
 	forgetHistory forgetFunc, accessLog *logrus.Logger,
 ) {
+	// A nil target means the Transmission page is off, so the routes are not
+	// registered and the nav bar does not link them.
+	txTarget := transmissionProxyTarget(ctx.Config.Transmission)
+	nav := navConfig{Speedtest: ctx.Speed != nil, Transmission: txTarget != nil}
+	tx := ctx.Config.Transmission
+
 	if cmd.PublicListen != "" {
 		// Split-listener mode: /cancel, /start, /notify-complete, and /healthz on the
 		// public port, history on a separate private port. Cancel/start routes are NOT
@@ -257,8 +263,11 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, removeT removeFunc, getProg
 			if ctx.History == nil {
 				log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 			}
-			privMux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, ctx.Speed != nil)
-			registerSpeedRoutes(privMux, ctx.Speed, ctx.PeerPortOpen, ctx.ExitIP, ctx.SpeedActions)
+			privMux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, nav)
+			registerSpeedRoutes(privMux, ctx.Speed, ctx.PeerPortOpen, ctx.ExitIP, ctx.SpeedActions, nav)
+			if txTarget != nil {
+				registerTransmissionRoutes(privMux, txTarget, tx.Username, tx.Password, nav)
+			}
 			go startWebServer("private", privMux, histAddr)
 		}
 	} else if cmd.PrivateListen != "" {
@@ -270,8 +279,11 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, removeT removeFunc, getProg
 		if ctx.History == nil {
 			log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 		}
-		mux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, ctx.Speed != nil)
-		registerSpeedRoutes(mux, ctx.Speed, ctx.PeerPortOpen, ctx.ExitIP, ctx.SpeedActions)
+		mux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, nav)
+		registerSpeedRoutes(mux, ctx.Speed, ctx.PeerPortOpen, ctx.ExitIP, ctx.SpeedActions, nav)
+		if txTarget != nil {
+			registerTransmissionRoutes(mux, txTarget, tx.Username, tx.Password, nav)
+		}
 		if ctx.CancelStore != nil {
 			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Notifications, removeT, getProgress, accessLog)
 			ctx.CancelRoutesEnabled = true

@@ -492,3 +492,43 @@ func TestSpeedTestConfig_UploadFloorRequiresUploadTest(t *testing.T) {
 		t.Errorf("Validate() = %q with the upload test enabled, want nil", err)
 	}
 }
+
+// The Transmission web page and its reverse proxy are on by default. A
+// deployment that already fronts Transmission with its own proxy turns them
+// off with Transmission.WebUI: false.
+func TestTransmissionWebUI_Default(t *testing.T) {
+	got, ok := ConfigDefaults["Transmission.WebUI"]
+	if !ok {
+		t.Fatal("ConfigDefaults missing \"Transmission.WebUI\"")
+	}
+	if got != true {
+		t.Errorf("ConfigDefaults[\"Transmission.WebUI\"] = %v (%T), want true", got, got)
+	}
+}
+
+func TestLoadConfig_TransmissionWebUI(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{"unset falls back to the default", "Transmission:\n  Host: gluetun\n", true},
+		{"explicit false wins", "Transmission:\n  Host: gluetun\n  WebUI: false\n", false},
+		{"explicit true wins", "Transmission:\n  Host: gluetun\n  WebUI: true\n", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfgFile := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(cfgFile, []byte(tt.yaml), 0600); err != nil {
+				t.Fatal(err)
+			}
+			rc := &RunContext{}
+			if _, err := rc.loadConfig(cfgFile); err != nil {
+				t.Fatalf("loadConfig returned error: %v", err)
+			}
+			if got := rc.Config.Transmission.WebUI; got != tt.want {
+				t.Errorf("Transmission.WebUI = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

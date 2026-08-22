@@ -357,7 +357,8 @@ The history page is titled **Torrents** in the UI and shows each item's feed nam
 publication date, outcome, and extracted labels. Records are pruned on the same schedule as the
 seen cache (`SeenCacheDays`). When `SpeedTest` is enabled it carries a nav bar linking the
 **VPN Speed** (`/speedtest`) and **Rotations** (`/rotations`) pages; see
-[VPN Speed Testing](speedtest.md#viewing-results).
+[VPN Speed Testing](speedtest.md#viewing-results). The nav bar also links the
+[Transmission page](#transmission-page).
 
 When multiple sibling feeds share one RSS URL — for example, separate feeds for different
 categories of content that all happen to be published through the same feed URL — the same item
@@ -398,6 +399,35 @@ environment:
   - PUBLIC_LISTEN=0.0.0.0:8080     # optional; enables split-listener mode
 ```
 
+## Transmission Page
+
+The **Transmission** page (`/transmission`) shows the Transmission web client inside a frame, so
+the nav bar covers both tools. The page is on by default. Set `Transmission.WebUI: false` to
+remove the page, the nav item, and the proxy below. With the page off, `/transmission` falls
+through to the torrents page, the same as any other unknown path.
+
+The frame does not load Transmission directly. It loads `/transmission/`, a reverse proxy on the
+private listener that forwards every path and method to the `Transmission.Host`,
+`Transmission.Port` and `Transmission.HTTPS` you already configured. The proxy solves three
+problems:
+
+- The browser often cannot reach Transmission. In the Gluetun compose, `Transmission.Host` is
+  `gluetun`, a name that resolves inside the Docker network only. rss4transmission resolves it
+  instead.
+- Transmission asks for Basic auth. The proxy attaches `Transmission.Username` and
+  `Transmission.Password`, so no login prompt appears in the frame.
+- A `X-Frame-Options` or CSP `frame-ancestors` response header would blank the frame. The proxy
+  removes both. All other CSP directives pass through.
+
+**Do not expose `--private-listen` to an untrusted network.** The proxy gives its caller full
+control of Transmission, with your credentials attached. This is the same trust level the private
+listener already needs for `POST /torrent` and `POST /forget`. The proxy is never registered on
+`--public-listen`.
+
+`Transmission.Path` is not used by the proxy, because the proxy forwards the request path
+unchanged. If you set a custom `Path`, Transmission already sits behind a proxy of your own. Set
+`WebUI: false` and use that proxy.
+
 ## Routes Overview
 
 | Route | `--private-listen` (single) | `--private-listen` (split) | `--public-listen` (split) |
@@ -405,6 +435,8 @@ environment:
 | `/` (torrents page) | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
 | `/torrent` | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
 | `/forget` | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
+| `/transmission` (page) | ✓ (requires `WebUI`) | ✓ (requires `WebUI`) | — |
+| `/transmission/` (proxy) | ✓ (requires `WebUI`) | ✓ (requires `WebUI`) | — |
 | `/cancel` | ✓ | — | ✓ |
 | `/start` | ✓ (requires `--history-file`) | — | ✓ (requires `--history-file`) |
 | `/notify-complete` | ✓ | — | ✓ |

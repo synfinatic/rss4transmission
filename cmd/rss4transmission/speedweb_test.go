@@ -13,7 +13,7 @@ import (
 func speedMux(t *testing.T, s *SpeedFile, portOpen func() (bool, bool)) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, s, portOpen, nil, speedActions{})
+	registerSpeedRoutes(mux, s, portOpen, nil, speedActions{}, navConfig{})
 	return mux
 }
 
@@ -144,7 +144,7 @@ func TestMetrics_EmptyStore(t *testing.T) {
 
 func TestMetrics_NilStore(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, nil, nil, nil, speedActions{})
+	registerSpeedRoutes(mux, nil, nil, nil, speedActions{}, navConfig{})
 	code, _ := getBody(t, mux, "/metrics")
 	if code != http.StatusOK {
 		t.Errorf("status = %d with a nil store, want 200", code)
@@ -207,7 +207,7 @@ func TestRotationsPage_FlagsUnchangedExit(t *testing.T) {
 
 func TestSpeedTestPage_NilStoreNotRegistered(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, nil, nil, nil, speedActions{})
+	registerSpeedRoutes(mux, nil, nil, nil, speedActions{}, navConfig{})
 	code, _ := getBody(t, mux, "/speedtest")
 	if code != http.StatusNotFound {
 		t.Errorf("status = %d with a nil store, want 404", code)
@@ -219,7 +219,7 @@ func TestSpeedTestPage_NilStoreNotRegistered(t *testing.T) {
 func TestHistoryPage_LinksSpeedtestWhenEnabled(t *testing.T) {
 	h := &HistoryFile{Records: []HistoryRecord{}, guidIndex: map[string]int{}}
 
-	_, on := getBody(t, newWebMux(h, nil, nil, nil, nil, true), "/")
+	_, on := getBody(t, newWebMux(h, nil, nil, nil, nil, navConfig{Speedtest: true}), "/")
 	for _, want := range []string{`href="/speedtest"`, `href="/rotations"`} {
 		if !strings.Contains(navLine(t, on), want) {
 			t.Errorf("torrents page missing the %s link when speedtest is enabled", want)
@@ -231,7 +231,7 @@ func TestHistoryPage_LinksSpeedtestWhenEnabled(t *testing.T) {
 
 	// Both VPN pages are registered together, so neither is linked when the
 	// speed store is absent and both routes would 404.
-	_, off := getBody(t, newWebMux(h, nil, nil, nil, nil, false), "/")
+	_, off := getBody(t, newWebMux(h, nil, nil, nil, nil, navConfig{}), "/")
 	for _, unwanted := range []string{`href="/speedtest"`, `href="/rotations"`} {
 		if strings.Contains(off, unwanted) {
 			t.Errorf("torrents page links %s when the route is not registered", unwanted)
@@ -269,7 +269,7 @@ func TestPortMonitor_LastOpenReflectsLastCheck(t *testing.T) {
 func actionMux(t *testing.T, actions speedActions) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, actions)
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, actions, navConfig{})
 	return mux
 }
 
@@ -399,7 +399,7 @@ func TestSpeedRotate_NotRegisteredWithoutFunc(t *testing.T) {
 
 func TestSpeedTestPage_RendersOnlyAvailableButtons(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, speedActions{Run: func() bool { return true }})
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, speedActions{Run: func() bool { return true }}, navConfig{})
 	_, body := getBody(t, mux, "/speedtest")
 	if !strings.Contains(body, `id="btn-run"`) {
 		t.Error("page is missing the run button")
@@ -409,7 +409,7 @@ func TestSpeedTestPage_RendersOnlyAvailableButtons(t *testing.T) {
 	}
 
 	mux = http.NewServeMux()
-	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, speedActions{Rotate: func() bool { return true }})
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, speedActions{Rotate: func() bool { return true }}, navConfig{})
 	_, body = getBody(t, mux, "/speedtest")
 	if !strings.Contains(body, `id="btn-rotate"`) {
 		t.Error("page is missing the rotate button")
@@ -538,7 +538,7 @@ func TestSpeedTestPage_ExitIPTileUsesGluetun(t *testing.T) {
 	})
 
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, s, nil, func() (string, bool) { return "185.9.9.9", true }, speedActions{})
+	registerSpeedRoutes(mux, s, nil, func() (string, bool) { return "185.9.9.9", true }, speedActions{}, navConfig{})
 	_, body := getBody(t, mux, "/speedtest")
 
 	tile := summarySection(t, body)
@@ -586,7 +586,7 @@ func TestSpeedTestPage_ExitIPTileUnknown(t *testing.T) {
 	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 412.5, ExitIP: "45.12.3.9"})
 
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, s, nil, func() (string, bool) { return "", false }, speedActions{})
+	registerSpeedRoutes(mux, s, nil, func() (string, bool) { return "", false }, speedActions{}, navConfig{})
 	_, body := getBody(t, mux, "/speedtest")
 
 	tile := summarySection(t, body)
@@ -801,7 +801,7 @@ func TestRotationsPage_EmptyStore(t *testing.T) {
 // worse than a 404 -- the same call the /speedtest route makes.
 func TestRotationsPage_NilStoreNotRegistered(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, nil, nil, nil, speedActions{})
+	registerSpeedRoutes(mux, nil, nil, nil, speedActions{}, navConfig{})
 
 	if code, _ := getBody(t, mux, "/rotations"); code != http.StatusNotFound {
 		t.Errorf("status = %d without a speed store, want 404", code)

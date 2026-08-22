@@ -165,7 +165,11 @@ Transmission:
   Password: admin
   HTTPS:    false
   Path:     /transmission/rpc
+  WebUI:    true        # serve the Transmission page on --private-listen
 ```
+
+`WebUI` controls the **Transmission** page of the web UI. See
+[Notifications & History](notifications.md#transmission-page).
 
 ## Gluetun Config
 
