@@ -51,6 +51,16 @@ GOLANGCI_LINT             := $(shell go env GOPATH)/bin/golangci-lint
 # Go upgrades to a named toolchain when the local one is older, but it never
 # downgrades. Go downloads the pinned toolchain on first use.
 GO_VERSION                := $(shell awk '$$1 == "go" { print $$2 }' go.mod)
+
+# GOTOOLCHAIN needs all three components. A two-component `go` directive is
+# legal in go.mod, but `GOTOOLCHAIN=go1.26` is not a toolchain name. Go rejects
+# it with "is a language version but not a toolchain version", and it does so
+# only after it tries to download that name, which buries the real cause. Check
+# the value here instead, before anything exports it.
+ifeq ($(shell echo '$(GO_VERSION)' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$$'),)
+$(error the "go" line in go.mod gives "$(GO_VERSION)", which is not a three-component version. GOTOOLCHAIN needs one, for example "go 1.26.6")
+endif
+
 export GOTOOLCHAIN        := go$(GO_VERSION)
 
 

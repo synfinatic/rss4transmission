@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -303,12 +305,34 @@ func TestTransmissionProxyTarget(t *testing.T) {
 	}
 }
 
+// upstreamMethods records the methods the stub upstream is asked for. The
+// handler runs on the test server's own goroutine, so a mutex guards the slice
+// against the test goroutine that reads it.
+type upstreamMethods struct {
+	mu  sync.Mutex
+	got []string
+}
+
+func (u *upstreamMethods) record(method string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.got = append(u.got, method)
+}
+
+func (u *upstreamMethods) seen() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return slices.Clone(u.got)
+}
+
 // The real private mux already serves "GET /" for the history page. Go rejects
 // a "/transmission/" pattern next to it, because that pattern matches more
 // methods on a more specific path. Register the proxy per method instead.
 func TestTransmissionRoutes_CoexistWithHistoryMux(t *testing.T) {
+	upstream := &upstreamMethods{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(r.Method))
+		upstream.record(r.Method)
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 	target, err := url.Parse(srv.URL)
@@ -327,14 +351,23 @@ func TestTransmissionRoutes_CoexistWithHistoryMux(t *testing.T) {
 		t.Errorf("transmission page status = %d, want 200", code)
 	}
 
-	// Every method the web client uses has to reach the upstream.
-	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost,
-		http.MethodPut, http.MethodDelete, http.MethodOptions} {
+	// Every method the web client uses has to reach the upstream. The list is
+	// spelled out here on purpose. Reading it from proxyMethods would let a
+	// dropped method pass unnoticed.
+	want := []string{http.MethodGet, http.MethodHead, http.MethodPost,
+		http.MethodPut, http.MethodDelete, http.MethodOptions}
+	for _, method := range want {
 		req := httptest.NewRequest(method, "/transmission/rpc", nil)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s /transmission/rpc status = %d, want 200", method, rec.Code)
 		}
+	}
+
+	// A 200 alone does not prove the proxy ran. The history page's catch-all
+	// answers 200 as well, so confirm that the upstream saw each method.
+	if got := upstream.seen(); !slices.Equal(got, want) {
+		t.Errorf("upstream saw %v, want %v", got, want)
 	}
 }

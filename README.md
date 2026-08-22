@@ -2,7 +2,6 @@
 
 [![Tests](https://github.com/synfinatic/rss4transmission/actions/workflows/tests.yml/badge.svg)](https://github.com/synfinatic/rss4transmission/actions/workflows/tests.yml)
 [![golangci-lint](https://github.com/synfinatic/rss4transmission/actions/workflows/golangci-lint.yml/badge.svg)](https://github.com/synfinatic/rss4transmission/actions/workflows/golangci-lint.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/synfinatic/rss4transmission)](https://goreportcard.com/report/github.com/synfinatic/rss4transmission)
 [![License Badge](https://img.shields.io/badge/license-GPLv3-blue.svg)](https://raw.githubusercontent.com/synfinatic/rss4transmission/main/LICENSE)
 [![Last Release](https://img.shields.io/github/v/release/synfinatic/rss4transmission)](https://github.com/synfinatic/rss4transmission/releases/)
 
