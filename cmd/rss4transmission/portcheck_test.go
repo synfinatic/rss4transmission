@@ -399,7 +399,7 @@ func gluetunPeerPortServer(t *testing.T, port *int64) *httptest.Server {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"ports":[%d]}`, *port)))
+			_, _ = fmt.Fprintf(w, `{"ports":[%d]}`, *port)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
