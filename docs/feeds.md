@@ -139,6 +139,7 @@ Transmission:
   Password: admin
   HTTPS:    false
   Path:     /transmission/rpc
+  WebUI:    true        # serve the Transmission page of the web UI
 
 # Seen-cache: tracks what has already been downloaded
 SeenFile:      /config/seen.json

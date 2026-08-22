@@ -126,18 +126,21 @@ type speedActions struct {
 // not have to care whether SpeedTest is enabled; the two pages are not, because
 // a page with nothing to show is worse than a 404.
 func registerSpeedRoutes(mux *http.ServeMux, speed *SpeedFile, portOpen portOpenFunc,
-	exitIP exitIPFunc, actions speedActions,
+	exitIP exitIPFunc, actions speedActions, nav navConfig,
 ) {
 	if speed != nil {
 		// Both pages share the nav partial and the same formatting helpers.
 		// speedtestEnabled is what the nav uses to decide whether to link the
 		// VPN pages at all; on these two pages it is true by construction,
 		// since neither route is registered without a speed store.
+		nav.Speedtest = true
 		funcs := template.FuncMap{
-			"mbps":             func(v float64) string { return fmt.Sprintf("%.1f", v) },
-			"ms":               func(v float64) string { return fmt.Sprintf("%.1f", v) },
-			"fmtTime":          func(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05") },
-			"speedtestEnabled": func() bool { return true },
+			"mbps":    func(v float64) string { return fmt.Sprintf("%.1f", v) },
+			"ms":      func(v float64) string { return fmt.Sprintf("%.1f", v) },
+			"fmtTime": func(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05") },
+		}
+		for name, fn := range nav.navFuncs() {
+			funcs[name] = fn
 		}
 		tmpl := template.Must(template.Must(
 			template.New("speedtest").Funcs(funcs).Parse(navTmpl)).Parse(speedTmpl))

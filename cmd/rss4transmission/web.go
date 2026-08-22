@@ -47,6 +47,23 @@ var historyTmpl string
 //go:embed web/nav.html
 var navTmpl string
 
+// navConfig says which optional nav items exist. The shared nav partial only
+// links a page whose routes were actually registered, so a link never leads to
+// a 404.
+type navConfig struct {
+	Speedtest    bool
+	Transmission bool
+}
+
+// navFuncs returns the FuncMap entries that web/nav.html needs. Every template
+// set that parses navTmpl must merge these in.
+func (n navConfig) navFuncs() template.FuncMap {
+	return template.FuncMap{
+		"speedtestEnabled":    func() bool { return n.Speedtest },
+		"transmissionEnabled": func() bool { return n.Transmission },
+	}
+}
+
 //go:embed web/cancel.html
 var cancelTmpl string
 
@@ -294,9 +311,9 @@ func groupHistoryRows(records []HistoryRecord, feedGroups func(name string) []Gr
 // ties in groupHistoryRows; a nil feedGroups falls back to alphabetical
 // ordering, same as if every feed had no groups.
 // The /healthz route is always registered.
-// speedtest reports whether registerSpeedRoutes will also be called on this
-// mux, so the history page only links /speedtest when that route exists.
-func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name string) bool, feedGroups func(name string) []Group, forget forgetFunc, speedtest bool) *http.ServeMux {
+// nav says which optional pages this mux will also serve, so the history page
+// only links a page whose routes exist.
+func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name string) bool, feedGroups func(name string) []Group, forget forgetFunc, nav navConfig) *http.ServeMux {
 	if feedConfigured == nil {
 		feedConfigured = func(string) bool { return true }
 	}
@@ -313,9 +330,11 @@ func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name s
 				return "skipped"
 			}
 		},
-		"feedConfigured":   feedConfigured,
-		"sub":              func(a, b int) int { return a - b },
-		"speedtestEnabled": func() bool { return speedtest },
+		"feedConfigured": feedConfigured,
+		"sub":            func(a, b int) int { return a - b },
+	}
+	for name, fn := range nav.navFuncs() {
+		funcMap[name] = fn
 	}
 	tmpl := template.Must(template.Must(
 		template.New("history").Funcs(funcMap).Parse(navTmpl)).Parse(historyTmpl))
