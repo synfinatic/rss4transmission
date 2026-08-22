@@ -39,6 +39,19 @@ LINUXARM64_BIN            := $(DIST_DIR)$(PROJECT_NAME)-$(PROJECT_VERSION)-linux
 LINUXARM32_BIN            := $(DIST_DIR)$(PROJECT_NAME)-$(PROJECT_VERSION)-linux-arm32
 DARWIN_BIN                := $(DIST_DIR)$(PROJECT_NAME)-$(PROJECT_VERSION)-darwin-amd64
 GOLANGCI_LINT_VERSION     := 2.10.1
+GOLANGCI_LINT             := $(shell go env GOPATH)/bin/golangci-lint
+
+# Pin the Go toolchain to the version go.mod declares, which is the same
+# version CI installs via setup-go's `go-version-file: go.mod`. Without this,
+# every go command uses whatever Go is first in PATH. A newer local Go then
+# builds against a newer standard library than the pinned golangci-lint can
+# type-check, and `make lint` panics instead of linting.
+#
+# The environment variable is what pins. A `toolchain` line in go.mod does not:
+# Go upgrades to a named toolchain when the local one is older, but it never
+# downgrades. Go downloads the pinned toolchain on first use.
+GO_VERSION                := $(shell awk '$$1 == "go" { print $$2 }' go.mod)
+export GOTOOLCHAIN        := go$(GO_VERSION)
 
 
 
@@ -131,7 +144,7 @@ vulncheck: ## Run govulncheck to detect known vulnerabilities
 precheck: test test-fmt test-tidy lint vulncheck ## Run all tests that happen in a PR
 
 lint: .lint-check  ## Run golangci-lint
-	golangci-lint run
+	$(GOLANGCI_LINT) run
 
 lint-install:  ## Install golangci-lint
 	curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(shell go env GOPATH)/bin v$(GOLANGCI_LINT_VERSION)
@@ -142,7 +155,7 @@ lint-install:  ## Install golangci-lint
 
 .PHONY: .lint-check
 .lint-check:
-	@if test $$(golangci-lint --version 2>&1 | grep -c "version $(GOLANGCI_LINT_VERSION)") -eq 0 ; then \
+	@if test $$($(GOLANGCI_LINT) --version 2>&1 | grep -c "version $(GOLANGCI_LINT_VERSION)") -eq 0 ; then \
 	   echo "Need to install golangci-lint $(GOLANGCI_LINT_VERSION)" ; \
 	   echo "Run: make lint-install" ; \
 	   exit -1 ; \
