@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="refresh" content="60">
+    <title>RSS4Transmission VPN Rotations</title>
+    <style>
+        body { font-family: monospace; margin: 2em; background: #1a1a1a; color: #e0e0e0; }
+        h1 { color: #ccc; margin-bottom: 0.25em; }
+        h2 { color: #ccc; font-size: 1.1em; margin-top: 2em; }
+        p { color: #888; margin-top: 0; }
+        #nav { margin: 0 0 1em 0; }
+        #nav a { color: #6aa8e0; text-decoration: underline; }
+        #nav .here { color: #e0e0e0; }
+        a { color: #6aa8e0; }
+
+        #summary {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2.5em;
+            background: #2a2a2a;
+            padding: 0.8em 1em;
+            margin-bottom: 1.5em;
+        }
+        #summary div { display: flex; flex-direction: column; gap: 0.2em; }
+        #summary .label { color: #888; font-size: 0.8em; text-transform: uppercase; }
+        #summary .value { color: #e0e0e0; font-size: 1.3em; }
+        #summary .source { color: #888; font-size: 0.65em; }
+
+        table { border-collapse: collapse; width: 100%; }
+        th, td { text-align: left; padding: 4px 10px; border-bottom: 1px solid #333; }
+        th { color: #aaa; font-weight: normal; border-bottom: 1px solid #555; }
+        td.num { text-align: right; }
+
+        .same-exit { color: #c8a44e; }
+        .muted { color: #777; }
+    </style>
+</head>
+<body>
+    <h1>VPN Rotations</h1>
+    <p id="count">{{ len .Rotations }} rotation(s) &mdash; auto-refreshes every 60 seconds.</p>
+    {{ template "nav" "rotations" }}
+
+    <div id="summary">
+        <div>
+            <span class="label">Last rotation</span>
+            {{- if .LastRotation }}
+            <span class="value">{{ fmtTime .LastRotation.At }}</span>
+            {{- if .LastRotation.Source }}
+            <span class="source">{{ .LastRotation.Source }}</span>
+            {{- end }}
+            {{- else }}
+            <span class="value muted">&mdash;</span>
+            {{- end }}
+        </div>
+        <div>
+            <span class="label">Exit IP</span>
+            <span class="value">{{ if .ExitIP }}{{ .ExitIP }}{{ if .ExitIPSource }} <span class="source">({{ .ExitIPSource }})</span>{{ end }}{{ else }}&mdash;{{ end }}</span>
+        </div>
+    </div>
+
+    {{- if .Rotations }}
+    <table>
+        <tr>
+            <th>When</th>
+            <th>Source</th>
+            <th>Reason</th>
+            <th class="num">Down at rotation</th>
+            <th>From</th>
+            <th>To</th>
+        </tr>
+        {{- range .Rotations }}
+        <tr>
+            <td>{{ fmtTime .At }}</td>
+            <td>{{ if .Source }}{{ .Source }}{{ else }}&mdash;{{ end }}</td>
+            <td>{{ .Reason }}</td>
+            <td class="num">{{ if .BeforeMbps }}{{ mbps .BeforeMbps }} Mbps{{ else }}&mdash;{{ end }}</td>
+            <td>{{ if .FromExitIP }}{{ .FromExitIP }}{{ else }}&mdash;{{ end }}</td>
+            {{- if .SameExit }}
+            <td class="same-exit">{{ .ToExitIP }} &mdash; same exit</td>
+            {{- else }}
+            <td>{{ if .ToExitIP }}{{ .ToExitIP }}{{ else }}<span class="muted">pending</span>{{ end }}</td>
+            {{- end }}
+        </tr>
+        {{- end }}
+    </table>
+    {{- else }}
+    <p class="muted">No rotations recorded yet.</p>
+    {{- end }}
+</body>
+</html>

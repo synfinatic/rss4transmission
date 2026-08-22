@@ -159,16 +159,12 @@ func TestSpeedTestPage_RendersResults(t *testing.T) {
 		At: time.Now(), DownloadMbps: 412.5, UploadMbps: 38.1,
 		LatencyMs: 14, ServerName: "Los Angeles", Sponsor: "Acme", ExitIP: "185.9.9.9",
 	})
-	s.AddRotation(RotationEvent{
-		At: time.Now(), Reason: "too slow", BeforeMbps: 12.5,
-		FromExitIP: "1.1.1.1", ToExitIP: "2.2.2.2",
-	})
 
 	code, body := getBody(t, speedMux(t, s, nil), "/speedtest")
 	if code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
 	}
-	for _, want := range []string{"412.5", "185.9.9.9", "Los Angeles", "too slow", "2.2.2.2"} {
+	for _, want := range []string{"412.5", "185.9.9.9", "Los Angeles"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing %q", want)
 		}
@@ -197,13 +193,13 @@ func TestSpeedTestPage_EmptyStore(t *testing.T) {
 
 // A rotation that landed on the same exit is the signal that rotating isn't
 // helping, so the page has to make it visible rather than just showing an IP.
-func TestSpeedTestPage_FlagsUnchangedExit(t *testing.T) {
+func TestRotationsPage_FlagsUnchangedExit(t *testing.T) {
 	s := tempSpeedFile(t)
 	s.AddRotation(RotationEvent{
 		At: time.Now(), Reason: "slow", FromExitIP: "1.1.1.1", ToExitIP: "1.1.1.1",
 	})
 
-	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+	_, body := getBody(t, speedMux(t, s, nil), "/rotations")
 	if !strings.Contains(strings.ToLower(body), "same exit") {
 		t.Errorf("page does not flag an unchanged exit IP\ngot:\n%s", body)
 	}
@@ -224,13 +220,22 @@ func TestHistoryPage_LinksSpeedtestWhenEnabled(t *testing.T) {
 	h := &HistoryFile{Records: []HistoryRecord{}, guidIndex: map[string]int{}}
 
 	_, on := getBody(t, newWebMux(h, nil, nil, nil, nil, true), "/")
-	if !strings.Contains(on, `href="/speedtest"`) {
-		t.Errorf("history page missing the /speedtest link when enabled")
+	for _, want := range []string{`href="/speedtest"`, `href="/rotations"`} {
+		if !strings.Contains(navLine(t, on), want) {
+			t.Errorf("torrents page missing the %s link when speedtest is enabled", want)
+		}
+	}
+	if !strings.Contains(navLine(t, on), `<span class="here">Torrents</span>`) {
+		t.Errorf("torrents page nav does not mark the current page\ngot:\n%s", navLine(t, on))
 	}
 
+	// Both VPN pages are registered together, so neither is linked when the
+	// speed store is absent and both routes would 404.
 	_, off := getBody(t, newWebMux(h, nil, nil, nil, nil, false), "/")
-	if strings.Contains(off, `href="/speedtest"`) {
-		t.Errorf("history page links /speedtest when the route is not registered")
+	for _, unwanted := range []string{`href="/speedtest"`, `href="/rotations"`} {
+		if strings.Contains(off, unwanted) {
+			t.Errorf("torrents page links %s when the route is not registered", unwanted)
+		}
 	}
 }
 
@@ -435,14 +440,14 @@ func TestSpeedRotate_AlreadyInProgress(t *testing.T) {
 // The rotations table used to show only speedtest-driven rotations, so the
 // reason alone identified them. Now that schedule, closed-port and manual
 // rotations share the table, the page names the source outright.
-func TestSpeedPage_ShowsRotationSource(t *testing.T) {
+func TestRotationsPage_ShowsRotationSource(t *testing.T) {
 	s := tempSpeedFile(t)
 	s.AddRotation(RotationEvent{
 		At: time.Now(), Source: RotationSourceClosedPort,
 		Reason: "peer port closed for 3 consecutive checks", FromExitIP: "1.1.1.1", ToExitIP: "2.2.2.2",
 	})
 
-	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+	_, body := getBody(t, speedMux(t, s, nil), "/rotations")
 	if !strings.Contains(body, RotationSourceClosedPort) {
 		t.Errorf("page does not name the rotation source %q", RotationSourceClosedPort)
 	}
@@ -474,15 +479,53 @@ func TestSpeedPage_HidesLastUploadWhenNeverMeasured(t *testing.T) {
 	}
 }
 
-// The two pages cross-link to each other, and the link belongs in the same
-// place on both: its own line under the record count, not trailing the count
-// sentence.
-func TestSpeedPage_LinksHistoryOnItsOwnLine(t *testing.T) {
+// Every page carries the same nav line under the record count, with the page
+// you are on named but not linked -- so the bar reads the same everywhere and
+// still says where you are.
+func TestNav_SpeedPageLinksTheOtherTwo(t *testing.T) {
 	_, body := getBody(t, speedMux(t, tempSpeedFile(t), nil), "/speedtest")
 
-	if !strings.Contains(body, `<p id="nav"><a href="/">History</a></p>`) {
-		t.Error("VPN page does not carry the History link on its own nav line")
+	nav := navLine(t, body)
+	for _, want := range []string{`<a href="/">Torrents</a>`, `<a href="/rotations">Rotations</a>`} {
+		if !strings.Contains(nav, want) {
+			t.Errorf("VPN page nav missing %s\ngot:\n%s", want, nav)
+		}
 	}
+	if strings.Contains(nav, `href="/speedtest"`) {
+		t.Errorf("VPN page nav links the page you are already on\ngot:\n%s", nav)
+	}
+	if !strings.Contains(nav, `<span class="here">VPN Speed</span>`) {
+		t.Errorf("VPN page nav does not mark the current page\ngot:\n%s", nav)
+	}
+}
+
+func TestNav_RotationsPageLinksTheOtherTwo(t *testing.T) {
+	_, body := getBody(t, speedMux(t, tempSpeedFile(t), nil), "/rotations")
+
+	nav := navLine(t, body)
+	for _, want := range []string{`<a href="/">Torrents</a>`, `<a href="/speedtest">VPN Speed</a>`} {
+		if !strings.Contains(nav, want) {
+			t.Errorf("rotations page nav missing %s\ngot:\n%s", want, nav)
+		}
+	}
+	if !strings.Contains(nav, `<span class="here">Rotations</span>`) {
+		t.Errorf("rotations page nav does not mark the current page\ngot:\n%s", nav)
+	}
+}
+
+// navLine returns just the nav paragraph, so an assertion about a link cannot
+// be satisfied by the page body.
+func navLine(t *testing.T, body string) string {
+	t.Helper()
+	start := strings.Index(body, `<p id="nav">`)
+	if start < 0 {
+		t.Fatalf("page has no nav line:\n%s", body)
+	}
+	end := strings.Index(body[start:], "</p>")
+	if end < 0 {
+		t.Fatalf("page has an unterminated nav line:\n%s", body)
+	}
+	return body[start : start+end]
 }
 
 // The headline Exit IP is what Gluetun says about itself. It must not fall back
@@ -635,11 +678,13 @@ func measurementsSection(t *testing.T, body string) string {
 	if start < 0 {
 		t.Fatalf("page has no measurements section:\n%s", body)
 	}
-	end := strings.Index(body[start+1:], "<h2>")
+	end := strings.Index(body[start:], "</table>")
 	if end < 0 {
-		t.Fatalf("page has no section after the measurements table:\n%s", body)
+		// The empty state has no table; everything after the heading is the
+		// section either way.
+		return body[start:]
 	}
-	return body[start : start+1+end]
+	return body[start : start+end]
 }
 
 // The Detail column carries the rotation verdict for a slow measurement, so a
@@ -674,4 +719,150 @@ func TestSpeedTestPage_ErrorOutranksRotationNoteInDetail(t *testing.T) {
 	if strings.Contains(table, "unreachable") {
 		t.Errorf("Detail column showed a rotation note over the error\ngot:\n%s", table)
 	}
+}
+
+// ---- rotations page ----
+
+// Measurements land every few minutes while rotations are rare, so keeping both
+// tables on one page buried the rotation log under hours of scrolling. It has
+// its own page now, and /speedtest carries measurements only.
+func TestSpeedTestPage_HasNoRotationsTable(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 412.5})
+	s.AddRotation(RotationEvent{
+		At: time.Now(), Source: RotationSourceSpeedtest, Reason: "too slow",
+		BeforeMbps: 12.5, FromExitIP: "1.1.1.1", ToExitIP: "2.2.2.2",
+	})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+	for _, unwanted := range []string{"<h2>Rotations</h2>", "too slow", "2.2.2.2"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("VPN page still renders the rotation log (%q)\ngot:\n%s", unwanted, body)
+		}
+	}
+}
+
+func TestRotationsPage_RendersRotations(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddRotation(RotationEvent{
+		At: time.Now(), Source: RotationSourceSpeedtest, Reason: "too slow",
+		BeforeMbps: 12.5, FromExitIP: "1.1.1.1", ToExitIP: "2.2.2.2",
+	})
+
+	code, body := getBody(t, speedMux(t, s, nil), "/rotations")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
+	}
+	for _, want := range []string{RotationSourceSpeedtest, "too slow", "12.5", "1.1.1.1", "2.2.2.2"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rotations page missing %q\ngot:\n%s", want, body)
+		}
+	}
+}
+
+// Newest first, same as the measurements table: the last rotation is the one
+// you came to look at.
+func TestRotationsPage_NewestFirst(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddRotation(RotationEvent{At: time.Now().Add(-time.Hour), Reason: "older"})
+	s.AddRotation(RotationEvent{At: time.Now(), Reason: "newer"})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/rotations")
+	if strings.Index(body, "newer") > strings.Index(body, "older") {
+		t.Errorf("rotations are not newest first\ngot:\n%s", body)
+	}
+}
+
+// A rotation whose outcome has not been recorded yet still renders: the To
+// column says so rather than showing a blank cell.
+func TestRotationsPage_PendingOutcome(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.StageRotation(RotationEvent{
+		At: time.Now(), Source: RotationSourceManual, Reason: "asked", FromExitIP: "1.1.1.1",
+	})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/rotations")
+	if !strings.Contains(body, "pending") {
+		t.Errorf("rotations page does not mark an unfinished rotation\ngot:\n%s", body)
+	}
+}
+
+func TestRotationsPage_EmptyStore(t *testing.T) {
+	code, body := getBody(t, speedMux(t, tempSpeedFile(t), nil), "/rotations")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d on an empty store, want 200", code)
+	}
+	if !strings.Contains(body, "No rotations recorded yet.") {
+		t.Errorf("rotations page has no empty state\ngot:\n%s", body)
+	}
+}
+
+// Without a speed store there is nothing to show, and a page of nothing is
+// worse than a 404 -- the same call the /speedtest route makes.
+func TestRotationsPage_NilStoreNotRegistered(t *testing.T) {
+	mux := http.NewServeMux()
+	registerSpeedRoutes(mux, nil, nil, nil, speedActions{})
+
+	if code, _ := getBody(t, mux, "/rotations"); code != http.StatusNotFound {
+		t.Errorf("status = %d without a speed store, want 404", code)
+	}
+}
+
+// ---- last rotation tile ----
+
+// With the rotation log a page away, the summary has to say when the egress
+// last moved; otherwise the opening view says nothing about it at all.
+func TestSpeedPage_SummaryShowsLastRotation(t *testing.T) {
+	s := tempSpeedFile(t)
+	at := time.Date(2026, 3, 4, 5, 6, 7, 0, time.Local)
+	s.AddRotation(RotationEvent{At: at.Add(-time.Hour), Source: RotationSourceSchedule})
+	s.AddRotation(RotationEvent{At: at, Source: RotationSourceClosedPort, Reason: "port closed"})
+
+	_, body := getBody(t, speedMux(t, s, nil), "/speedtest")
+	summary := summarySection(t, body)
+
+	if !strings.Contains(strings.ToLower(summary), "last rotation") {
+		t.Errorf("summary does not report the last rotation\ngot:\n%s", summary)
+	}
+	if !strings.Contains(summary, "2026-03-04 05:06:07") {
+		t.Errorf("summary does not carry the last rotation's date and time\ngot:\n%s", summary)
+	}
+	if !strings.Contains(summary, RotationSourceClosedPort) {
+		t.Errorf("summary does not name what asked for the last rotation\ngot:\n%s", summary)
+	}
+}
+
+// A deployment that has never rotated says so, rather than printing an
+// epoch-zero timestamp that reads as a rotation in 1970.
+func TestSpeedPage_SummaryWithoutRotations(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 412.5})
+
+	summary := summarySection(t, mustBody(t, speedMux(t, s, nil), "/speedtest"))
+	if !strings.Contains(strings.ToLower(summary), "last rotation") {
+		t.Errorf("summary drops the tile when nothing has rotated\ngot:\n%s", summary)
+	}
+	if strings.Contains(summary, "1970-01-01") {
+		t.Errorf("summary shows a zero-time rotation\ngot:\n%s", summary)
+	}
+}
+
+// The count tile is the way to the rotation log now that it is off this page.
+func TestSpeedPage_RotationCountLinksToRotations(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddRotation(RotationEvent{At: time.Now(), Source: RotationSourceManual})
+
+	summary := summarySection(t, mustBody(t, speedMux(t, s, nil), "/speedtest"))
+	if !strings.Contains(summary, `href="/rotations"`) {
+		t.Errorf("rotations tile does not link the rotation log\ngot:\n%s", summary)
+	}
+}
+
+func mustBody(t *testing.T, mux *http.ServeMux, path string) string {
+	t.Helper()
+	code, body := getBody(t, mux, path)
+	if code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", path, code)
+	}
+	return body
 }

@@ -117,6 +117,11 @@ starts a separate public-facing server for `/cancel`, `/healthz`, and `/notify-c
 In the gluetun docker-compose, expose the port explicitly via the `ports:` block; in the plain
 docker-compose `network_mode: host` already exposes all ports.
 
+The private server serves three pages: `/` (titled **Torrents**, `web/history.html`), `/speedtest`
+and `/rotations` (both in `speedweb.go`, registered only when a `SpeedFile` exists). They share the
+nav bar in `web/nav.html`, a `{{ define "nav" }}` partial parsed into each page's template set and
+given the current page name as its dot; it needs a `speedtestEnabled` func in that set's FuncMap.
+
 **Config defaults** are defined as a `map[string]interface{}` in `config.go` and loaded before the YAML
 file, so koanf's merge semantics provide defaults without nil-checks in code.
 

@@ -353,8 +353,11 @@ rss4transmission watch --config config.yaml \
     --public-listen 0.0.0.0:8080
 ```
 
-The history page shows each item's feed name, title, publication date, outcome, and extracted
-labels. Records are pruned on the same schedule as the seen cache (`SeenCacheDays`).
+The history page is titled **Torrents** in the UI and shows each item's feed name, title,
+publication date, outcome, and extracted labels. Records are pruned on the same schedule as the
+seen cache (`SeenCacheDays`). When `SpeedTest` is enabled it carries a nav bar linking the
+**VPN Speed** (`/speedtest`) and **Rotations** (`/rotations`) pages; see
+[VPN Speed Testing](speedtest.md#viewing-results).
 
 When multiple sibling feeds share one RSS URL — for example, separate feeds for different
 categories of content that all happen to be published through the same feed URL — the same item
@@ -399,7 +402,7 @@ environment:
 
 | Route | `--private-listen` (single) | `--private-listen` (split) | `--public-listen` (split) |
 |---|---|---|---|
-| `/` (history page) | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
+| `/` (torrents page) | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
 | `/torrent` | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
 | `/forget` | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
 | `/cancel` | ✓ | — | ✓ |

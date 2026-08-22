@@ -11,6 +11,7 @@
         p { color: #888; margin-top: 0; }
         #nav { margin: 0 0 1em 0; }
         #nav a { color: #6aa8e0; text-decoration: underline; }
+        #nav .here { color: #e0e0e0; }
         a { color: #6aa8e0; }
 
         #summary {
@@ -73,7 +74,7 @@
 <body>
     <h1>VPN Speed</h1>
     <p id="count">{{ len .Rows }} measurement(s) &mdash; auto-refreshes every 60 seconds.</p>
-    <p id="nav"><a href="/">History</a></p>
+    {{ template "nav" "speedtest" }}
 
     <div id="summary">
         <div>
@@ -100,7 +101,18 @@
         </div>
         <div>
             <span class="label">Rotations</span>
-            <span class="value">{{ len .Rotations }}</span>
+            <span class="value"><a href="/rotations">{{ len .Rotations }}</a></span>
+        </div>
+        <div>
+            <span class="label">Last rotation</span>
+            {{- if .LastRotation }}
+            <span class="value">{{ fmtTime .LastRotation.At }}</span>
+            {{- if .LastRotation.Source }}
+            <span class="source">{{ .LastRotation.Source }}</span>
+            {{- end }}
+            {{- else }}
+            <span class="value muted">&mdash;</span>
+            {{- end }}
         </div>
     </div>
 
@@ -161,35 +173,6 @@
     <p class="muted">No measurements recorded yet.</p>
     {{- end }}
 
-    <h2>Rotations</h2>
-    {{- if .Rotations }}
-    <table>
-        <tr>
-            <th>When</th>
-            <th>Source</th>
-            <th>Reason</th>
-            <th class="num">Down at rotation</th>
-            <th>From</th>
-            <th>To</th>
-        </tr>
-        {{- range .Rotations }}
-        <tr>
-            <td>{{ fmtTime .At }}</td>
-            <td>{{ if .Source }}{{ .Source }}{{ else }}&mdash;{{ end }}</td>
-            <td>{{ .Reason }}</td>
-            <td class="num">{{ if .BeforeMbps }}{{ mbps .BeforeMbps }} Mbps{{ else }}&mdash;{{ end }}</td>
-            <td>{{ if .FromExitIP }}{{ .FromExitIP }}{{ else }}&mdash;{{ end }}</td>
-            {{- if .SameExit }}
-            <td class="same-exit">{{ .ToExitIP }} &mdash; same exit</td>
-            {{- else }}
-            <td>{{ if .ToExitIP }}{{ .ToExitIP }}{{ else }}<span class="muted">pending</span>{{ end }}</td>
-            {{- end }}
-        </tr>
-        {{- end }}
-    </table>
-    {{- else }}
-    <p class="muted">No rotations recorded yet.</p>
-    {{- end }}
     {{- if or .CanRun .CanRotate }}
     <script>
         (function () {

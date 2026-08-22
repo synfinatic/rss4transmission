@@ -31,6 +31,9 @@ import (
 //go:embed web/speedtest.html
 var speedTmpl string
 
+//go:embed web/rotations.html
+var rotationsTmpl string
+
 // portOpenFunc reports the last observed state of the forwarded peer port.
 // known is false when no check has completed yet, in which case the
 // corresponding metric is omitted rather than published as a guess.
@@ -70,7 +73,12 @@ type speedPageData struct {
 	Rows      []speedPageRow
 	Rotations []speedPageRotation
 	Latest    *SpeedResult
-	ExitIP    string
+	// LastRotation is the most recent rotation event, or nil when the tunnel
+	// has never moved. The rotation log lives on /rotations now, so without
+	// this tile the page you land on would say nothing about when the egress
+	// last changed.
+	LastRotation *RotationEvent
+	ExitIP       string
 	// ExitIPSource names where ExitIP came from, and is empty when that is
 	// Gluetun. With Gluetun configured the tile is always Gluetun's answer, so
 	// saying so on every page load is noise; the annotation exists to flag the
@@ -86,6 +94,16 @@ type speedPageData struct {
 	CanRotate  bool // render the "Rotate VPN now" button
 }
 
+// rotationsPageData is the /rotations view: the same rotation rows the
+// /speedtest page used to carry at the bottom, plus the summary tiles that make
+// sense on their own page.
+type rotationsPageData struct {
+	Rotations    []speedPageRotation
+	LastRotation *RotationEvent
+	ExitIP       string
+	ExitIPSource string
+}
+
 // speedActions are the operations the /speedtest page's buttons invoke. A nil
 // func means the button is not rendered and its route is not registered, which
 // is how a measure-only deployment (no Gluetun) loses only the rotate button.
@@ -99,23 +117,32 @@ type speedActions struct {
 	Active activeDownloadsFunc // only consulted to decide whether Rotate needs confirming
 }
 
-// registerSpeedRoutes adds GET /speedtest, GET /metrics and the page's two
-// action routes to mux. All are intended for the private mux only: like GET /,
+// registerSpeedRoutes adds GET /speedtest, GET /rotations, GET /metrics and the
+// speedtest page's two action routes to mux. All are intended for the private mux only: like GET /,
 // they are unauthenticated and rely on --private-listen not being publicly
 // reachable.
 //
 // /metrics is registered even with a nil store so a scrape configuration does
-// not have to care whether SpeedTest is enabled; /speedtest is not, because a
-// page with nothing to show is worse than a 404.
+// not have to care whether SpeedTest is enabled; the two pages are not, because
+// a page with nothing to show is worse than a 404.
 func registerSpeedRoutes(mux *http.ServeMux, speed *SpeedFile, portOpen portOpenFunc,
 	exitIP exitIPFunc, actions speedActions,
 ) {
 	if speed != nil {
-		tmpl := template.Must(template.New("speedtest").Funcs(template.FuncMap{
-			"mbps":    func(v float64) string { return fmt.Sprintf("%.1f", v) },
-			"ms":      func(v float64) string { return fmt.Sprintf("%.1f", v) },
-			"fmtTime": func(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05") },
-		}).Parse(speedTmpl))
+		// Both pages share the nav partial and the same formatting helpers.
+		// speedtestEnabled is what the nav uses to decide whether to link the
+		// VPN pages at all; on these two pages it is true by construction,
+		// since neither route is registered without a speed store.
+		funcs := template.FuncMap{
+			"mbps":             func(v float64) string { return fmt.Sprintf("%.1f", v) },
+			"ms":               func(v float64) string { return fmt.Sprintf("%.1f", v) },
+			"fmtTime":          func(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05") },
+			"speedtestEnabled": func() bool { return true },
+		}
+		tmpl := template.Must(template.Must(
+			template.New("speedtest").Funcs(funcs).Parse(navTmpl)).Parse(speedTmpl))
+		rotTmpl := template.Must(template.Must(
+			template.New("rotations").Funcs(funcs).Parse(navTmpl)).Parse(rotationsTmpl))
 
 		mux.HandleFunc("GET /speedtest", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -124,6 +151,13 @@ func registerSpeedRoutes(mux *http.ServeMux, speed *SpeedFile, portOpen portOpen
 			data.CanRotate = actions.Rotate != nil
 			if err := tmpl.Execute(w, data); err != nil {
 				log.WithError(err).Error("Failed to render speedtest template")
+			}
+		})
+
+		mux.HandleFunc("GET /rotations", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := rotTmpl.Execute(w, buildRotationsPageData(speed, exitIP)); err != nil {
+				log.WithError(err).Error("Failed to render rotations template")
 			}
 		})
 
@@ -208,10 +242,7 @@ func makeSpeedRotateHandler(actions speedActions) http.HandlerFunc {
 // buildSpeedPageData assembles the /speedtest view, newest entries first.
 func buildSpeedPageData(speed *SpeedFile, exitIP exitIPFunc) speedPageData {
 	results := speed.GetResults()
-	data := speedPageData{
-		Rows:      make([]speedPageRow, 0, len(results)),
-		Rotations: []speedPageRotation{},
-	}
+	data := speedPageData{Rows: make([]speedPageRow, 0, len(results))}
 
 	for i := len(results) - 1; i >= 0; i-- {
 		r := results[i]
@@ -254,16 +285,52 @@ func buildSpeedPageData(speed *SpeedFile, exitIP exitIPFunc) speedPageData {
 		}
 	}
 
+	data.Rotations = buildRotationRows(speed)
+	if last, ok := speed.LastRotation(); ok {
+		data.LastRotation = &last
+	}
+
+	return data
+}
+
+// buildRotationsPageData assembles the /rotations view, newest first.
+func buildRotationsPageData(speed *SpeedFile, exitIP exitIPFunc) rotationsPageData {
+	data := rotationsPageData{Rotations: buildRotationRows(speed)}
+
+	if last, ok := speed.LastRotation(); ok {
+		data.LastRotation = &last
+	}
+
+	// Same rule as the /speedtest tile: only Gluetun answers "which exit are we
+	// on", and speedtest.net's view stands in only when there is no Gluetun to
+	// ask -- labelled, because the two are not interchangeable (see exitIPFunc).
+	switch {
+	case exitIP != nil:
+		if ip, known := exitIP(); known {
+			data.ExitIP = ip
+		}
+	default:
+		if latest, ok := speed.LatestSuccessful(); ok {
+			data.ExitIP, data.ExitIPSource = latest.ExitIP, "speedtest.net"
+		}
+	}
+
+	return data
+}
+
+// buildRotationRows returns the rotation events newest first, each flagged with
+// whether it actually moved us.
+func buildRotationRows(speed *SpeedFile) []speedPageRotation {
 	rotations := speed.GetRotations()
+	rows := make([]speedPageRotation, 0, len(rotations))
 	for i := len(rotations) - 1; i >= 0; i-- {
 		e := rotations[i]
-		data.Rotations = append(data.Rotations, speedPageRotation{
+		rows = append(rows, speedPageRotation{
 			RotationEvent: e,
 			SameExit:      e.ToExitIP != "" && e.ToExitIP == e.FromExitIP,
 		})
 	}
-
-	return data
+	return rows
 }
 
 // renderMetrics emits the Prometheus text exposition format by hand. The repo
