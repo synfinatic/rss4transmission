@@ -127,19 +127,28 @@ fmt: ## Format Go code
 	@go fmt ./cmd
 
 .PHONY: test-fmt
-test-fmt: fmt ## Test to make sure code if formatted correctly
-	@if test `git diff ./cmd | wc -l` -gt 0; then \
-	    echo "Code changes detected when running 'go fmt':" ; \
-	    git diff -Xfiles ; \
-	    exit -1 ; \
+test-fmt: ## Test to make sure code is formatted correctly
+	@UNFORMATTED=`gofmt -l cmd`; \
+	STATUS=$$?; \
+	if [ $$STATUS -ne 0 ]; then \
+	    echo "gofmt failed" ; \
+	    exit 1 ; \
+	fi; \
+	if [ -n "$$UNFORMATTED" ]; then \
+	    echo "The following files are not formatted. Run 'make fmt' to fix:" ; \
+	    echo "$$UNFORMATTED" ; \
+	    exit 1 ; \
 	fi
 
 .PHONY: test-tidy
 test-tidy:  ## Test to make sure go.mod is tidy
-	@go mod tidy
-	@if test `git diff go.mod | wc -l` -gt 0; then \
+	@TMPFILE=`mktemp`; \
+	trap 'rm -f "$$TMPFILE"' EXIT; \
+	cp go.mod "$$TMPFILE" || exit 1; \
+	go mod tidy || exit 1; \
+	if ! diff -q go.mod "$$TMPFILE" >/dev/null; then \
 	    echo "Need to run 'go mod tidy' to clean up go.mod" ; \
-	    exit -1 ; \
+	    exit 1 ; \
 	fi
 
 coverage: coverage.out

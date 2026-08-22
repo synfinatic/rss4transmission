@@ -44,7 +44,7 @@ func TestFaviconHandler_ServesSVG(t *testing.T) {
 
 func TestNewCancelMux_FaviconReachable(t *testing.T) {
 	cfg := makeCancelCfg("", "")
-	mux := newCancelMux(nil, cfg, nil, nil, nil, nil, nil, nil)
+	mux := newCancelMux(nil, staticNotif(cfg), nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/favicon.svg", nil)
 	rr := httptest.NewRecorder()
