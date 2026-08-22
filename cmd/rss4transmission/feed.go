@@ -137,7 +137,7 @@ func (fi *FeedItem) TorrentWithBytes(ctx *RunContext, dir string, data []byte) (
 		DownloadDir: &dir,
 		MetaInfo:    &encoded,
 	}
-	torrent, err := ctx.Transmission.TorrentAdd(context.TODO(), addPayload)
+	torrent, err := ctx.Tx().TorrentAdd(context.TODO(), addPayload)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate torrent") {
 			log.Warnf("Skipping duplicate torrent: %s", fi.Item.Title)
@@ -157,36 +157,59 @@ func (fi *FeedItem) IsComplete() bool {
 	return fi.Complete
 }
 
-func (m *Feed) compile() {
+// Compile builds the Exclude regexes and parses MinSize/MaxSize. It returns an
+// error rather than calling log.Fatalf so that loadConfig can reject a bad
+// value and leave the previously running config in effect, which matters on a
+// live config reload.
+//
+// loadConfig calls this for every feed at load time. It stays cheap to repeat:
+// callers range over Feeds by value, so each copy compiles once on first use.
+func (m *Feed) Compile() error {
 	if m.compiled {
-		return
+		return nil
 	}
 
-	var err error
-	var r *regexp.Regexp
-
-	for _, exclude := range m.Exclude {
-		if r, err = regexp.Compile(exclude); err != nil {
-			log.WithError(err).Fatalf("Unable to compile Exclude: %s", exclude)
+	var exclude []*regexp.Regexp
+	for _, pattern := range m.Exclude {
+		r, err := regexp.Compile(pattern)
+		if err != nil {
+			return fmt.Errorf("unable to compile Exclude %q: %w", pattern, err)
 		}
-		m.exclude = append(m.exclude, r)
+		exclude = append(exclude, r)
 	}
 
+	var maxSize, minSize uint64
 	if m.MaxSize != "" {
 		size, err := bytesize.Parse(m.MaxSize)
 		if err != nil {
-			log.WithError(err).Fatalf("Unable to parse MaxSize: %s", m.MaxSize)
+			return fmt.Errorf("unable to parse MaxSize %q: %w", m.MaxSize, err)
 		}
-		m.maxSize = uint64(size)
+		maxSize = uint64(size)
 	}
 
 	if m.MinSize != "" {
 		size, err := bytesize.Parse(m.MinSize)
 		if err != nil {
-			log.WithError(err).Fatalf("Unable to parse MinSize: %s", m.MinSize)
+			return fmt.Errorf("unable to parse MinSize %q: %w", m.MinSize, err)
 		}
-		m.minSize = uint64(size)
+		minSize = uint64(size)
 	}
 
+	// Assigned only once everything parsed, so a failed Compile leaves the
+	// feed exactly as it was rather than half-built.
+	m.exclude = exclude
+	m.maxSize = maxSize
+	m.minSize = minSize
 	m.compiled = true
+	return nil
+}
+
+// compile is the lazy path used by Check. Compile has normally already run at
+// config load; a feed built directly (in tests, or by a caller that skipped
+// loadConfig) compiles here instead. A bad value filters nothing rather than
+// ending the process.
+func (m *Feed) compile() {
+	if err := m.Compile(); err != nil {
+		log.WithError(err).Errorf("Unable to compile feed %q", m.Name)
+	}
 }

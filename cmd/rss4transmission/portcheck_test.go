@@ -76,7 +76,7 @@ func TestPortMonitor_Check_NoGluetun_Open(t *testing.T) {
 	m := NewPortMonitor(newTestTransmissionClient(t, transmissionSrv.URL), nil,
 		mustValidateNtfyConfig(t, NtfyConfig{BaseURL: ntfySrv.URL, AlertTopic: "alerts"}))
 
-	gotOpen, err := m.check()
+	gotOpen, _, err := m.check()
 	require.NoError(t, err)
 	assert.True(t, gotOpen)
 	assert.Empty(t, *titles, "no notification expected on first-ever check")
@@ -94,7 +94,7 @@ func TestPortMonitor_Check_NoGluetun_Closed(t *testing.T) {
 	m := NewPortMonitor(newTestTransmissionClient(t, transmissionSrv.URL), nil,
 		mustValidateNtfyConfig(t, NtfyConfig{BaseURL: ntfySrv.URL, AlertTopic: "alerts"}))
 
-	gotOpen, err := m.check()
+	gotOpen, _, err := m.check()
 	require.NoError(t, err)
 	assert.False(t, gotOpen)
 	assert.Empty(t, *titles, "no notification expected without a prior 'open' state")
@@ -112,18 +112,18 @@ func TestPortMonitor_Check_OpenToClosed_NotifiesOnce(t *testing.T) {
 	m := NewPortMonitor(newTestTransmissionClient(t, transmissionSrv.URL), nil,
 		mustValidateNtfyConfig(t, NtfyConfig{BaseURL: ntfySrv.URL, AlertTopic: "alerts"}))
 
-	_, err := m.check()
+	_, _, err := m.check()
 	require.NoError(t, err)
 	assert.Empty(t, *titles)
 
 	open = false
-	_, err = m.check()
+	_, _, err = m.check()
 	require.NoError(t, err)
 	require.Len(t, *titles, 1)
 	assert.Equal(t, "Transmission Port Closed", (*titles)[0])
 
 	// Closed -> closed again must not re-notify.
-	_, err = m.check()
+	_, _, err = m.check()
 	require.NoError(t, err)
 	assert.Len(t, *titles, 1)
 }
@@ -138,18 +138,18 @@ func TestPortMonitor_Check_ClosedToOpen_NotifiesOnce(t *testing.T) {
 	m := NewPortMonitor(newTestTransmissionClient(t, transmissionSrv.URL), nil,
 		mustValidateNtfyConfig(t, NtfyConfig{BaseURL: ntfySrv.URL, AlertTopic: "alerts"}))
 
-	_, err := m.check()
+	_, _, err := m.check()
 	require.NoError(t, err)
 	assert.Empty(t, *titles, "no prior state, so closed on first check must not notify")
 
 	open = true
-	_, err = m.check()
+	_, _, err = m.check()
 	require.NoError(t, err)
 	require.Len(t, *titles, 1)
 	assert.Equal(t, "Transmission Port Open", (*titles)[0])
 
 	// Open -> open again must not re-notify.
-	_, err = m.check()
+	_, _, err = m.check()
 	require.NoError(t, err)
 	assert.Len(t, *titles, 1)
 }
@@ -168,7 +168,7 @@ func TestPortMonitor_Check_PortTestError_LeavesStateUnchangedAndDoesNotNotify(t 
 	trueVal := true
 	m.lastOpen = &trueVal
 
-	_, err := m.check()
+	_, _, err := m.check()
 	require.Error(t, err)
 	assert.Empty(t, *titles)
 	require.NotNil(t, m.lastOpen)
@@ -179,7 +179,7 @@ func TestPortMonitor_Check_PortTestError_LeavesStateUnchangedAndDoesNotNotify(t 
 	defer realSrv.Close()
 	m.Transmission = newTestTransmissionClient(t, realSrv.URL)
 	open = false
-	_, err = m.check()
+	_, _, err = m.check()
 	require.NoError(t, err)
 	require.Len(t, *titles, 1)
 	assert.Equal(t, "Transmission Port Closed", (*titles)[0])
@@ -210,13 +210,13 @@ func TestPortMonitor_Check_WithGluetun_UsesCheckVpnTunnel(t *testing.T) {
 
 	m := NewPortMonitor(client, g, mustValidateNtfyConfig(t, NtfyConfig{BaseURL: ntfySrv.URL, AlertTopic: "alerts"}))
 
-	gotOpen, err := m.check()
+	gotOpen, _, err := m.check()
 	require.NoError(t, err)
 	assert.True(t, gotOpen)
 	assert.Empty(t, *titles)
 
 	open = false
-	gotOpen, err = m.check()
+	gotOpen, _, err = m.check()
 	require.NoError(t, err)
 	assert.False(t, gotOpen)
 	require.Len(t, *titles, 1)
@@ -338,7 +338,7 @@ func TestPortMonitor_CheckRecordsGluetunPublicIP(t *testing.T) {
 	ip := "1.2.3.4"
 	m := newPublicIPPortMonitor(t, &ip)
 
-	_, err := m.check()
+	_, _, err := m.check()
 	require.NoError(t, err)
 
 	got, known := m.LastPublicIP()
@@ -347,7 +347,7 @@ func TestPortMonitor_CheckRecordsGluetunPublicIP(t *testing.T) {
 
 	// A later check picks up a changed exit.
 	ip = "5.6.7.8"
-	_, err = m.check()
+	_, _, err = m.check()
 	require.NoError(t, err)
 	got, known = m.LastPublicIP()
 	assert.True(t, known)
@@ -360,11 +360,11 @@ func TestPortMonitor_CheckKeepsPublicIPWhenGluetunFails(t *testing.T) {
 	ip := "1.2.3.4"
 	m := newPublicIPPortMonitor(t, &ip)
 
-	_, err := m.check()
+	_, _, err := m.check()
 	require.NoError(t, err)
 
 	ip = ""
-	_, err = m.check()
+	_, _, err = m.check()
 	require.NoError(t, err)
 
 	got, known := m.LastPublicIP()
@@ -378,7 +378,7 @@ func TestPortMonitor_LastPublicIPUnknownWithoutGluetun(t *testing.T) {
 	defer transmissionSrv.Close()
 
 	m := NewPortMonitor(newTestTransmissionClient(t, transmissionSrv.URL), nil, NtfyConfig{})
-	_, err := m.check()
+	_, _, err := m.check()
 	require.NoError(t, err)
 
 	got, known := m.LastPublicIP()
@@ -440,7 +440,7 @@ func TestPortMonitor_CheckRecordsGluetunPeerPort(t *testing.T) {
 	port := int64(54321)
 	m := newPeerPortMonitor(t, &port)
 
-	_, err := m.check()
+	_, _, err := m.check()
 	require.NoError(t, err)
 
 	got, known := m.LastPeerPort()
@@ -449,7 +449,7 @@ func TestPortMonitor_CheckRecordsGluetunPeerPort(t *testing.T) {
 
 	// A later check picks up a changed forwarded port.
 	port = 12345
-	_, err = m.check()
+	_, _, err = m.check()
 	require.NoError(t, err)
 	got, known = m.LastPeerPort()
 	assert.True(t, known)
@@ -462,11 +462,11 @@ func TestPortMonitor_CheckKeepsPeerPortWhenGluetunFails(t *testing.T) {
 	port := int64(54321)
 	m := newPeerPortMonitor(t, &port)
 
-	_, err := m.check()
+	_, _, err := m.check()
 	require.NoError(t, err)
 
 	port = 0
-	_, err = m.check()
+	_, _, err = m.check()
 	require.NoError(t, err)
 
 	got, known := m.LastPeerPort()
@@ -480,7 +480,7 @@ func TestPortMonitor_LastPeerPortUnknownWithoutGluetun(t *testing.T) {
 	defer transmissionSrv.Close()
 
 	m := NewPortMonitor(newTestTransmissionClient(t, transmissionSrv.URL), nil, NtfyConfig{})
-	_, err := m.check()
+	_, _, err := m.check()
 	require.NoError(t, err)
 
 	got, known := m.LastPeerPort()

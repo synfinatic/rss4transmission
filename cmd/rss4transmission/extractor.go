@@ -39,19 +39,25 @@ func validateLabelRegexp(name, pattern string, re *regexp.Regexp) error {
 	return nil
 }
 
-func (es *ExtractorSet) compile() {
+// Compile builds the regexes for every label. It returns an error rather than
+// calling log.Fatalf so that loadConfig can reject a bad pattern and leave the
+// previously running config in effect, which matters on a live config reload.
+//
+// loadConfig calls this for every set at load time, so by the time extraction
+// runs the set is already compiled and validated.
+func (es *ExtractorSet) Compile() error {
 	if es.isCompiled {
-		return
+		return nil
 	}
-	es.compiledLabels = make(map[string]*compiledLabel, len(es.Labels))
+	compiled := make(map[string]*compiledLabel, len(es.Labels))
 	for name, def := range es.Labels {
 		cl := &compiledLabel{}
 		var err error
 		if cl.re, err = regexp.Compile(def.Regexp); err != nil {
-			log.WithError(err).Fatalf("label %q: invalid Regexp: %s", name, def.Regexp)
+			return fmt.Errorf("label %q: invalid Regexp %q: %w", name, def.Regexp, err)
 		}
 		if err = validateLabelRegexp(name, def.Regexp, cl.re); err != nil {
-			log.WithError(err).Fatalf("invalid extractor label config")
+			return err
 		}
 		// Sort normalize patterns for deterministic order.
 		patterns := make([]string, 0, len(def.Normalize))
@@ -62,13 +68,27 @@ func (es *ExtractorSet) compile() {
 		for _, p := range patterns {
 			r, err := regexp.Compile(p)
 			if err != nil {
-				log.WithError(err).Fatalf("label %q: invalid Normalize pattern: %s", name, p)
+				return fmt.Errorf("label %q: invalid Normalize pattern %q: %w", name, p, err)
 			}
 			cl.normalize = append(cl.normalize, normalizeRule{re: r, value: def.Normalize[p]})
 		}
-		es.compiledLabels[name] = cl
+		compiled[name] = cl
 	}
+	// Published only once every label compiled, so a failed Compile leaves the
+	// set exactly as it was rather than half-built.
+	es.compiledLabels = compiled
 	es.isCompiled = true
+	return nil
+}
+
+// compile is the lazy path used by extraction. Compile has normally already
+// run at config load; a set built directly (in tests, or by a caller that
+// skipped loadConfig) compiles here instead. A bad pattern extracts nothing
+// rather than ending the process.
+func (es *ExtractorSet) compile() {
+	if err := es.Compile(); err != nil {
+		log.WithError(err).Error("Unable to compile extractor labels")
+	}
 }
 
 // ExtractLabels extracts labels from s. Labels whose regex does not match are

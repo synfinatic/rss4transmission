@@ -1094,3 +1094,48 @@ func TestNewSpeedtestClient_LeavesDefaultClientAlone(t *testing.T) {
 		t.Error("http.DefaultClient.Transport was replaced, want it left untouched")
 	}
 }
+
+// A config reload rebuilds the monitor by cancelling the old one's context, so
+// a monitor that ignored the cancel would leave a goroutine measuring against
+// a config that is no longer in effect.
+func TestSpeedMonitor_Run_ReturnsWhenContextIsCancelled(t *testing.T) {
+	f := &fakeDeps{result: SpeedResult{DownloadMbps: 400}}
+	m, _ := newTestMonitor(t, testSpeedCfg(), f)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		m.Run(ctx)
+		close(done)
+	}()
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after its context was cancelled")
+	}
+}
+
+// The measurement itself must stop too: a speedtest runs for tens of seconds
+// and moves hundreds of megabytes, so a rebuild has to be able to abandon one
+// in flight rather than wait it out.
+func TestSpeedMonitor_Measure_PassesTheContextToTheRunner(t *testing.T) {
+	var got context.Context
+	m, _ := newTestMonitor(t, testSpeedCfg(), &fakeDeps{})
+	m.runTest = func(ctx context.Context) (SpeedResult, error) {
+		got = ctx
+		return SpeedResult{DownloadMbps: 400}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	m.measure(ctx, false)
+
+	if got == nil {
+		t.Fatal("the runner was called without a context")
+	}
+	if got.Err() == nil {
+		t.Error("the runner got a context that does not carry the cancellation")
+	}
+}

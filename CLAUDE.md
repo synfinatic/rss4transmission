@@ -67,9 +67,13 @@ go run ./cmd/rss4transmission/... watch --help
 All code lives in `cmd/rss4transmission/` as a single `main` package. There are no sub-packages.
 
 **Entry point & wiring (`main.go`)**: Parses CLI with `kong`, loads config via `koanf`, opens the
-seen-cache, validates feed and extractor configs, creates the `transmissionrpc.Client`, then delegates
-to a subcommand. The `RunContext` struct is threaded through every command — it holds the live config,
-cache, and Transmission client.
+seen-cache, creates the `transmissionrpc.Client`, then delegates to a subcommand. `loadConfig` does
+all validation — ntfy templates, `SpeedTest`, `Transmission`, `Gluetun`, extractors, and feeds — and
+assigns `rc.Config` only after every check passes, so a bad reload leaves the running config intact.
+`RunContext` is threaded through every command and holds the live config, the cache, the long-lived
+`watch` components, and the Transmission client. It does not keep the `koanf` tree: `rc.Config` is
+the single source of truth. Read the RPC client through `rc.Tx()`, never from a captured field — a
+reload can replace it.
 
 **Two commands**:
 - `once` (`once.go`): Groups feeds by URL so each RSS endpoint is fetched exactly once. For each feed,
@@ -81,6 +85,16 @@ cache, and Transmission client.
   mode.
 - `watch` (`watch.go`): Wraps `once` in a ticker loop. Also watches the config file for live reloads
   (`koanf` file provider). Optionally manages a Gluetun VPN tunnel.
+
+**Live config reload (`reconfigure.go`)**: `configReloader` debounces file events and calls
+`loadConfig` followed by `rc.applyConfig(prev, next)`, both under `reloader.mu` — the one lock that
+guards `ctx.Config` and every field `applyConfig` writes. `applyConfig` rebuilds the Transmission
+client when the origin moves, reopens the seen cache when `SeenFile` moves, updates the token store
+TTLs, attaches or detaches `rc.Gluetun`, rebuilds the speed monitor when the `SpeedTest`, `Ntfy`, or
+`Gluetun` block changes, and pushes a `portMonitorUpdate` that the port monitor consumes at the top
+of its next `check()`. `WatchCmd.Run` calls `applyConfig(Config{}, ctx.Config)` for the initial
+wiring, so startup and reload cannot drift. HTTP routes are registered once and read live config per
+request, so a feature that is turned off answers 404 instead of disappearing from the mux.
 
 **Feed filtering (`config.go`, `feed.go`)**: All feeds share `Exclude` (raw regex pre-filter, applied
 before anything else) and `MinSize`/`MaxSize`. Label mode adds: `Extractor` references a named extractor

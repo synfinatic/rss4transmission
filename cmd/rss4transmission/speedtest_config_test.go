@@ -130,7 +130,7 @@ SpeedTest:
 	}
 
 	rc := &RunContext{}
-	if _, err := rc.loadConfig(cfgFile); err != nil {
+	if err := rc.loadConfig(cfgFile); err != nil {
 		t.Fatalf("loadConfig returned error: %v", err)
 	}
 
@@ -170,7 +170,7 @@ SpeedTest:
 	}
 
 	rc := &RunContext{}
-	if _, err := rc.loadConfig(cfgFile); err == nil {
+	if err := rc.loadConfig(cfgFile); err == nil {
 		t.Fatal("loadConfig returned nil error, want failure")
 	}
 	if rc.Config.SpeedTest.Enabled {

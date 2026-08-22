@@ -626,7 +626,7 @@ func TestDispatch_RealSubmit_StopsProcessing(t *testing.T) {
 	ctx := &RunContext{
 		Cache:        emptyCache(),
 		History:      &HistoryFile{guidIndex: map[string]int{}},
-		Transmission: client,
+		transmission: client,
 	}
 	cmd := &OnceCmd{}
 	stop := cmd.dispatch(ctx, feedCfg, "testfeed", c, keys)
@@ -657,7 +657,7 @@ func TestDispatch_Notify_DoesNotSubmitToTransmission(t *testing.T) {
 	ctx := &RunContext{
 		Cache:        emptyCache(),
 		History:      &HistoryFile{guidIndex: map[string]int{}},
-		Transmission: client,
+		transmission: client,
 	}
 	cmd := &OnceCmd{}
 	stop := cmd.dispatch(ctx, feedCfg, "testfeed", c, keys)
@@ -746,7 +746,7 @@ func TestRetryHistoryItem_Success(t *testing.T) {
 	ctx := &RunContext{
 		Cache:        emptyCache(),
 		History:      &HistoryFile{guidIndex: map[string]int{}},
-		Transmission: client,
+		transmission: client,
 		Config:       Config{Feeds: []Feed{feedCfg}},
 	}
 	ctx.History.AddOrUpdateRecord(NewHistoryRecord("testfeed",

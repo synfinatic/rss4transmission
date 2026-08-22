@@ -217,8 +217,8 @@ reconnect to the same exit. See
 [VPN Rotation Notifications](notifications.md#vpn-rotation-notifications).
 
 Without a `Gluetun` block, `SpeedTest` still runs in measure-only mode: results are recorded and
-served, but nothing rotates. Note that the Gluetun client is built once at startup and is not
-rebuilt on config reload; the speed monitor inherits that limitation.
+served, but nothing rotates. Adding the block to a running `watch` turns rotation on: the reload
+builds the Gluetun client and rebuilds the speed monitor around it.
 
 ## Two views of the exit IP
 

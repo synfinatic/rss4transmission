@@ -242,7 +242,7 @@ Feeds:
 	}
 
 	rc := &RunContext{}
-	if _, err := rc.loadConfig(cfgPath); err != nil {
+	if err := rc.loadConfig(cfgPath); err != nil {
 		t.Fatalf("loadConfig failed: %v", err)
 	}
 
@@ -265,7 +265,7 @@ func TestLoadConfig_PortCheckEnabledDefaultsFalse(t *testing.T) {
 	}
 
 	rc := &RunContext{}
-	if _, err := rc.loadConfig(cfgPath); err != nil {
+	if err := rc.loadConfig(cfgPath); err != nil {
 		t.Fatalf("loadConfig failed: %v", err)
 	}
 
@@ -289,7 +289,7 @@ Feeds:
 	}
 
 	rc := &RunContext{}
-	if _, err := rc.loadConfig(cfgPath); err == nil {
+	if err := rc.loadConfig(cfgPath); err == nil {
 		t.Error("expected loadConfig to reject duplicate feed names")
 	}
 }
@@ -306,7 +306,7 @@ Feeds:
 	}
 
 	rc := &RunContext{}
-	if _, err := rc.loadConfig(cfgPath); err == nil {
+	if err := rc.loadConfig(cfgPath); err == nil {
 		t.Error("expected loadConfig to reject a blank feed name")
 	}
 }
@@ -339,7 +339,7 @@ Feeds:
 	}
 
 	rc := &RunContext{}
-	if _, err := rc.loadConfig(cfgPath); err != nil {
+	if err := rc.loadConfig(cfgPath); err != nil {
 		t.Fatalf("initial loadConfig failed: %v", err)
 	}
 	if len(rc.Config.Feeds) != 2 {
@@ -357,7 +357,7 @@ Feeds:
 		t.Fatalf("failed to overwrite config: %v", err)
 	}
 
-	if _, err := rc.loadConfig(cfgPath); err == nil {
+	if err := rc.loadConfig(cfgPath); err == nil {
 		t.Error("expected reload with duplicate feed names to fail")
 	}
 
@@ -397,7 +397,7 @@ Feeds:
 	}
 
 	rc := &RunContext{}
-	if _, err := rc.loadConfig(cfgPath); err != nil {
+	if err := rc.loadConfig(cfgPath); err != nil {
 		t.Fatalf("initial loadConfig failed: %v", err)
 	}
 
@@ -413,7 +413,7 @@ Feeds:
 		t.Fatalf("failed to overwrite config: %v", err)
 	}
 
-	if _, err := rc.loadConfig(cfgPath); err == nil {
+	if err := rc.loadConfig(cfgPath); err == nil {
 		t.Error("expected reload with a feed missing Identity/Groups to fail")
 	}
 	if len(rc.Config.Feeds[0].Groups) == 0 || len(rc.Config.Feeds[0].Identity) == 0 {
@@ -442,7 +442,7 @@ Feeds:
 	}
 
 	rc := &RunContext{}
-	if _, err := rc.loadConfig(cfgPath); err != nil {
+	if err := rc.loadConfig(cfgPath); err != nil {
 		t.Fatalf("initial loadConfig failed: %v", err)
 	}
 
@@ -460,7 +460,7 @@ Feeds:
 		t.Fatalf("failed to overwrite config: %v", err)
 	}
 
-	if _, err := rc.loadConfig(cfgPath); err == nil {
+	if err := rc.loadConfig(cfgPath); err == nil {
 		t.Error("expected reload referencing an unknown Extractor to fail")
 	}
 	if rc.Config.Feeds[0].Extractor != "demo" {
@@ -523,12 +523,189 @@ func TestLoadConfig_TransmissionWebUI(t *testing.T) {
 				t.Fatal(err)
 			}
 			rc := &RunContext{}
-			if _, err := rc.loadConfig(cfgFile); err != nil {
+			if err := rc.loadConfig(cfgFile); err != nil {
 				t.Fatalf("loadConfig returned error: %v", err)
 			}
 			if got := rc.Config.Transmission.WebUI; got != tt.want {
 				t.Errorf("Transmission.WebUI = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// The checks below all used to live in lazily-called code that ran
+// log.Fatalf on bad input: Feed.compile (Exclude, MinSize, MaxSize),
+// ExtractorSet.compile (Regexp, Normalize) and NewGluetun (Rotate). A typo
+// saved into the config of a running `watch` therefore killed the daemon
+// instead of being rejected. loadConfig must reject each one up front so the
+// previously running config stays in effect.
+func TestLoadConfig_RejectsUnusableValues(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "bad Exclude regexp",
+			yaml: validExtractorYAML + `
+Feeds:
+  - Name: F
+    URL: https://example.com/f
+    Extractor: demo
+    Identity: [series]
+    Exclude: ['[unterminated']
+    Groups:
+      - Require:
+          series: [X]
+`,
+		},
+		{
+			name: "bad MinSize",
+			yaml: validExtractorYAML + `
+Feeds:
+  - Name: F
+    URL: https://example.com/f
+    Extractor: demo
+    Identity: [series]
+    MinSize: not-a-size
+    Groups:
+      - Require:
+          series: [X]
+`,
+		},
+		{
+			name: "bad MaxSize",
+			yaml: validExtractorYAML + `
+Feeds:
+  - Name: F
+    URL: https://example.com/f
+    Extractor: demo
+    Identity: [series]
+    MaxSize: 12 platypuses
+    Groups:
+      - Require:
+          series: [X]
+`,
+		},
+		{
+			name: "bad extractor Regexp",
+			yaml: `
+Extractors:
+  demo:
+    Labels:
+      series:
+        Regexp: '([unterminated'
+`,
+		},
+		{
+			name: "extractor Regexp without a capture group",
+			yaml: `
+Extractors:
+  demo:
+    Labels:
+      series:
+        Regexp: 'no-captures-here'
+`,
+		},
+		{
+			name: "bad extractor Normalize pattern",
+			yaml: `
+Extractors:
+  demo:
+    Labels:
+      series:
+        Regexp: '(.+)'
+        Normalize:
+          '[unterminated': canonical
+`,
+		},
+		{
+			name: "bad Gluetun Rotate",
+			yaml: validExtractorYAML + `
+Gluetun:
+  Host: gluetun
+  Port: 8000
+  Rotate: every-other-tuesday
+`,
+		},
+		{
+			name: "Gluetun Host without Port",
+			yaml: validExtractorYAML + `
+Gluetun:
+  Host: gluetun
+`,
+		},
+		{
+			name: "Transmission port above the valid range",
+			yaml: validExtractorYAML + `
+Transmission:
+  Port: 99999
+`,
+		},
+		{
+			name: "Transmission port below the valid range",
+			yaml: validExtractorYAML + `
+Transmission:
+  Port: -1
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(cfgPath, []byte(tt.yaml), 0600); err != nil {
+				t.Fatalf("failed to write config: %v", err)
+			}
+			rc := &RunContext{}
+			if err := rc.loadConfig(cfgPath); err == nil {
+				t.Fatal("loadConfig returned nil error, want a rejection")
+			}
+		})
+	}
+}
+
+// The reload counterpart of the table above: a bad Exclude arriving on a
+// live reload must leave the running config untouched, the same guarantee
+// TestLoadConfig_BadReload_KeepsPreviousGoodConfig makes for feed names.
+func TestLoadConfig_BadExcludeReload_KeepsPreviousGoodConfig(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	goodYAML := validExtractorYAML + `
+Feeds:
+  - Name: Good
+    URL: https://example.com/1
+    Extractor: demo
+    Identity: [series]
+    Exclude: ['^sample']
+    Groups:
+      - Require:
+          series: [X]
+`
+	if err := os.WriteFile(cfgPath, []byte(goodYAML), 0600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+	rc := &RunContext{}
+	if err := rc.loadConfig(cfgPath); err != nil {
+		t.Fatalf("initial loadConfig failed: %v", err)
+	}
+
+	badYAML := validExtractorYAML + `
+Feeds:
+  - Name: Good
+    URL: https://example.com/1
+    Extractor: demo
+    Identity: [series]
+    Exclude: ['[unterminated']
+    Groups:
+      - Require:
+          series: [X]
+`
+	if err := os.WriteFile(cfgPath, []byte(badYAML), 0600); err != nil {
+		t.Fatalf("failed to rewrite config: %v", err)
+	}
+	if err := rc.loadConfig(cfgPath); err == nil {
+		t.Fatal("reload with a bad Exclude returned nil error, want a rejection")
+	}
+	if len(rc.Config.Feeds) != 1 || rc.Config.Feeds[0].Exclude[0] != "^sample" {
+		t.Errorf("previous config was not preserved: %+v", rc.Config.Feeds)
 	}
 }
