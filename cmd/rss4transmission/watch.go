@@ -264,7 +264,7 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, removeT removeFunc, getProg
 				log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 			}
 			privMux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, nav)
-			registerSpeedRoutes(privMux, ctx.Speed, ctx.PeerPortOpen, ctx.ExitIP, ctx.SpeedActions, nav)
+			registerSpeedRoutes(privMux, ctx.Speed, ctx.PeerPortOpen, ctx.PeerPort, ctx.ExitIP, ctx.SpeedActions, nav)
 			if txTarget != nil {
 				registerTransmissionRoutes(privMux, txTarget, tx.Username, tx.Password, nav)
 			}
@@ -280,7 +280,7 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, removeT removeFunc, getProg
 			log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 		}
 		mux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, nav)
-		registerSpeedRoutes(mux, ctx.Speed, ctx.PeerPortOpen, ctx.ExitIP, ctx.SpeedActions, nav)
+		registerSpeedRoutes(mux, ctx.Speed, ctx.PeerPortOpen, ctx.PeerPort, ctx.ExitIP, ctx.SpeedActions, nav)
 		if txTarget != nil {
 			registerTransmissionRoutes(mux, txTarget, tx.Username, tx.Password, nav)
 		}
@@ -435,6 +435,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	if g != nil || ctx.Config.PortCheck.Enabled {
 		portMonitor = NewPortMonitor(ctx.Transmission, g, ctx.Config.Ntfy)
 		ctx.PeerPortOpen = portMonitor.LastOpen
+		ctx.PeerPort = portMonitor.LastPeerPort
 		// Set before startSpeedMonitor: that is what builds the SpeedMonitor,
 		// which reads it for the exit IP its rotation alerts name.
 		ctx.ExitIP = exitIPSource(g, portMonitor)

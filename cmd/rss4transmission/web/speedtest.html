@@ -100,6 +100,26 @@
             <span class="value">{{ if .ExitIP }}{{ .ExitIP }}{{ if .ExitIPSource }} <span class="source">({{ .ExitIPSource }})</span>{{ end }}{{ else }}&mdash;{{ end }}</span>
         </div>
         <div>
+            <span class="label">Forwarded port</span>
+            {{- if .PeerPortKnown }}
+            <span class="value">{{ .PeerPort }}</span>
+            {{- else }}
+            <span class="value muted">&mdash;</span>
+            {{- end }}
+        </div>
+        <div>
+            <span class="label">Port open</span>
+            {{- if .PortOpenKnown }}
+            {{- if .PortOpen }}
+            <span class="value ok">yes</span>
+            {{- else }}
+            <span class="value error">no</span>
+            {{- end }}
+            {{- else }}
+            <span class="value muted">&mdash;</span>
+            {{- end }}
+        </div>
+        <div>
             <span class="label">Rotations</span>
             <span class="value"><a href="/rotations">{{ len .Rotations }}</a></span>
         </div>

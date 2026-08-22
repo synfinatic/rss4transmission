@@ -30,7 +30,7 @@ func TestNav_LinksTransmissionWhenEnabled(t *testing.T) {
 func TestNav_SpeedPagesLinkTransmission(t *testing.T) {
 	sf := &SpeedFile{}
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, sf, nil, nil, speedActions{}, navConfig{Transmission: true})
+	registerSpeedRoutes(mux, sf, nil, nil, nil, speedActions{}, navConfig{Transmission: true})
 
 	for _, page := range []string{"/speedtest", "/rotations"} {
 		_, body := getBody(t, mux, page)

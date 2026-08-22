@@ -209,8 +209,12 @@ the tunnel's peer either. Gluetun's own startup log is the only place that addre
 
 With `--private-listen` set, the private web server serves:
 
-- `GET /speedtest` — recent measurements, the current exit IP as reported by Gluetun, and a
-  **Last rotation** tile giving the date, time and source of the most recent rotation
+- `GET /speedtest` — recent measurements, the current exit IP as reported by Gluetun, a
+  **Last rotation** tile giving the date, time and source of the most recent rotation, and a
+  **Forwarded port** / **Port open** pair. The port comes from Gluetun's `GET /v1/portforward` on
+  the same 5-minute port check that refreshes the exit IP. The open state is the result of
+  Transmission's own port test on that check. Each reads `—` until the first check answers, so
+  "not checked yet" never looks like "closed" or "no port forwarded"
 - `GET /rotations` — the rotation log, on its own page because measurements arrive every
   `Interval` while rotations are rare, and one combined page meant scrolling past hours of rows to
   reach them. Every rotation is logged, not only the speedtest-driven ones: the **Source** column
