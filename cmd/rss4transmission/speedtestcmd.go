@@ -26,14 +26,23 @@ import (
 )
 
 type SpeedTestCmd struct {
-	Save bool `kong:"help='Record the result in SpeedTest.ResultsFile'"`
+	Save   bool   `kong:"help='Record the result in SpeedTest.ResultsFile'"`
+	Server string `kong:"help='Test this speedtest.net server ID instead of SpeedTest.ServerID'"`
 }
 
 // oneShotSpeedConfig prepares the SpeedTest config for a single manual run.
 // Enabled is forced on: the whole point of this command is to prove the proxy
 // is wired up correctly *before* the user turns the background monitor on.
-func oneShotSpeedConfig(cfg SpeedTestConfig) (SpeedTestConfig, error) {
+//
+// serverID overrides SpeedTest.ServerID when it is not empty, so candidates can
+// be compared over the same proxy the monitor uses without an edit to the
+// config file between runs. That matters because a server can carry download at
+// full rate and fail upload entirely, which only a real run reveals.
+func oneShotSpeedConfig(cfg SpeedTestConfig, serverID string) (SpeedTestConfig, error) {
 	cfg.Enabled = true
+	if serverID != "" {
+		cfg.ServerID = serverID
+	}
 	if err := cfg.Validate(); err != nil {
 		return cfg, err
 	}
@@ -90,7 +99,7 @@ func speedResultForOutput(r SpeedResult, err error) SpeedResult {
 }
 
 func (cmd *SpeedTestCmd) Run(ctx *RunContext) error {
-	cfg, err := oneShotSpeedConfig(ctx.Config.SpeedTest)
+	cfg, err := oneShotSpeedConfig(ctx.Config.SpeedTest, cmd.Server)
 	if err != nil {
 		return fmt.Errorf("invalid SpeedTest configuration: %w", err)
 	}

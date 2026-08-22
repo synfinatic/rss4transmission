@@ -20,8 +20,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/showwin/speedtest-go/speedtest"
@@ -476,15 +479,7 @@ func newSpeedtestRunner(cfg SpeedTestConfig) (speedTestFunc, error) {
 	return func(ctx context.Context) (SpeedResult, error) {
 		result := SpeedResult{At: time.Now()}
 
-		st := speedtest.New(speedtest.WithUserConfig(&speedtest.UserConfig{
-			Proxy:          cfg.Proxy,
-			UserAgent:      fmt.Sprintf("rss4transmission/%s", Version),
-			MaxConnections: threads,
-			// HTTP ping is mandatory here: ICMP and raw-TCP probes cannot
-			// traverse an HTTP CONNECT proxy, so any other mode would either
-			// fail outright or measure the host's path instead of the VPN's.
-			PingMode: speedtest.HTTP,
-		}))
+		st := newSpeedtestClient(cfg, threads)
 
 		// The IP speedtest.net sees is the VPN exit IP. If it ever matches the
 		// host's own public IP, the proxy isn't being used and every number
@@ -517,17 +512,155 @@ func newSpeedtestRunner(cfg SpeedTestConfig) (speedTestFunc, error) {
 		if err := server.DownloadTestContext(ctx); err != nil {
 			return result, fmt.Errorf("download test failed: %w", err)
 		}
-		result.DownloadMbps = server.DLSpeed.Mbps()
+		dlMbps, err := downloadMbps(server.DLSpeed)
+		if err != nil {
+			return result, err
+		}
+		result.DownloadMbps = dlMbps
 
 		if !cfg.DownloadOnly {
 			if err := server.UploadTestContext(ctx); err != nil {
 				return result, fmt.Errorf("upload test failed: %w", err)
 			}
-			result.UploadMbps = server.ULSpeed.Mbps()
+			mbps, err := uploadMbps(server.ULSpeed)
+			if err != nil {
+				return result, err
+			}
+			result.UploadMbps = mbps
 		}
 
 		return result, nil
 	}, nil
+}
+
+// rateNotAvailable is the sentinel speedtest-go uses for "N/A" on both the
+// download and upload legs (speedtest/request.go).
+const rateNotAvailable speedtest.ByteRate = -1
+
+// downloadMbps converts speedtest-go's download rate to Mbps, or reports the
+// dead download leg it declined to report itself.
+//
+// When every download request fails, speedtest-go returns no error and instead
+// sets DLSpeed to the -1 sentinel it prints as "N/A" (speedtest/request.go).
+// Divided by 125000 that is -0.000008 Mbps, which is indistinguishable from a
+// real measurement of a very slow link: it renders as "-0.0" in the web UI and
+// it sits below any MinDownloadMbps floor, so it requests a rotation on every
+// run. Rotation cannot fix it. Report it as the failure it is instead, which
+// leaves OK() false and stops shouldRotate before it looks at the floors.
+//
+// A genuine zero is left alone: speedtest-go sets the sentinel only when the
+// request error rate also exceeds 10%, so a zero rate here is a measurement of
+// a dead link and the download floor must still act on it.
+func downloadMbps(rate speedtest.ByteRate) (float64, error) {
+	if rate == rateNotAvailable {
+		return 0, fmt.Errorf("download test reported no throughput: every download request " +
+			"to the speedtest server failed")
+	}
+	return rate.Mbps(), nil
+}
+
+// uploadMbps converts speedtest-go's upload rate to Mbps, or reports the dead
+// upload leg it declined to report itself.
+//
+// When every upload request fails, speedtest-go returns no error and instead
+// sets ULSpeed to the -1 sentinel it prints as "N/A" (speedtest/request.go).
+// Divided by 125000 that is -0.000008 Mbps, which is indistinguishable from a
+// real measurement of a very slow link: it renders as "-0.0" in the web UI and
+// it sits below any MinUploadMbps floor, so it requests a rotation on every
+// run. Rotation cannot fix it. The server is chosen from speedtest.net's list
+// and not from the exit, so a server with a broken upload endpoint survives
+// every rotation. Report it as the failure it is instead, which leaves OK()
+// false and stops shouldRotate before it looks at the floors.
+//
+// A genuine zero is left alone: speedtest-go sets the sentinel only when the
+// request error rate also exceeds 10%, so a zero rate here is a measurement of
+// a dead link and the upload floor must still act on it.
+func uploadMbps(rate speedtest.ByteRate) (float64, error) {
+	if rate == rateNotAvailable {
+		return 0, fmt.Errorf("upload test reported no throughput: every upload request " +
+			"to the speedtest server failed")
+	}
+	return rate.Mbps(), nil
+}
+
+// speedtestConfigHost serves the config and server-list endpoints, and is the
+// only host behind the shared Cloudflare cache. The throughput legs run against
+// per-server hosts, whose URLs carry parameters the server itself parses.
+const speedtestConfigHost = "www.speedtest.net"
+
+// cacheBusterParam is namespaced so it cannot collide with a parameter Ookla
+// reads.
+const cacheBusterParam = "r4tnocache"
+
+// cacheBuster forces www.speedtest.net requests past the Cloudflare cache.
+//
+// speedtest-config.php reports the caller's IP and coordinates, and Cloudflare
+// caches it without regard to who is asking. A HIT therefore returns the
+// response built for whoever populated that edge: observed values included a
+// Cox Business address in Tempe, a Comcast address, and a Zscaler address, none
+// of them this host's exit. speedtest-go reads that as its own identity and
+// picks a server near the stranger, which is how a fixed tunnel produced a
+// server list that moved between Los Angeles, Texas, and Arizona.
+//
+// Cloudflare's default cache key includes the query string, so a value that is
+// unique per request reaches the origin.
+type cacheBuster struct {
+	next http.RoundTripper
+	seq  atomic.Uint64
+}
+
+func (c *cacheBuster) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Host != speedtestConfigHost {
+		return c.next.RoundTrip(req)
+	}
+	// RoundTrip must not modify the request it is given.
+	clone := req.Clone(req.Context())
+	q := clone.URL.Query()
+	q.Set(cacheBusterParam, c.token())
+	clone.URL.RawQuery = q.Encode()
+	return c.next.RoundTrip(clone)
+}
+
+// token pairs the clock with a counter: the counter alone repeats across a
+// restart, and the clock alone can repeat when two requests share a nanosecond.
+func (c *cacheBuster) token() string {
+	return strconv.FormatInt(time.Now().UnixNano(), 36) + "-" +
+		strconv.FormatUint(c.seq.Add(1), 36)
+}
+
+// newSpeedtestClient builds the speedtest-go client with its HTTP path wrapped
+// in a cacheBuster, so identity and server selection come from the origin.
+//
+// It also repairs a global that speedtest-go mutates. New() assigns its doer to
+// http.DefaultClient and calls NewUserConfig, which sets that client's Transport
+// to the Speedtest itself -- and it does both before it applies any option, so
+// WithDoer redirects later requests without undoing the assignment. Left alone,
+// every http.DefaultClient caller in this process (Gluetun.control,
+// fetchTorrentBytes) moves onto the VPN proxy after the first measurement.
+// Saving and restoring the field is racy in principle, but the window spans one
+// constructor with no I/O in it.
+func newSpeedtestClient(cfg SpeedTestConfig, threads int) *speedtest.Speedtest {
+	saved := http.DefaultClient.Transport
+	client := &http.Client{}
+
+	// WithDoer must precede WithUserConfig: NewUserConfig is what assigns
+	// client.Transport, and it reads whichever doer is current when it runs.
+	st := speedtest.New(
+		speedtest.WithDoer(client),
+		speedtest.WithUserConfig(&speedtest.UserConfig{
+			Proxy:          cfg.Proxy,
+			UserAgent:      fmt.Sprintf("rss4transmission/%s", Version),
+			MaxConnections: threads,
+			// HTTP ping is mandatory here: ICMP and raw-TCP probes cannot
+			// traverse an HTTP CONNECT proxy, so any other mode would either
+			// fail outright or measure the host's path instead of the VPN's.
+			PingMode: speedtest.HTTP,
+		}),
+	)
+
+	http.DefaultClient.Transport = saved
+	client.Transport = &cacheBuster{next: client.Transport}
+	return st
 }
 
 // pickServer returns the configured speedtest.net server, or the closest one

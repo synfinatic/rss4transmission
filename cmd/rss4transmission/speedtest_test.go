@@ -889,3 +889,208 @@ func TestSpeedMonitor_MeasureNowSaysItNeverRotates(t *testing.T) {
 		t.Error("measureNow staged a rotation")
 	}
 }
+
+// ---- upload sentinel ----
+
+// speedtest-go reports a dead upload leg by setting ULSpeed to -1 and returning
+// no error (speedtest/request.go). Divided by 125000 that becomes -0.000008
+// Mbps, which reads as a real measurement far below MinUploadMbps and drives a
+// rotation that cannot help: the broken leg belongs to the speedtest server,
+// not to the exit.
+func TestUploadMbps_RejectsNotAvailableSentinel(t *testing.T) {
+	got, err := uploadMbps(-1)
+	if err == nil {
+		t.Fatalf("uploadMbps(-1) = %v, nil error, want an error for the N/A sentinel", got)
+	}
+	if !strings.Contains(err.Error(), "upload") {
+		t.Errorf("error = %q, want it to name the upload leg", err)
+	}
+}
+
+func TestUploadMbps_ConvertsRealRate(t *testing.T) {
+	got, err := uploadMbps(125000 * 100)
+	if err != nil {
+		t.Fatalf("uploadMbps: %v", err)
+	}
+	if got != 100 {
+		t.Errorf("uploadMbps = %v Mbps, want 100", got)
+	}
+}
+
+// A zero rate with a low request error rate is a real measurement of a dead
+// link, not the sentinel. MinUploadMbps must still see it and rotate.
+func TestUploadMbps_KeepsGenuineZero(t *testing.T) {
+	got, err := uploadMbps(0)
+	if err != nil {
+		t.Fatalf("uploadMbps: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("uploadMbps = %v Mbps, want 0", got)
+	}
+}
+
+// speedtest-go reports a dead download leg by setting DLSpeed to -1 and
+// returning no error (speedtest/request.go). Divided by 125000 that becomes
+// -0.000008 Mbps, which reads as a real measurement far below MinDownloadMbps
+// and drives a rotation that cannot help.
+func TestDownloadMbps_RejectsNotAvailableSentinel(t *testing.T) {
+	got, err := downloadMbps(-1)
+	if err == nil {
+		t.Fatalf("downloadMbps(-1) = %v, nil error, want an error for the N/A sentinel", got)
+	}
+	if !strings.Contains(err.Error(), "download") {
+		t.Errorf("error = %q, want it to name the download leg", err)
+	}
+}
+
+func TestDownloadMbps_ConvertsRealRate(t *testing.T) {
+	got, err := downloadMbps(125000 * 100)
+	if err != nil {
+		t.Fatalf("downloadMbps: %v", err)
+	}
+	if got != 100 {
+		t.Errorf("downloadMbps = %v Mbps, want 100", got)
+	}
+}
+
+// A zero rate with a low request error rate is a real measurement of a dead
+// link, not the sentinel. MinDownloadMbps must still see it and rotate.
+func TestDownloadMbps_KeepsGenuineZero(t *testing.T) {
+	got, err := downloadMbps(0)
+	if err != nil {
+		t.Fatalf("downloadMbps: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("downloadMbps = %v Mbps, want 0", got)
+	}
+}
+
+// ---- cache buster ----
+
+// captureRT records the requests it is handed and returns a canned response.
+type captureRT struct {
+	got []*http.Request
+}
+
+func (c *captureRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.got = append(c.got, req)
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader("")),
+		Header:     http.Header{},
+	}, nil
+}
+
+func mustRoundTrip(t *testing.T, rt http.RoundTripper, rawURL string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	resp, err := rt.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	_ = resp.Body.Close()
+}
+
+// Cloudflare fronts speedtest-config.php with a cache that ignores who is
+// asking, so a HIT hands back the address and coordinates of whoever populated
+// the edge. A unique query parameter forces the origin, because Cloudflare
+// includes the query string in its cache key.
+func TestCacheBuster_AddsUniqueParam(t *testing.T) {
+	next := &captureRT{}
+	cb := &cacheBuster{next: next}
+
+	mustRoundTrip(t, cb, "https://www.speedtest.net/speedtest-config.php")
+	mustRoundTrip(t, cb, "https://www.speedtest.net/speedtest-config.php")
+
+	if len(next.got) != 2 {
+		t.Fatalf("next saw %d requests, want 2", len(next.got))
+	}
+	first := next.got[0].URL.Query().Get(cacheBusterParam)
+	second := next.got[1].URL.Query().Get(cacheBusterParam)
+	if first == "" || second == "" {
+		t.Fatalf("cache buster param missing: %q, %q", first, second)
+	}
+	if first == second {
+		t.Errorf("both requests used %q, want a unique value per request", first)
+	}
+	if next.got[0].URL.Path != "/speedtest-config.php" {
+		t.Errorf("path = %q, want it left alone", next.got[0].URL.Path)
+	}
+}
+
+// The server list endpoint takes a search keyword and coordinates. Busting the
+// cache must not drop them.
+func TestCacheBuster_PreservesExistingQuery(t *testing.T) {
+	next := &captureRT{}
+	cb := &cacheBuster{next: next}
+
+	mustRoundTrip(t, cb, "https://www.speedtest.net/api/js/servers?search=austin&lat=37.751")
+
+	q := next.got[0].URL.Query()
+	if q.Get("search") != "austin" {
+		t.Errorf("search = %q, want %q", q.Get("search"), "austin")
+	}
+	if q.Get("lat") != "37.751" {
+		t.Errorf("lat = %q, want %q", q.Get("lat"), "37.751")
+	}
+	if q.Get(cacheBusterParam) == "" {
+		t.Error("cache buster param missing")
+	}
+}
+
+// The throughput legs run against per-server hosts, whose URLs carry parameters
+// the server itself parses. Only the Cloudflare-fronted host may be rewritten.
+func TestCacheBuster_IgnoresOtherHosts(t *testing.T) {
+	next := &captureRT{}
+	cb := &cacheBuster{next: next}
+
+	const raw = "https://speedtest.example.net/upload.php?nocache=1"
+	mustRoundTrip(t, cb, raw)
+
+	if got := next.got[0].URL.String(); got != raw {
+		t.Errorf("URL = %q, want it passed through as %q", got, raw)
+	}
+}
+
+// RoundTrip must not modify the request it is given.
+func TestCacheBuster_DoesNotMutateRequest(t *testing.T) {
+	next := &captureRT{}
+	cb := &cacheBuster{next: next}
+
+	req, err := http.NewRequest(http.MethodGet, "https://www.speedtest.net/speedtest-config.php", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	resp, err := cb.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if req.URL.RawQuery != "" {
+		t.Errorf("caller's request was mutated: RawQuery = %q, want empty", req.URL.RawQuery)
+	}
+}
+
+// speedtest-go's New() assigns its doer to http.DefaultClient and NewUserConfig
+// points that client's Transport at the Speedtest -- before any option runs, so
+// WithDoer does not undo it. Left alone, every http.DefaultClient user in this
+// process (Gluetun.control, fetchTorrentBytes) moves onto the VPN proxy after
+// the first measurement.
+func TestNewSpeedtestClient_LeavesDefaultClientAlone(t *testing.T) {
+	before := http.DefaultClient.Transport
+	t.Cleanup(func() { http.DefaultClient.Transport = before })
+
+	cfg := testSpeedCfg()
+	cfg.Proxy = "http://gluetun:8888"
+	if st := newSpeedtestClient(cfg, 2); st == nil {
+		t.Fatal("newSpeedtestClient = nil")
+	}
+
+	if http.DefaultClient.Transport != before {
+		t.Error("http.DefaultClient.Transport was replaced, want it left untouched")
+	}
+}
