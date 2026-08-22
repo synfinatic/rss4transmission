@@ -512,7 +512,11 @@ func newSpeedtestRunner(cfg SpeedTestConfig) (speedTestFunc, error) {
 		if err := server.DownloadTestContext(ctx); err != nil {
 			return result, fmt.Errorf("download test failed: %w", err)
 		}
-		result.DownloadMbps = server.DLSpeed.Mbps()
+		dlMbps, err := downloadMbps(server.DLSpeed)
+		if err != nil {
+			return result, err
+		}
+		result.DownloadMbps = dlMbps
 
 		if !cfg.DownloadOnly {
 			if err := server.UploadTestContext(ctx); err != nil {
@@ -529,8 +533,31 @@ func newSpeedtestRunner(cfg SpeedTestConfig) (speedTestFunc, error) {
 	}, nil
 }
 
-// uploadRateNotAvailable is the ULSpeed value speedtest-go uses for "N/A".
-const uploadRateNotAvailable speedtest.ByteRate = -1
+// rateNotAvailable is the sentinel speedtest-go uses for "N/A" on both the
+// download and upload legs (speedtest/request.go).
+const rateNotAvailable speedtest.ByteRate = -1
+
+// downloadMbps converts speedtest-go's download rate to Mbps, or reports the
+// dead download leg it declined to report itself.
+//
+// When every download request fails, speedtest-go returns no error and instead
+// sets DLSpeed to the -1 sentinel it prints as "N/A" (speedtest/request.go).
+// Divided by 125000 that is -0.000008 Mbps, which is indistinguishable from a
+// real measurement of a very slow link: it renders as "-0.0" in the web UI and
+// it sits below any MinDownloadMbps floor, so it requests a rotation on every
+// run. Rotation cannot fix it. Report it as the failure it is instead, which
+// leaves OK() false and stops shouldRotate before it looks at the floors.
+//
+// A genuine zero is left alone: speedtest-go sets the sentinel only when the
+// request error rate also exceeds 10%, so a zero rate here is a measurement of
+// a dead link and the download floor must still act on it.
+func downloadMbps(rate speedtest.ByteRate) (float64, error) {
+	if rate == rateNotAvailable {
+		return 0, fmt.Errorf("download test reported no throughput: every download request " +
+			"to the speedtest server failed")
+	}
+	return rate.Mbps(), nil
+}
 
 // uploadMbps converts speedtest-go's upload rate to Mbps, or reports the dead
 // upload leg it declined to report itself.
@@ -549,7 +576,7 @@ const uploadRateNotAvailable speedtest.ByteRate = -1
 // request error rate also exceeds 10%, so a zero rate here is a measurement of
 // a dead link and the upload floor must still act on it.
 func uploadMbps(rate speedtest.ByteRate) (float64, error) {
-	if rate == uploadRateNotAvailable {
+	if rate == rateNotAvailable {
 		return 0, fmt.Errorf("upload test reported no throughput: every upload request " +
 			"to the speedtest server failed")
 	}

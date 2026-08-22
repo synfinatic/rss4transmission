@@ -929,6 +929,42 @@ func TestUploadMbps_KeepsGenuineZero(t *testing.T) {
 	}
 }
 
+// speedtest-go reports a dead download leg by setting DLSpeed to -1 and
+// returning no error (speedtest/request.go). Divided by 125000 that becomes
+// -0.000008 Mbps, which reads as a real measurement far below MinDownloadMbps
+// and drives a rotation that cannot help.
+func TestDownloadMbps_RejectsNotAvailableSentinel(t *testing.T) {
+	got, err := downloadMbps(-1)
+	if err == nil {
+		t.Fatalf("downloadMbps(-1) = %v, nil error, want an error for the N/A sentinel", got)
+	}
+	if !strings.Contains(err.Error(), "download") {
+		t.Errorf("error = %q, want it to name the download leg", err)
+	}
+}
+
+func TestDownloadMbps_ConvertsRealRate(t *testing.T) {
+	got, err := downloadMbps(125000 * 100)
+	if err != nil {
+		t.Fatalf("downloadMbps: %v", err)
+	}
+	if got != 100 {
+		t.Errorf("downloadMbps = %v Mbps, want 100", got)
+	}
+}
+
+// A zero rate with a low request error rate is a real measurement of a dead
+// link, not the sentinel. MinDownloadMbps must still see it and rotate.
+func TestDownloadMbps_KeepsGenuineZero(t *testing.T) {
+	got, err := downloadMbps(0)
+	if err != nil {
+		t.Fatalf("downloadMbps: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("downloadMbps = %v Mbps, want 0", got)
+	}
+}
+
 // ---- cache buster ----
 
 // captureRT records the requests it is handed and returns a canned response.
