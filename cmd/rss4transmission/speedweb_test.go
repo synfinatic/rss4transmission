@@ -13,7 +13,7 @@ import (
 func speedMux(t *testing.T, s *SpeedFile, portOpen func() (bool, bool)) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, s, portOpen, nil, speedActions{}, navConfig{})
+	registerSpeedRoutes(mux, s, portOpen, nil, nil, speedActions{}, navConfig{})
 	return mux
 }
 
@@ -144,7 +144,7 @@ func TestMetrics_EmptyStore(t *testing.T) {
 
 func TestMetrics_NilStore(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, nil, nil, nil, speedActions{}, navConfig{})
+	registerSpeedRoutes(mux, nil, nil, nil, nil, speedActions{}, navConfig{})
 	code, _ := getBody(t, mux, "/metrics")
 	if code != http.StatusOK {
 		t.Errorf("status = %d with a nil store, want 200", code)
@@ -207,7 +207,7 @@ func TestRotationsPage_FlagsUnchangedExit(t *testing.T) {
 
 func TestSpeedTestPage_NilStoreNotRegistered(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, nil, nil, nil, speedActions{}, navConfig{})
+	registerSpeedRoutes(mux, nil, nil, nil, nil, speedActions{}, navConfig{})
 	code, _ := getBody(t, mux, "/speedtest")
 	if code != http.StatusNotFound {
 		t.Errorf("status = %d with a nil store, want 404", code)
@@ -269,7 +269,7 @@ func TestPortMonitor_LastOpenReflectsLastCheck(t *testing.T) {
 func actionMux(t *testing.T, actions speedActions) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, actions, navConfig{})
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, nil, actions, navConfig{})
 	return mux
 }
 
@@ -399,7 +399,7 @@ func TestSpeedRotate_NotRegisteredWithoutFunc(t *testing.T) {
 
 func TestSpeedTestPage_RendersOnlyAvailableButtons(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, speedActions{Run: func() bool { return true }}, navConfig{})
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, nil, speedActions{Run: func() bool { return true }}, navConfig{})
 	_, body := getBody(t, mux, "/speedtest")
 	if !strings.Contains(body, `id="btn-run"`) {
 		t.Error("page is missing the run button")
@@ -409,7 +409,7 @@ func TestSpeedTestPage_RendersOnlyAvailableButtons(t *testing.T) {
 	}
 
 	mux = http.NewServeMux()
-	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, speedActions{Rotate: func() bool { return true }}, navConfig{})
+	registerSpeedRoutes(mux, tempSpeedFile(t), nil, nil, nil, speedActions{Rotate: func() bool { return true }}, navConfig{})
 	_, body = getBody(t, mux, "/speedtest")
 	if !strings.Contains(body, `id="btn-rotate"`) {
 		t.Error("page is missing the rotate button")
@@ -538,7 +538,7 @@ func TestSpeedTestPage_ExitIPTileUsesGluetun(t *testing.T) {
 	})
 
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, s, nil, func() (string, bool) { return "185.9.9.9", true }, speedActions{}, navConfig{})
+	registerSpeedRoutes(mux, s, nil, nil, func() (string, bool) { return "185.9.9.9", true }, speedActions{}, navConfig{})
 	_, body := getBody(t, mux, "/speedtest")
 
 	tile := summarySection(t, body)
@@ -586,7 +586,7 @@ func TestSpeedTestPage_ExitIPTileUnknown(t *testing.T) {
 	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 412.5, ExitIP: "45.12.3.9"})
 
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, s, nil, func() (string, bool) { return "", false }, speedActions{}, navConfig{})
+	registerSpeedRoutes(mux, s, nil, nil, func() (string, bool) { return "", false }, speedActions{}, navConfig{})
 	_, body := getBody(t, mux, "/speedtest")
 
 	tile := summarySection(t, body)
@@ -801,7 +801,7 @@ func TestRotationsPage_EmptyStore(t *testing.T) {
 // worse than a 404 -- the same call the /speedtest route makes.
 func TestRotationsPage_NilStoreNotRegistered(t *testing.T) {
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, nil, nil, nil, speedActions{}, navConfig{})
+	registerSpeedRoutes(mux, nil, nil, nil, nil, speedActions{}, navConfig{})
 
 	if code, _ := getBody(t, mux, "/rotations"); code != http.StatusNotFound {
 		t.Errorf("status = %d without a speed store, want 404", code)
@@ -865,4 +865,100 @@ func mustBody(t *testing.T, mux *http.ServeMux, path string) string {
 		t.Fatalf("GET %s = %d, want 200", path, code)
 	}
 	return body
+}
+
+// ---- forwarded port / port open tiles ----
+
+// The two peer-port tiles answer the question the exit IP tile cannot: which
+// port Gluetun forwards, and whether Transmission can actually reach it.
+func TestSpeedTestPage_PeerPortTilesOpen(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 412.5})
+
+	mux := http.NewServeMux()
+	registerSpeedRoutes(mux, s,
+		func() (bool, bool) { return true, true },
+		func() (int64, bool) { return 51413, true },
+		nil, speedActions{}, navConfig{})
+	_, body := getBody(t, mux, "/speedtest")
+
+	tile := summarySection(t, body)
+	if !strings.Contains(tile, "Forwarded port") {
+		t.Errorf("summary has no forwarded port tile\ngot:\n%s", tile)
+	}
+	if !strings.Contains(tile, "51413") {
+		t.Errorf("summary does not show the forwarded port\ngot:\n%s", tile)
+	}
+	if !strings.Contains(tile, "Port open") {
+		t.Errorf("summary has no port open tile\ngot:\n%s", tile)
+	}
+	if !strings.Contains(tile, `<span class="value ok">yes</span>`) {
+		t.Errorf("summary does not report the port as open\ngot:\n%s", tile)
+	}
+}
+
+func TestSpeedTestPage_PeerPortTileClosed(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 412.5})
+
+	mux := http.NewServeMux()
+	registerSpeedRoutes(mux, s,
+		func() (bool, bool) { return false, true },
+		func() (int64, bool) { return 51413, true },
+		nil, speedActions{}, navConfig{})
+	_, body := getBody(t, mux, "/speedtest")
+
+	tile := summarySection(t, body)
+	if !strings.Contains(tile, `<span class="value error">no</span>`) {
+		t.Errorf("summary does not report the port as closed\ngot:\n%s", tile)
+	}
+}
+
+// Nothing checked yet, or no Gluetun to ask, is not the same as "closed" or
+// "no port forwarded", so both tiles stay empty rather than report a guess.
+func TestSpeedTestPage_PeerPortTilesUnknown(t *testing.T) {
+	s := tempSpeedFile(t)
+	s.AddResult(SpeedResult{At: time.Now(), DownloadMbps: 412.5})
+
+	mux := http.NewServeMux()
+	registerSpeedRoutes(mux, s,
+		func() (bool, bool) { return false, false },
+		func() (int64, bool) { return 0, false },
+		nil, speedActions{}, navConfig{})
+	_, body := getBody(t, mux, "/speedtest")
+
+	tile := summarySection(t, body)
+	if strings.Contains(tile, `<span class="value ok">yes</span>`) ||
+		strings.Contains(tile, `<span class="value error">no</span>`) {
+		t.Errorf("summary reports a port state it has not checked\ngot:\n%s", tile)
+	}
+	if strings.Contains(tile, `<span class="value">0</span>`) {
+		t.Errorf("summary shows a zero forwarded port\ngot:\n%s", tile)
+	}
+}
+
+// A measure-only deployment wires neither func. The page must still render.
+func TestBuildSpeedPageData_NilPortFuncs(t *testing.T) {
+	data := buildSpeedPageData(tempSpeedFile(t), nil, nil, nil)
+
+	if data.PortOpenKnown {
+		t.Error("PortOpenKnown is set without a port-open func")
+	}
+	if data.PeerPortKnown {
+		t.Error("PeerPortKnown is set without a peer-port func")
+	}
+}
+
+func TestBuildSpeedPageData_PortFuncs(t *testing.T) {
+	data := buildSpeedPageData(tempSpeedFile(t),
+		func() (bool, bool) { return true, true },
+		func() (int64, bool) { return 51413, true },
+		nil)
+
+	if !data.PortOpenKnown || !data.PortOpen {
+		t.Errorf("PortOpen = %v, known = %v, want true/true", data.PortOpen, data.PortOpenKnown)
+	}
+	if !data.PeerPortKnown || data.PeerPort != 51413 {
+		t.Errorf("PeerPort = %d, known = %v, want 51413/true", data.PeerPort, data.PeerPortKnown)
+	}
 }

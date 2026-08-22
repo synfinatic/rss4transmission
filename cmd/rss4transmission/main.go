@@ -61,6 +61,7 @@ type RunContext struct {
 	History             *HistoryFile
 	Speed               *SpeedFile
 	PeerPortOpen        portOpenFunc
+	PeerPort            peerPortFunc
 	ExitIP              exitIPFunc
 	SpeedActions        speedActions
 	CancelStore         *Store

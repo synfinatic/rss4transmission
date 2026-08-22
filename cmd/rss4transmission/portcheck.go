@@ -34,6 +34,14 @@ type PortMonitor struct {
 	lastPublicIP string
 	publicIPErr  bool // the last refresh failed; used to log the transition once
 
+	// lastPeerPort is the port Gluetun last said it forwards, refreshed on
+	// every check. It is read from Gluetun's control server rather than from
+	// Gluetun.peerPort: that field is the port last pushed into Transmission,
+	// which is refreshed only when the port test reports closed and is reset
+	// by a rotation.
+	lastPeerPort int64
+	peerPortErr  bool // the last refresh failed; used to log the transition once
+
 	trigger chan struct{} // buffered(1): an out-of-band check request
 }
 
@@ -116,6 +124,7 @@ func (m *PortMonitor) check() (bool, error) {
 	// which exit we are on, and blanking the IP because of one would make the
 	// VPN page look like the tunnel went away.
 	m.refreshPublicIP()
+	m.refreshPeerPort()
 
 	if err != nil {
 		return false, err
@@ -166,6 +175,44 @@ func (m *PortMonitor) refreshPublicIP() {
 	if ip != "" {
 		m.lastPublicIP = ip
 	}
+}
+
+// refreshPeerPort asks Gluetun which port it forwards and caches the answer.
+// It must be called with m.mu held.
+//
+// A failed query keeps the previous port, for the same reason refreshPublicIP
+// keeps the previous address: an unreachable control server says nothing about
+// whether the forwarded port changed, and blanking it would read as "no port is
+// forwarded". The failure is logged only on the transition into it. A port of
+// zero or less is Gluetun saying it does not know the port yet, which is also
+// not a reason to drop a port we already saw.
+func (m *PortMonitor) refreshPeerPort() {
+	if m.Gluetun == nil {
+		return
+	}
+
+	port, err := m.Gluetun.getPort()
+	if err != nil {
+		if !m.peerPortErr {
+			log.WithError(err).Warn("Unable to read the forwarded port from Gluetun")
+			m.peerPortErr = true
+		}
+		return
+	}
+	m.peerPortErr = false
+
+	if port > 0 {
+		m.lastPeerPort = port
+	}
+}
+
+// LastPeerPort reports the port Gluetun last said it forwards. known is false
+// until Gluetun has answered once, and always when Gluetun is not configured,
+// so callers can say "not known yet" rather than render a zero port as fact.
+func (m *PortMonitor) LastPeerPort() (port int64, known bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastPeerPort, m.lastPeerPort > 0
 }
 
 // LastPublicIP reports the VPN exit IP Gluetun last claimed for itself. known

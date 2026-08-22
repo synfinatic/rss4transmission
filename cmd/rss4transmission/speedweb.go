@@ -39,6 +39,11 @@ var rotationsTmpl string
 // corresponding metric is omitted rather than published as a guess.
 type portOpenFunc func() (open bool, known bool)
 
+// peerPortFunc reports the port Gluetun says it forwards, as cached by the port
+// monitor. known is false until Gluetun has answered once, and always when
+// there is no Gluetun to ask.
+type peerPortFunc func() (port int64, known bool)
+
 // exitIPFunc reports the VPN exit IP Gluetun claims for itself, as cached by
 // the port monitor. known is false until Gluetun has answered once, and always
 // when there is no Gluetun to ask.
@@ -92,6 +97,14 @@ type speedPageData struct {
 	ShowUpload bool
 	CanRun     bool // render the "Run speedtest now" button
 	CanRotate  bool // render the "Rotate VPN now" button
+	// PeerPort is the port Gluetun forwards and PortOpen is what Transmission's
+	// port test made of it. Each carries its own Known flag: "not checked yet"
+	// is not "closed", and "Gluetun has not answered" is not "no port is
+	// forwarded", so an unknown renders as a dash instead of a verdict.
+	PeerPort      int64
+	PeerPortKnown bool
+	PortOpen      bool
+	PortOpenKnown bool
 }
 
 // rotationsPageData is the /rotations view: the same rotation rows the
@@ -126,7 +139,7 @@ type speedActions struct {
 // not have to care whether SpeedTest is enabled; the two pages are not, because
 // a page with nothing to show is worse than a 404.
 func registerSpeedRoutes(mux *http.ServeMux, speed *SpeedFile, portOpen portOpenFunc,
-	exitIP exitIPFunc, actions speedActions, nav navConfig,
+	peerPort peerPortFunc, exitIP exitIPFunc, actions speedActions, nav navConfig,
 ) {
 	if speed != nil {
 		// Both pages share the nav partial and the same formatting helpers.
@@ -149,7 +162,7 @@ func registerSpeedRoutes(mux *http.ServeMux, speed *SpeedFile, portOpen portOpen
 
 		mux.HandleFunc("GET /speedtest", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			data := buildSpeedPageData(speed, exitIP)
+			data := buildSpeedPageData(speed, portOpen, peerPort, exitIP)
 			data.CanRun = actions.Run != nil
 			data.CanRotate = actions.Rotate != nil
 			if err := tmpl.Execute(w, data); err != nil {
@@ -243,7 +256,9 @@ func makeSpeedRotateHandler(actions speedActions) http.HandlerFunc {
 }
 
 // buildSpeedPageData assembles the /speedtest view, newest entries first.
-func buildSpeedPageData(speed *SpeedFile, exitIP exitIPFunc) speedPageData {
+func buildSpeedPageData(speed *SpeedFile, portOpen portOpenFunc, peerPort peerPortFunc,
+	exitIP exitIPFunc,
+) speedPageData {
 	results := speed.GetResults()
 	data := speedPageData{Rows: make([]speedPageRow, 0, len(results))}
 
@@ -286,6 +301,15 @@ func buildSpeedPageData(speed *SpeedFile, exitIP exitIPFunc) speedPageData {
 			data.ShowUpload = true
 			break
 		}
+	}
+
+	// Both are nil in a measure-only deployment, which has no port monitor at
+	// all. Their tiles then render as unknown, which is the truth.
+	if portOpen != nil {
+		data.PortOpen, data.PortOpenKnown = portOpen()
+	}
+	if peerPort != nil {
+		data.PeerPort, data.PeerPortKnown = peerPort()
 	}
 
 	data.Rotations = buildRotationRows(speed)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -383,4 +384,106 @@ func TestPortMonitor_LastPublicIPUnknownWithoutGluetun(t *testing.T) {
 	got, known := m.LastPublicIP()
 	assert.False(t, known)
 	assert.Empty(t, got)
+}
+
+// gluetunPeerPortServer answers the port-forward and public-IP control routes.
+// port is read through a pointer so a test can change the forwarded port
+// between checks; a zero port makes /v1/portforward fail, which is how the
+// "Gluetun stopped answering" case is simulated.
+func gluetunPeerPortServer(t *testing.T, port *int64) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/portforward" {
+			if *port == 0 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"ports":[%d]}`, *port)))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"public_ip":"1.2.3.4"}`))
+	}))
+}
+
+func newPeerPortMonitor(t *testing.T, port *int64) *PortMonitor {
+	t.Helper()
+	open := true
+	transmissionSrv := portTestTransmissionServer(t, &open)
+	t.Cleanup(transmissionSrv.Close)
+	gluetunSrv := gluetunPeerPortServer(t, port)
+	t.Cleanup(gluetunSrv.Close)
+
+	client := newTestTransmissionClient(t, transmissionSrv.URL)
+	g := &Gluetun{
+		URL:           gluetunSrv.URL,
+		Transmission:  client,
+		lastRotate:    time.Now(),
+		peerPort:      -1,
+		retryAttempts: 1,
+		retryDelay:    time.Millisecond,
+	}
+	return NewPortMonitor(client, g, NtfyConfig{})
+}
+
+func TestPortMonitor_LastPeerPortUnknownBeforeFirstCheck(t *testing.T) {
+	port := int64(54321)
+	m := newPeerPortMonitor(t, &port)
+
+	got, known := m.LastPeerPort()
+	assert.False(t, known)
+	assert.Zero(t, got)
+}
+
+func TestPortMonitor_CheckRecordsGluetunPeerPort(t *testing.T) {
+	port := int64(54321)
+	m := newPeerPortMonitor(t, &port)
+
+	_, err := m.check()
+	require.NoError(t, err)
+
+	got, known := m.LastPeerPort()
+	assert.True(t, known)
+	assert.Equal(t, int64(54321), got)
+
+	// A later check picks up a changed forwarded port.
+	port = 12345
+	_, err = m.check()
+	require.NoError(t, err)
+	got, known = m.LastPeerPort()
+	assert.True(t, known)
+	assert.Equal(t, int64(12345), got)
+}
+
+// An unreachable control server does not mean the forwarded port went away, so
+// the last port we did see is kept rather than blanked.
+func TestPortMonitor_CheckKeepsPeerPortWhenGluetunFails(t *testing.T) {
+	port := int64(54321)
+	m := newPeerPortMonitor(t, &port)
+
+	_, err := m.check()
+	require.NoError(t, err)
+
+	port = 0
+	_, err = m.check()
+	require.NoError(t, err)
+
+	got, known := m.LastPeerPort()
+	assert.True(t, known)
+	assert.Equal(t, int64(54321), got)
+}
+
+func TestPortMonitor_LastPeerPortUnknownWithoutGluetun(t *testing.T) {
+	open := true
+	transmissionSrv := portTestTransmissionServer(t, &open)
+	defer transmissionSrv.Close()
+
+	m := NewPortMonitor(newTestTransmissionClient(t, transmissionSrv.URL), nil, NtfyConfig{})
+	_, err := m.check()
+	require.NoError(t, err)
+
+	got, known := m.LastPeerPort()
+	assert.False(t, known)
+	assert.Zero(t, got)
 }
