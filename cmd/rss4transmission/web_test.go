@@ -30,6 +30,46 @@ func TestHealthzHandler(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
+// --- /favicon.svg ---
+
+func TestFaviconHandler_ServesSVG(t *testing.T) {
+	mux := newWebMux(nil, nil, nil, nil, nil, navConfig{})
+	req := httptest.NewRequest("GET", "/favicon.svg", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "image/svg+xml", rr.Header().Get("Content-Type"))
+	assert.Contains(t, rr.Body.String(), "<svg")
+}
+
+func TestNewCancelMux_FaviconReachable(t *testing.T) {
+	cfg := makeCancelCfg("", "")
+	mux := newCancelMux(nil, cfg, nil, nil, nil, nil, nil, nil)
+
+	req := httptest.NewRequest("GET", "/favicon.svg", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "image/svg+xml", rr.Header().Get("Content-Type"))
+}
+
+// Every page template links the favicon, so a browser tab always shows the
+// app icon rather than a blank page. One test guards all six rather than a
+// per-page test, so a new page cannot ship without picking up the link.
+func TestPageTemplates_LinkTheFavicon(t *testing.T) {
+	pages := map[string]string{
+		"history.html":      historyTmpl,
+		"cancel.html":       cancelTmpl,
+		"start.html":        startTmpl,
+		"speedtest.html":    speedTmpl,
+		"rotations.html":    rotationsTmpl,
+		"transmission.html": transmissionTmpl,
+	}
+	for name, tmpl := range pages {
+		assert.Contains(t, tmpl, `rel="icon"`, "%s is missing the favicon link", name)
+	}
+}
+
 // --- /cancel helpers ---
 
 func makeCancelCfg(secret, baseURL string) NotificationsConfig {

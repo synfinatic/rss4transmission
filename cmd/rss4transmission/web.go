@@ -79,6 +79,15 @@ var cancelTmpl string
 //go:embed web/start.html
 var startTmpl string
 
+//go:embed web/favicon.svg
+var faviconSVG string
+
+// faviconHandler serves the browser tab icon shared by every page.
+func faviconHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	fmt.Fprint(w, faviconSVG) //nolint:errcheck
+}
+
 // removeFunc is the signature for removing torrents from Transmission.
 type removeFunc func(ctx context.Context, ids []int64) error
 
@@ -376,6 +385,8 @@ func newWebMux(history *HistoryFile, retry retryFunc, feedConfigured func(name s
 		w.WriteHeader(http.StatusOK)
 	})
 
+	mux.HandleFunc("GET /favicon.svg", faviconHandler)
+
 	return mux
 }
 
@@ -443,7 +454,7 @@ func makePostForgetHandler(history *HistoryFile, forget forgetFunc) http.Handler
 }
 
 // newCancelMux builds a public-facing mux serving GET/POST /cancel, GET/POST
-// /start, and GET /healthz. Use this when --public-listen is set to expose
+// /start, GET /healthz, and GET /favicon.svg. Use this when --public-listen is set to expose
 // these token-gated endpoints on their own port, keeping the history page on
 // a separate private listener.
 // POST /cancel is only registered when both store and remove are non-nil.
@@ -469,6 +480,7 @@ func newCancelMux(store *Store, notif func() NotificationsConfig, remove removeF
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	mux.HandleFunc("GET /favicon.svg", faviconHandler)
 	return mux
 }
 
