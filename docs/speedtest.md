@@ -121,6 +121,48 @@ necessarily the same as the address Gluetun reports for itself — see
 
 Pass `--save` to append the result to `ResultsFile`.
 
+Pass `--server` to test one speedtest.net server ID without an edit to the config file:
+
+```bash
+rss4transmission speedtest --config config.yaml --server 12345
+```
+
+The override applies to that run only. Use it to compare candidates before you commit one to
+`ServerID` — see [Choosing a ServerID](#choosing-a-serverid) below.
+
+## Choosing a ServerID
+
+`ServerID` is optional, but leave it empty and the nearest server is chosen from the coordinates
+speedtest.net returns for your exit. Many VPN addresses do not geolocate. speedtest.net then falls
+back to `37.751, -97.822`, a placeholder near the center of the United States, and the "nearest"
+server lands hundreds of kilometers from your real exit. The choice also moves between runs, which
+makes `MinDownloadMbps` and `MinUploadMbps` compare measurements that are not comparable.
+
+To pick a server, follow these steps:
+
+1. List the candidates Ookla offers for your exit. Run this from inside the Gluetun container:
+
+   ```bash
+   curl -s "https://www.speedtest.net/api/js/servers?engine=js&limit=20&nocache=$(date +%s)"
+   ```
+
+   The `nocache` parameter is required. Without it a shared cache can return the list built for
+   another user.
+
+2. Test each candidate over the proxy the monitor uses:
+
+   ```bash
+   rss4transmission speedtest --config config.yaml --server 12345
+   ```
+
+3. Read both legs. A server can carry download at full rate and fail upload completely. A failed
+   upload leg reports `upload test reported no throughput`.
+
+4. Set `ServerID` to the candidate with the best upload and download.
+
+Re-check the pinned server if measurements degrade. Servers are run by third parties and are
+retired without notice.
+
 ## How rotation works
 
 Gluetun has no "switch to a different server" API. The only mechanism is to stop the VPN and
