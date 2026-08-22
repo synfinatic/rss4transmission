@@ -234,6 +234,28 @@ type Transmission struct {
 	WebUI bool `koanf:"WebUI"`
 }
 
+// Validate checks that the Transmission block can produce a usable RPC
+// endpoint. It returns an error rather than calling log.Fatalf so that a live
+// config reload can reject a bad value and keep the running config.
+func (t *Transmission) Validate() error {
+	if t.Port < 0 || t.Port > 65535 {
+		return fmt.Errorf("Transmission.Port %d is outside the valid range 0-65535", t.Port)
+	}
+	if _, err := url.Parse(t.URL()); err != nil {
+		return fmt.Errorf("unable to parse Transmission URL %q: %w", t.URL(), err)
+	}
+	return nil
+}
+
+// URL is the Transmission RPC endpoint described by this config.
+func (t *Transmission) URL() string {
+	proto := "http"
+	if t.HTTPS {
+		proto = "https"
+	}
+	return fmt.Sprintf("%s://%s:%d%s", proto, t.Host, t.Port, t.Path)
+}
+
 type GluetunConfig struct {
 	Host             string `koanf:"Host"`
 	Port             int    `koanf:"Port"`
@@ -243,6 +265,46 @@ type GluetunConfig struct {
 	AuthUsername     string `koanf:"AuthUsername"`
 	AuthPassword     string `koanf:"AuthPassword"`
 	AuthAPIKey       string `koanf:"AuthAPIKey"`
+}
+
+// Enabled reports whether a Gluetun sidecar is configured. Both Host and Port
+// are needed to reach its control server.
+func (g *GluetunConfig) Enabled() bool {
+	return g.Host != "" && g.Port != 0
+}
+
+// Validate parses the Rotate duration and checks the block is usable. It
+// returns an error rather than calling log.Fatalf (as NewGluetun used to) so a
+// bad live reload leaves the running config intact.
+func (g *GluetunConfig) Validate() error {
+	if g.Host == "" && g.Port == 0 {
+		return nil
+	}
+	if g.Host == "" || g.Port == 0 {
+		return fmt.Errorf("Gluetun needs both Host and Port, got Host %q and Port %d", g.Host, g.Port)
+	}
+	if g.Port < 0 || g.Port > 65535 {
+		return fmt.Errorf("Gluetun.Port %d is outside the valid range 0-65535", g.Port)
+	}
+	if g.RotateTime != "" {
+		if _, err := str2duration.ParseDuration(g.RotateTime); err != nil {
+			return fmt.Errorf("unable to parse Gluetun.Rotate %q: %w", g.RotateTime, err)
+		}
+	}
+	return nil
+}
+
+// RotateDuration is the parsed Rotate interval. Zero means never rotate on a
+// timer. Only valid after Validate().
+func (g *GluetunConfig) RotateDuration() time.Duration {
+	if g.RotateTime == "" {
+		return 0
+	}
+	d, err := str2duration.ParseDuration(g.RotateTime)
+	if err != nil {
+		return 0
+	}
+	return d
 }
 
 type Feed struct {

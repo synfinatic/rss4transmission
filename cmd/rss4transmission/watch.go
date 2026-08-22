@@ -95,7 +95,12 @@ type configReloader struct {
 	reload        func() error
 	registerWatch func(cb func(event any, err error)) error
 	retryInterval time.Duration
-	notifyReload  func(err error)
+
+	// snapshot returns the config in effect. doReload and recover call it
+	// under mu and hand the result to notifyReload, so the notification is
+	// built from a config nothing is concurrently replacing.
+	snapshot     func() Config
+	notifyReload func(cfg Config, err error)
 
 	// debounceInterval coalesces bursts of rapid-fire watch events into a
 	// single reload+notify. Some bind-mount layers (e.g. Docker Desktop's
@@ -166,13 +171,16 @@ func (r *configReloader) onWatchEvent(event any, err error) {
 // either synchronously from onWatchEvent (debounceInterval == 0) or once a
 // burst of events has settled (debounceInterval > 0).
 func (r *configReloader) doReload() {
+	var cfg Config
 	reloadErr := func() error {
 		// don't change the config while we are processing the feed
 		r.mu.Lock()
 		defer r.mu.Unlock()
 
 		log.Infof("config changed. reloading...")
-		return r.reload()
+		err := r.reload()
+		cfg = r.currentConfig()
+		return err
 	}()
 
 	if reloadErr != nil {
@@ -182,8 +190,17 @@ func (r *configReloader) doReload() {
 	// POST with a 30s timeout, and holding r.mu that long would block the
 	// ticker loop's once.Run and the web handlers that also take r.mu.
 	if r.notifyReload != nil {
-		r.notifyReload(reloadErr)
+		r.notifyReload(cfg, reloadErr)
 	}
+}
+
+// currentConfig is the config in effect, or a zero one when no source was
+// wired. The caller must hold mu.
+func (r *configReloader) currentConfig() Config {
+	if r.snapshot == nil {
+		return Config{}
+	}
+	return r.snapshot()
 }
 
 // recover retries reload until it succeeds, then re-registers the watch. It
@@ -191,11 +208,14 @@ func (r *configReloader) doReload() {
 // callers run it in its own goroutine.
 func (r *configReloader) recover() {
 	notifiedFailure := false
+	var cfg Config
 	attempt := retryLoadConfig(func() error {
 		reloadErr := func() error {
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			return r.reload()
+			err := r.reload()
+			cfg = r.currentConfig()
+			return err
 		}()
 
 		// Report the first failure so a bad edit saved via atomic
@@ -205,7 +225,7 @@ func (r *configReloader) recover() {
 		if reloadErr != nil && !notifiedFailure {
 			notifiedFailure = true
 			if r.notifyReload != nil {
-				r.notifyReload(reloadErr)
+				r.notifyReload(cfg, reloadErr)
 			}
 		}
 		return reloadErr
@@ -213,11 +233,38 @@ func (r *configReloader) recover() {
 
 	log.Infof("config reloaded after %d attempt(s), re-registering file watcher", attempt)
 	if r.notifyReload != nil {
-		r.notifyReload(nil)
+		r.notifyReload(cfg, nil)
 	}
 	if err := r.registerWatch(r.onWatchEvent); err != nil {
 		log.WithError(err).Errorf("failed to re-register config file watcher")
 	}
+}
+
+// liveConfig returns the config currently in effect. It takes the same lock
+// the reload path takes, so a caller never observes a half-applied config.
+//
+// Returning a copy is safe: a reload replaces ctx.Config wholesale rather than
+// mutating it, and loadConfig compiles every feed and extractor before it
+// commits, so nothing inside the returned value is mutated later.
+func (r *configReloader) liveConfig(ctx *RunContext) Config {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return ctx.Config
+}
+
+// liveState is the set of accessors setupWebServers hands to the HTTP
+// handlers. Every one of them reads the value in effect right now, so a config
+// reload shows up on the next request instead of at the next restart.
+type liveState struct {
+	Config  func() Config
+	Speed   func() *SpeedFile
+	Actions func() speedActions
+	// ExitIP returns the exit-IP source in effect, which is nil when Gluetun
+	// is not configured. The VPN page reads that nil as "there is no authority
+	// on the exit IP" and falls back to what the last measurement saw, so the
+	// getter has to be able to answer nil rather than a func that always says
+	// "unknown".
+	ExitIP func() exitIPFunc
 }
 
 // setupWebServers wires and starts the HTTP listener(s) for /cancel, /start,
@@ -226,33 +273,35 @@ func (r *configReloader) recover() {
 // sets ctx.CancelRoutesEnabled / ctx.StartRoutesEnabled to reflect what was
 // actually registered. Factored out of WatchCmd.Run to keep its cyclomatic
 // complexity down.
-func setupWebServers(cmd *WatchCmd, ctx *RunContext, removeT removeFunc, getProgress progressFunc,
-	retryHistory retryFunc, feedConfigured func(string) bool, feedGroups func(string) []Group,
-	forgetHistory forgetFunc, accessLog *logrus.Logger,
+func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, removeT removeFunc,
+	getProgress progressFunc, retryHistory retryFunc, feedConfigured func(string) bool,
+	feedGroups func(string) []Group, forgetHistory forgetFunc, accessLog *logrus.Logger,
 ) {
-	// A nil target means the Transmission page is off, so the routes are not
-	// registered and the nav bar does not link them.
-	txTarget := transmissionProxyTarget(ctx.Config.Transmission)
-	nav := navConfig{Speedtest: ctx.Speed != nil, Transmission: txTarget != nil}
-	tx := ctx.Config.Transmission
+	// Every gate below is a predicate rather than a bool: the routes are
+	// registered once and decide per request, so a config reload can turn a
+	// page on or off without a restart. The nav bar uses the same predicates,
+	// so a link never leads to a 404.
+	notif := func() NotificationsConfig { return live.Config().Notifications }
+	ntfy := func() NtfyConfig { return live.Config().Ntfy }
+	tx := func() Transmission { return live.Config().Transmission }
+	nav := navConfig{
+		Speedtest:    func() bool { return live.Speed() != nil },
+		Transmission: func() bool { return transmissionProxyTarget(tx()) != nil },
+	}
 
 	if cmd.PublicListen != "" {
 		// Split-listener mode: /cancel, /start, /notify-complete, and /healthz on the
 		// public port, history on a separate private port. Cancel/start routes are NOT
 		// registered on the private mux.
-		if ctx.CancelStore != nil {
-			ctx.CancelRoutesEnabled = true
-		}
-		if ctx.StartStore != nil && ctx.History != nil {
-			ctx.StartRoutesEnabled = true
-		}
+		ctx.CancelRoutesEnabled = true
+		ctx.StartRoutesEnabled = ctx.History != nil
 		addr, err := parseListenAddr(cmd.PublicListen)
 		if err != nil {
 			log.Fatalf("--public-listen: %s", err)
 		}
-		cancelMux := newCancelMux(ctx.CancelStore, ctx.Config.Notifications, removeT, getProgress,
+		cancelMux := newCancelMux(ctx.CancelStore, notif, removeT, getProgress,
 			ctx.StartStore, retryHistory, ctx.History, accessLog)
-		registerNotifyCompleteRoute(cancelMux, ctx.Config.Ntfy, ctx.Config.Notifications, accessLog)
+		registerNotifyCompleteRoute(cancelMux, ntfy, notif, accessLog)
 		go startWebServer("public", cancelMux, addr)
 
 		if cmd.PrivateListen != "" {
@@ -264,10 +313,8 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, removeT removeFunc, getProg
 				log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 			}
 			privMux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, nav)
-			registerSpeedRoutes(privMux, ctx.Speed, ctx.PeerPortOpen, ctx.PeerPort, ctx.ExitIP, ctx.SpeedActions, nav)
-			if txTarget != nil {
-				registerTransmissionRoutes(privMux, txTarget, tx.Username, tx.Password, nav)
-			}
+			registerSpeedRoutes(privMux, live.Speed, ctx.PeerPortOpen, ctx.PeerPort, live.ExitIP, live.Actions, nav)
+			registerTransmissionRoutes(privMux, tx, nav)
 			go startWebServer("private", privMux, histAddr)
 		}
 	} else if cmd.PrivateListen != "" {
@@ -280,40 +327,44 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, removeT removeFunc, getProg
 			log.Warnf("--private-listen is set but --history-file was not provided; history page will return 404")
 		}
 		mux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, nav)
-		registerSpeedRoutes(mux, ctx.Speed, ctx.PeerPortOpen, ctx.PeerPort, ctx.ExitIP, ctx.SpeedActions, nav)
-		if txTarget != nil {
-			registerTransmissionRoutes(mux, txTarget, tx.Username, tx.Password, nav)
-		}
-		if ctx.CancelStore != nil {
-			registerCancelRoutes(mux, ctx.CancelStore, ctx.Config.Notifications, removeT, getProgress, accessLog)
-			ctx.CancelRoutesEnabled = true
-		}
-		if ctx.StartStore != nil && ctx.History != nil {
-			registerStartRoutes(mux, ctx.StartStore, ctx.Config.Notifications, retryHistory, ctx.History, accessLog)
+		registerSpeedRoutes(mux, live.Speed, ctx.PeerPortOpen, ctx.PeerPort, live.ExitIP, live.Actions, nav)
+		registerTransmissionRoutes(mux, tx, nav)
+		registerCancelRoutes(mux, ctx.CancelStore, notif, removeT, getProgress, accessLog)
+		ctx.CancelRoutesEnabled = true
+		if ctx.History != nil {
+			registerStartRoutes(mux, ctx.StartStore, notif, retryHistory, ctx.History, accessLog)
 			ctx.StartRoutesEnabled = true
 		}
-		registerNotifyCompleteRoute(mux, ctx.Config.Ntfy, ctx.Config.Notifications, accessLog)
+		registerNotifyCompleteRoute(mux, ntfy, notif, accessLog)
 		go startWebServer("private", mux, addr)
 	}
 }
 
-func (cmd *WatchCmd) Run(ctx *RunContext) error {
-	reloader := &configReloader{
+// newConfigReloader builds the reloader watch runs: it reads the config file
+// again and pushes what it read into the running components. loadConfig
+// commits nothing until every check passes, so a rejected edit leaves both the
+// config and the components as they were.
+func newConfigReloader(ctx *RunContext) *configReloader {
+	return &configReloader{
 		reload: func() error {
-			konf, err := ctx.loadConfig(ctx.configFile)
-			if err != nil {
+			prev := ctx.Config
+			if err := ctx.loadConfig(ctx.configFile); err != nil {
 				return err
 			}
-			ctx.Konf = konf
-			return nil
+			return ctx.applyConfig(prev, ctx.Config)
 		},
+		snapshot:         func() Config { return ctx.Config },
 		registerWatch:    ctx.Provider.Watch,
 		retryInterval:    defaultRetryInterval,
 		debounceInterval: defaultConfigReloadDebounce,
-		notifyReload: func(err error) {
-			notifyConfigReload(ctx.Config.Ntfy, ctx.configFile, err)
+		notifyReload: func(cfg Config, err error) {
+			notifyConfigReload(cfg.Ntfy, ctx.configFile, err)
 		},
 	}
+}
+
+func (cmd *WatchCmd) Run(ctx *RunContext) error {
+	reloader := newConfigReloader(ctx)
 	_ = reloader.registerWatch(reloader.onWatchEvent)
 
 	ticker := time.NewTicker(time.Duration(ctx.Cli.Watch.Sleep) * time.Second)
@@ -334,50 +385,49 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		}
 	}
 
-	// Initialize the cancel and start stores if the HMAC secret is configured.
-	// The reaper context is cancelled when Run returns, preventing a goroutine leak.
+	// The stores are created whether or not a HMAC secret is configured right
+	// now: adding one to the config file must start handing out tokens without
+	// a restart. The routes gate on the live secret per request, and once.go
+	// checks it again before it puts a button in a notification.
+	//
+	// The reaper context is cancelled when Run returns, preventing a goroutine
+	// leak.
 	reaperCtx, reaperCancel := context.WithCancel(context.Background())
 	defer reaperCancel()
-	if ctx.Config.Notifications.HMACSecret != "" {
-		ttl := time.Duration(ctx.Config.Notifications.TokenTTLH) * time.Hour
-		ctx.CancelStore = NewStore(ttl)
-		ctx.CancelStore.StartReaper(reaperCtx)
-		ctx.StartStore = NewStartStore(ttl)
-		ctx.StartStore.StartReaper(reaperCtx)
-	}
+	ttl := time.Duration(ctx.Config.Notifications.TokenTTLH) * time.Hour
+	ctx.CancelStore = NewStore(ttl)
+	ctx.CancelStore.StartReaper(reaperCtx)
+	ctx.StartStore = NewStartStore(ttl)
+	ctx.StartStore.StartReaper(reaperCtx)
 
 	warnNotifyFeedsWithoutHistory(ctx.Config.Feeds, ctx.History)
 	logNtfyStatus(ctx.Config.Ntfy)
 
-	var removeT removeFunc
-	var getProgress progressFunc
-	if ctx.CancelStore != nil {
-		removeT = func(rCtx context.Context, ids []int64) error {
-			return ctx.Transmission.TorrentRemove(rCtx, transmissionrpc.TorrentRemovePayload{
-				IDs:             ids,
-				DeleteLocalData: false,
-			})
+	removeT := func(rCtx context.Context, ids []int64) error {
+		return ctx.Tx().TorrentRemove(rCtx, transmissionrpc.TorrentRemovePayload{
+			IDs:             ids,
+			DeleteLocalData: false,
+		})
+	}
+	getProgress := func(rCtx context.Context, torrentID int64) (int64, float64, error) {
+		torrents, err := ctx.Tx().TorrentGet(rCtx,
+			[]string{"downloadedEver", "percentDone"}, []int64{torrentID})
+		if err != nil {
+			return 0, 0, err
 		}
-		getProgress = func(rCtx context.Context, torrentID int64) (int64, float64, error) {
-			torrents, err := ctx.Transmission.TorrentGet(rCtx,
-				[]string{"downloadedEver", "percentDone"}, []int64{torrentID})
-			if err != nil {
-				return 0, 0, err
-			}
-			if len(torrents) == 0 {
-				return 0, 0, nil
-			}
-			t := torrents[0]
-			var dlBytes int64
-			if t.DownloadedEver != nil {
-				dlBytes = *t.DownloadedEver
-			}
-			var pct float64
-			if t.PercentDone != nil {
-				pct = *t.PercentDone
-			}
-			return dlBytes, pct, nil
+		if len(torrents) == 0 {
+			return 0, 0, nil
 		}
+		t := torrents[0]
+		var dlBytes int64
+		if t.DownloadedEver != nil {
+			dlBytes = *t.DownloadedEver
+		}
+		var pct float64
+		if t.PercentDone != nil {
+			pct = *t.PercentDone
+		}
+		return dlBytes, pct, nil
 	}
 
 	retryHistory := func(rec HistoryRecord) (int64, error) {
@@ -420,43 +470,49 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		return f.Groups
 	}
 
+	// The accessors the web handlers read through. Each takes the reload lock,
+	// so a request always sees a fully applied config.
+	live := liveState{
+		Config: func() Config { return reloader.liveConfig(ctx) },
+		Speed: func() *SpeedFile {
+			reloader.mu.Lock()
+			defer reloader.mu.Unlock()
+			return ctx.Speed
+		},
+		Actions: func() speedActions {
+			reloader.mu.Lock()
+			defer reloader.mu.Unlock()
+			return ctx.SpeedActions
+		},
+		ExitIP: func() exitIPFunc {
+			reloader.mu.Lock()
+			defer reloader.mu.Unlock()
+			return ctx.ExitIP
+		},
+	}
+
 	accessLog := openAccessLog(cmd.AccessLog)
 
-	// The monitors are built before the web servers so /metrics can read peer
-	// port state and ctx.Speed is populated before the mux decides whether to
-	// serve /speedtest. Note g is built once here and is not rebuilt on config
-	// reload; the speed monitor inherits that same limitation.
-	var g *Gluetun
-	if ctx.Config.Gluetun.Host != "" && ctx.Config.Gluetun.Port != 0 {
-		g = NewGluetun(ctx.Config.Gluetun, ctx.Transmission)
+	// The port monitor runs whether or not anything needs checking right now.
+	// Its check() returns early while Gluetun and PortCheck are both off, so
+	// turning either one on is a config edit rather than a restart.
+	ctx.PortMonitor = NewPortMonitor(ctx.Tx(), nil, ctx.Config.Ntfy)
+	ctx.PeerPortOpen = ctx.PortMonitor.LastOpen
+	ctx.PeerPort = ctx.PortMonitor.LastPeerPort
+
+	// Builds the Gluetun client, the speed monitor and the VPN page's actions
+	// from the config as loaded. An empty previous config makes every block
+	// count as changed, so startup and reload run the same code and cannot
+	// drift apart. It runs before the web servers so /metrics can read peer
+	// port state and ctx.Speed is populated before the first request.
+	if err := ctx.applyConfig(Config{}, ctx.Config); err != nil {
+		return err
 	}
 
-	var portMonitor *PortMonitor
-	if g != nil || ctx.Config.PortCheck.Enabled {
-		portMonitor = NewPortMonitor(ctx.Transmission, g, ctx.Config.Ntfy)
-		ctx.PeerPortOpen = portMonitor.LastOpen
-		ctx.PeerPort = portMonitor.LastPeerPort
-		// Set before startSpeedMonitor: that is what builds the SpeedMonitor,
-		// which reads it for the exit IP its rotation alerts name.
-		ctx.ExitIP = exitIPSource(g, portMonitor)
-	}
+	setupWebServers(cmd, ctx, live, removeT, getProgress, retryHistory,
+		feedConfigured, feedGroups, forgetHistory, accessLog)
 
-	monitor := startSpeedMonitor(ctx, g)
-
-	// Wired after startSpeedMonitor because that is what populates ctx.Speed,
-	// which the hook backfills with the exit IP the tunnel came back up on.
-	if g != nil {
-		g.OnRotated = vpnRotatedHook(ctx.Config.Ntfy, ctx.Speed, ctx.Config.SpeedTest.RetentionDuration())
-	}
-
-	// Consumed inside setupWebServers, so this has to happen before it.
-	ctx.SpeedActions = newSpeedActions(ctx, monitor, g, portMonitor)
-
-	setupWebServers(cmd, ctx, removeT, getProgress, retryHistory, feedConfigured, feedGroups, forgetHistory, accessLog)
-
-	if portMonitor != nil {
-		go portMonitor.Run()
-	}
+	go ctx.PortMonitor.Run()
 
 	// Run once and then sleep between later runs...
 	for ; true; <-ticker.C {

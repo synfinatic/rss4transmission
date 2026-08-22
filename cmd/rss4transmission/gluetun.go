@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"github.com/hekmon/transmissionrpc/v3"
-	str2duration "github.com/xhit/go-str2duration/v2"
 )
 
 type Gluetun struct {
@@ -64,38 +63,43 @@ type Gluetun struct {
 	OnRotated func(RotationOutcome)
 }
 
+// NewGluetun builds a client for the Gluetun control server. g must already
+// have passed GluetunConfig.Validate(), which loadConfig runs, so nothing here
+// can fail on a bad value.
 func NewGluetun(g GluetunConfig, t *transmissionrpc.Client) *Gluetun {
+	gt := &Gluetun{
+		Transmission:    t,
+		lastRotate:      time.Now(),
+		peerPort:        -1,
+		portCheckFailed: 0,
+		retryAttempts:   5,
+		retryDelay:      3 * time.Second,
+		statusPollDelay: 3 * time.Second,
+		publicIPWait:    30 * time.Second,
+	}
+	gt.applyConfig(g)
+	return gt
+}
+
+// applyConfig copies the settings a live config reload can change onto an
+// existing client. The caller must serialize it against the port monitor:
+// Gluetun has no locking of its own and every other field access happens
+// under PortMonitor.mu.
+//
+// The connection-independent state -- lastRotate, peerPort, portCheckFailed --
+// is deliberately left alone, so re-reading the config file does not look like
+// a fresh tunnel to the rotation policy.
+func (g *Gluetun) applyConfig(cfg GluetunConfig) {
 	proto := "http"
-	if g.HTTPS {
+	if cfg.HTTPS {
 		proto = "https"
 	}
-
-	var err error
-	var r time.Duration
-
-	if g.RotateTime != "" {
-		r, err = str2duration.ParseDuration(g.RotateTime)
-		if err != nil {
-			log.WithError(err).Fatalf("unable to parse RotateTime: %s", g.RotateTime)
-		}
-	}
-
-	return &Gluetun{
-		URL:              fmt.Sprintf("%s://%s:%d", proto, g.Host, g.Port),
-		RotateTime:       r,
-		ClosedPortChecks: g.ClosedPortChecks,
-		Transmission:     t,
-		lastRotate:       time.Now(),
-		peerPort:         -1,
-		portCheckFailed:  0,
-		AuthUsername:     g.AuthUsername,
-		AuthPassword:     g.AuthPassword,
-		AuthAPIKey:       g.AuthAPIKey,
-		retryAttempts:    5,
-		retryDelay:       3 * time.Second,
-		statusPollDelay:  3 * time.Second,
-		publicIPWait:     30 * time.Second,
-	}
+	g.URL = fmt.Sprintf("%s://%s:%d", proto, cfg.Host, cfg.Port)
+	g.RotateTime = cfg.RotateDuration()
+	g.ClosedPortChecks = cfg.ClosedPortChecks
+	g.AuthUsername = cfg.AuthUsername
+	g.AuthPassword = cfg.AuthPassword
+	g.AuthAPIKey = cfg.AuthAPIKey
 }
 
 func (g *Gluetun) newRequest(method, url string, body io.Reader) (*http.Request, error) {

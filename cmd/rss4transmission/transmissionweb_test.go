@@ -4,7 +4,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -16,7 +15,7 @@ import (
 func TestNav_LinksTransmissionWhenEnabled(t *testing.T) {
 	h := &HistoryFile{Records: []HistoryRecord{}, guidIndex: map[string]int{}}
 
-	_, on := getBody(t, newWebMux(h, nil, nil, nil, nil, navConfig{Transmission: true}), "/")
+	_, on := getBody(t, newWebMux(h, nil, nil, nil, nil, navConfig{Transmission: navOn()}), "/")
 	if !strings.Contains(navLine(t, on), `href="/transmission"`) {
 		t.Errorf("torrents page nav is missing the Transmission link\ngot:\n%s", navLine(t, on))
 	}
@@ -32,7 +31,8 @@ func TestNav_LinksTransmissionWhenEnabled(t *testing.T) {
 func TestNav_SpeedPagesLinkTransmission(t *testing.T) {
 	sf := &SpeedFile{}
 	mux := http.NewServeMux()
-	registerSpeedRoutes(mux, sf, nil, nil, nil, speedActions{}, navConfig{Transmission: true})
+	registerSpeedRoutes(mux, staticSpeed(sf), nil, nil, nil, staticActions(speedActions{}),
+		navConfig{Transmission: navOn()})
 
 	for _, page := range []string{"/speedtest", "/rotations"} {
 		_, body := getBody(t, mux, page)
@@ -79,12 +79,9 @@ func TestTransmissionOrigin_RejectsEmptyHost(t *testing.T) {
 // upstreamMux builds a mux with the Transmission routes pointed at srv.
 func withUpstream(t *testing.T, srv *httptest.Server, user, pass string) *http.ServeMux {
 	t.Helper()
-	target, err := url.Parse(srv.URL)
-	if err != nil {
-		t.Fatalf("bad upstream URL: %v", err)
-	}
 	mux := http.NewServeMux()
-	registerTransmissionRoutes(mux, target, user, pass, navConfig{Transmission: true})
+	registerTransmissionRoutes(mux, staticTx(txConfigFor(t, srv, user, pass)),
+		navConfig{Transmission: navOn()})
 	return mux
 }
 
@@ -335,14 +332,11 @@ func TestTransmissionRoutes_CoexistWithHistoryMux(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
-	target, err := url.Parse(srv.URL)
-	if err != nil {
-		t.Fatalf("bad upstream URL: %v", err)
-	}
 
 	h := &HistoryFile{Records: []HistoryRecord{}, guidIndex: map[string]int{}}
-	mux := newWebMux(h, nil, nil, nil, nil, navConfig{Transmission: true})
-	registerTransmissionRoutes(mux, target, "", "", navConfig{Transmission: true})
+	mux := newWebMux(h, nil, nil, nil, nil, navConfig{Transmission: navOn()})
+	registerTransmissionRoutes(mux, staticTx(txConfigFor(t, srv, "", "")),
+		navConfig{Transmission: navOn()})
 
 	if code, _ := getBody(t, mux, "/"); code != http.StatusOK {
 		t.Errorf("history page status = %d, want 200", code)

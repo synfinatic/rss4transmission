@@ -94,7 +94,7 @@ func (cmd *SimulateCmd) Run(ctx *RunContext) error {
 		log.Infof("Batch %d/%d: %d winner(s)", i+1, totalBatches, won)
 	}
 
-	cacheTime := time.Duration(ctx.Konf.Int("SeenCacheDays")) * 24 * time.Hour
+	cacheTime := time.Duration(ctx.Config.SeenCacheDays) * 24 * time.Hour
 	if err = ctx.Cache.SaveCache(cacheTime, nil); err != nil {
 		return fmt.Errorf("unable to save seen cache: %w", err)
 	}

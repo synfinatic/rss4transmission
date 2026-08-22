@@ -366,7 +366,7 @@ func TestConfigReloader_OnWatchEvent_Success_NotifiesWithNilError(t *testing.T) 
 	r := &configReloader{
 		reload:        func() error { return nil },
 		registerWatch: func(cb func(event any, err error)) error { return nil },
-		notifyReload: func(err error) {
+		notifyReload: func(_ Config, err error) {
 			notified = append(notified, err)
 		},
 	}
@@ -387,7 +387,7 @@ func TestConfigReloader_OnWatchEvent_ReloadFailure_NotifiesWithError(t *testing.
 	r := &configReloader{
 		reload:        func() error { return wantErr },
 		registerWatch: func(cb func(event any, err error)) error { return nil },
-		notifyReload: func(err error) {
+		notifyReload: func(_ Config, err error) {
 			notified = append(notified, err)
 		},
 	}
@@ -426,7 +426,7 @@ func TestConfigReloader_OnWatchEvent_WatchError_DoesNotNotify(t *testing.T) {
 			return nil
 		},
 		retryInterval: 0,
-		notifyReload: func(err error) {
+		notifyReload: func(_ Config, err error) {
 			mu.Lock()
 			notifyCount++
 			mu.Unlock()
@@ -476,7 +476,7 @@ func TestConfigReloader_OnWatchEvent_NotifyReload_DoesNotHoldLock(t *testing.T) 
 		reload:        func() error { return nil },
 		registerWatch: func(cb func(event any, err error)) error { return nil },
 	}
-	r.notifyReload = func(err error) {
+	r.notifyReload = func(_ Config, err error) {
 		if !r.mu.TryLock() {
 			t.Fatal("expected r.mu to be unlocked while notifyReload runs, but it was held")
 		}
@@ -499,7 +499,7 @@ func TestConfigReloader_Recover_NotifiesSuccessOnceAfterRetries(t *testing.T) {
 		},
 		registerWatch: func(cb func(event any, err error)) error { return nil },
 		retryInterval: 0,
-		notifyReload: func(err error) {
+		notifyReload: func(_ Config, err error) {
 			notified = append(notified, err)
 		},
 	}
@@ -539,7 +539,7 @@ func TestConfigReloader_Recover_NotifiesFailureOnceThenSuccess(t *testing.T) {
 		},
 		registerWatch: func(cb func(event any, err error)) error { return nil },
 		retryInterval: 0,
-		notifyReload: func(err error) {
+		notifyReload: func(_ Config, err error) {
 			notified = append(notified, err)
 		},
 	}
@@ -598,7 +598,7 @@ func TestConfigReloader_OnWatchEvent_Debounce_CoalescesRapidEvents(t *testing.T)
 		},
 		registerWatch:    func(cb func(event any, err error)) error { return nil },
 		debounceInterval: 50 * time.Millisecond,
-		notifyReload: func(err error) {
+		notifyReload: func(_ Config, err error) {
 			mu.Lock()
 			notifyCount++
 			mu.Unlock()

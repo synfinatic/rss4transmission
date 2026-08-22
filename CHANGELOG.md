@@ -43,6 +43,24 @@
 - Added a pure-Go bencode decoder (`torrent.go`) to extract file names from `.torrent` files without
   any external dependency. Required by label extraction from file names.
 
+**Live config reload**
+
+- `watch` now applies the whole config file on save. A change to `Feeds`, `Extractors`,
+  `Transmission`, `Gluetun`, `SpeedTest`, `PortCheck`, `Ntfy`, `Notifications`, `SeenFile`, or
+  `SeenCacheDays` takes effect without a restart. Only the command line flags still need one.
+- A moved Transmission origin rebuilds the RPC client. A moved `SeenFile` saves the current cache
+  and opens the new path. A changed `SpeedTest`, `Ntfy`, or `Gluetun` block rebuilds the speed
+  monitor.
+- Web routes are registered once and read the live config per request, so `Transmission.WebUI`,
+  the cancel and start endpoints, and `/notify-complete` turn on and off without a restart. A route
+  that is turned off answers 404.
+- Fixed: the cancel and start buttons stopped working after a change to `Notifications.HMACSecret`.
+  The handlers verified with the secret read at startup, while the notifications were signed with
+  the live secret. Both sides now read the live secret.
+- Fixed: a config file with a bad `Exclude` regex, a bad `MinSize` or `MaxSize`, a bad extractor
+  pattern, a bad `Gluetun.Rotate`, or an out-of-range `Transmission.Port` exited the running
+  process. `loadConfig` now rejects the file and keeps the running config.
+
 ### Other changes
 
 - Seen cache now tracks per-GUID error hold-downs to avoid spamming retries on transient failures.

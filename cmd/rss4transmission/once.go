@@ -361,7 +361,7 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 
 	activeGUIDs := collectActiveGUIDs(feeds, ctx.Config.Feeds)
 
-	cacheTime := time.Duration(ctx.Konf.Int("SeenCacheDays")) * time.Duration(24) * time.Hour
+	cacheTime := time.Duration(ctx.Config.SeenCacheDays) * time.Duration(24) * time.Hour
 	if err = ctx.Cache.SaveCache(cacheTime, activeGUIDs); err != nil {
 		return fmt.Errorf("unable to save seen cache: %s", err.Error())
 	}

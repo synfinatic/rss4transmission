@@ -48,21 +48,30 @@ var historyTmpl string
 var navTmpl string
 
 // navConfig says which optional nav items exist. The shared nav partial only
-// links a page whose routes were actually registered, so a link never leads to
-// a 404.
+// links a page that is currently live, so a link never leads to a 404.
+//
+// Both fields are predicates rather than bools because every route is
+// registered once at startup and gated per request. A config reload can turn a
+// page on or off, and the nav bar must agree with the gate on the next render.
+// A nil field means the page is off.
 type navConfig struct {
-	Speedtest    bool
-	Transmission bool
+	Speedtest    func() bool
+	Transmission func() bool
 }
 
 // navFuncs returns the FuncMap entries that web/nav.html needs. Every template
-// set that parses navTmpl must merge these in.
+// set that parses navTmpl must merge these in. The funcs are evaluated at
+// render time, so the templates still compile once.
 func (n navConfig) navFuncs() template.FuncMap {
 	return template.FuncMap{
-		"speedtestEnabled":    func() bool { return n.Speedtest },
-		"transmissionEnabled": func() bool { return n.Transmission },
+		"speedtestEnabled":    func() bool { return n.Speedtest != nil && n.Speedtest() },
+		"transmissionEnabled": func() bool { return n.Transmission != nil && n.Transmission() },
 	}
 }
+
+// alwaysNav is the predicate for a nav item on its own page. The page renders
+// only when its gate let the request through, so the item is on by definition.
+func alwaysNav() bool { return true }
 
 //go:embed web/cancel.html
 var cancelTmpl string
@@ -441,20 +450,20 @@ func makePostForgetHandler(history *HistoryFile, forget forgetFunc) http.Handler
 // GET /start is only registered when both startStore and history are
 // non-nil; POST /start additionally requires retry to be non-nil.
 // accessLog is optional; when non-nil each request outcome is written to it.
-func newCancelMux(store *Store, cfg NotificationsConfig, remove removeFunc, getProgress progressFunc,
+func newCancelMux(store *Store, notif func() NotificationsConfig, remove removeFunc, getProgress progressFunc,
 	startStore *StartStore, retry retryFunc, history *HistoryFile, accessLog *logrus.Logger,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 	if store != nil {
-		mux.HandleFunc("GET /cancel", makeGetCancelHandler(store, cfg, getProgress, accessLog))
+		mux.HandleFunc("GET /cancel", makeGetCancelHandler(store, notif, getProgress, accessLog))
 		if remove != nil {
-			mux.HandleFunc("POST /cancel", makePostCancelHandler(store, cfg, remove, accessLog))
+			mux.HandleFunc("POST /cancel", makePostCancelHandler(store, notif, remove, accessLog))
 		}
 	}
 	if startStore != nil && history != nil {
-		mux.HandleFunc("GET /start", makeGetStartHandler(startStore, cfg, history, accessLog))
+		mux.HandleFunc("GET /start", makeGetStartHandler(startStore, notif, history, accessLog))
 		if retry != nil {
-			mux.HandleFunc("POST /start", makePostStartHandler(startStore, cfg, history, retry, accessLog))
+			mux.HandleFunc("POST /start", makePostStartHandler(startStore, notif, history, retry, accessLog))
 		}
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -465,26 +474,44 @@ func newCancelMux(store *Store, cfg NotificationsConfig, remove removeFunc, getP
 
 // registerCancelRoutes adds GET /cancel and POST /cancel handlers to mux.
 // accessLog is optional; when non-nil each request outcome is written to it.
-func registerCancelRoutes(mux *http.ServeMux, store *Store, cfg NotificationsConfig, remove removeFunc, getProgress progressFunc, accessLog *logrus.Logger) {
-	mux.HandleFunc("GET /cancel", makeGetCancelHandler(store, cfg, getProgress, accessLog))
-	mux.HandleFunc("POST /cancel", makePostCancelHandler(store, cfg, remove, accessLog))
+// notif reads the live Notifications block. The routes are always registered
+// and each request checks the current HMACSecret, so a reloaded secret takes
+// effect immediately and an empty one turns the routes into a 404.
+func registerCancelRoutes(mux *http.ServeMux, store *Store, notif func() NotificationsConfig, remove removeFunc, getProgress progressFunc, accessLog *logrus.Logger) {
+	mux.HandleFunc("GET /cancel", makeGetCancelHandler(store, notif, getProgress, accessLog))
+	mux.HandleFunc("POST /cancel", makePostCancelHandler(store, notif, remove, accessLog))
 }
 
 // registerStartRoutes adds GET /start and POST /start handlers to mux.
 // accessLog is optional; when non-nil each request outcome is written to it.
-func registerStartRoutes(mux *http.ServeMux, startStore *StartStore, cfg NotificationsConfig, retry retryFunc, history *HistoryFile, accessLog *logrus.Logger) {
-	mux.HandleFunc("GET /start", makeGetStartHandler(startStore, cfg, history, accessLog))
-	mux.HandleFunc("POST /start", makePostStartHandler(startStore, cfg, history, retry, accessLog))
+// notif reads the live Notifications block; see registerCancelRoutes.
+func registerStartRoutes(mux *http.ServeMux, startStore *StartStore, notif func() NotificationsConfig, retry retryFunc, history *HistoryFile, accessLog *logrus.Logger) {
+	mux.HandleFunc("GET /start", makeGetStartHandler(startStore, notif, history, accessLog))
+	mux.HandleFunc("POST /start", makePostStartHandler(startStore, notif, history, retry, accessLog))
 }
 
-// registerNotifyCompleteRoute adds POST /notify-complete to mux when ntfy is configured.
-// When cancelCfg.HMACSecret is non-empty the endpoint requires
-// Authorization: Bearer <HMACSecret>. accessLog is optional.
-func registerNotifyCompleteRoute(mux *http.ServeMux, ntfyCfg NtfyConfig, cancelCfg NotificationsConfig, accessLog *logrus.Logger) {
-	if ntfyCfg.BaseURL == "" || ntfyCfg.Topic == "" {
-		return
+// liveSecret returns the HMAC secret in effect for this request, and whether
+// the token routes are on at all. An empty secret means no token can be
+// verified, so the route answers 404 rather than pretending to be there.
+func liveSecret(notif func() NotificationsConfig) ([]byte, bool) {
+	if notif == nil {
+		return nil, false
 	}
-	mux.HandleFunc("POST /notify-complete", makeNotifyCompleteHandler(ntfyCfg, cancelCfg, accessLog))
+	secret := notif().HMACSecret
+	if secret == "" {
+		return nil, false
+	}
+	return []byte(secret), true
+}
+
+// registerNotifyCompleteRoute adds POST /notify-complete to mux. The route is
+// always registered and answers 404 while ntfy is not configured, so turning
+// ntfy on in the config file does not need a restart.
+//
+// When the live HMACSecret is non-empty the endpoint requires
+// Authorization: Bearer <HMACSecret>. accessLog is optional.
+func registerNotifyCompleteRoute(mux *http.ServeMux, ntfy func() NtfyConfig, notif func() NotificationsConfig, accessLog *logrus.Logger) {
+	mux.HandleFunc("POST /notify-complete", makeNotifyCompleteHandler(ntfy, notif, accessLog))
 }
 
 // notifyCompleteRequest is the JSON body accepted by POST /notify-complete.
@@ -494,8 +521,21 @@ type notifyCompleteRequest struct {
 	ID   int64  `json:"id"`
 }
 
-func makeNotifyCompleteHandler(ntfyCfg NtfyConfig, cancelCfg NotificationsConfig, accessLog *logrus.Logger) http.HandlerFunc {
+func makeNotifyCompleteHandler(ntfy func() NtfyConfig, notif func() NotificationsConfig, accessLog *logrus.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var ntfyCfg NtfyConfig
+		if ntfy != nil {
+			ntfyCfg = ntfy()
+		}
+		if ntfyCfg.BaseURL == "" || ntfyCfg.Topic == "" {
+			http.NotFound(w, r)
+			return
+		}
+		var cancelCfg NotificationsConfig
+		if notif != nil {
+			cancelCfg = notif()
+		}
+
 		if cancelCfg.HMACSecret != "" {
 			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if subtle.ConstantTimeCompare([]byte(got), []byte(cancelCfg.HMACSecret)) != 1 {
@@ -576,10 +616,14 @@ func tokenErrorResponse(w http.ResponseWriter, err error) {
 // makeGetCancelHandler serves the confirmation form. It validates the token,
 // peeks the store for metadata without consuming the entry, and queries
 // Transmission for live download progress via getProgress.
-func makeGetCancelHandler(store *Store, cfg NotificationsConfig, getProgress progressFunc, accessLog *logrus.Logger) http.HandlerFunc {
-	secret := []byte(cfg.HMACSecret)
+func makeGetCancelHandler(store *Store, notif func() NotificationsConfig, getProgress progressFunc, accessLog *logrus.Logger) http.HandlerFunc {
 	tmpl := template.Must(template.New("cancel").Parse(cancelTmpl))
 	return func(w http.ResponseWriter, r *http.Request) {
+		secret, ok := liveSecret(notif)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
 		q := r.URL.Query()
 		id := q.Get("id")
 		expires, err := parseCancelToken(secret, id, q.Get("expires"), q.Get("sig"))
@@ -655,9 +699,13 @@ func makeGetCancelHandler(store *Store, cfg NotificationsConfig, getProgress pro
 // makePostCancelHandler processes the confirmation form submission. It re-validates
 // the token, removes the torrent from Transmission, and only then consumes the
 // store entry so users can retry if the Transmission call fails.
-func makePostCancelHandler(store *Store, cfg NotificationsConfig, remove removeFunc, accessLog *logrus.Logger) http.HandlerFunc {
-	secret := []byte(cfg.HMACSecret)
+func makePostCancelHandler(store *Store, notif func() NotificationsConfig, remove removeFunc, accessLog *logrus.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		secret, ok := liveSecret(notif)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form body", http.StatusBadRequest)
 			return
@@ -732,10 +780,14 @@ func makePostCancelHandler(store *Store, cfg NotificationsConfig, remove removeF
 // makeGetStartHandler serves the /start confirmation form. It validates the
 // token, peeks the StartStore for the feed/GUID pair without consuming the
 // entry, then resolves the HistoryRecord to render.
-func makeGetStartHandler(store *StartStore, cfg NotificationsConfig, history *HistoryFile, accessLog *logrus.Logger) http.HandlerFunc {
-	secret := []byte(cfg.HMACSecret)
+func makeGetStartHandler(store *StartStore, notif func() NotificationsConfig, history *HistoryFile, accessLog *logrus.Logger) http.HandlerFunc {
 	tmpl := template.Must(template.New("start").Parse(startTmpl))
 	return func(w http.ResponseWriter, r *http.Request) {
+		secret, ok := liveSecret(notif)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
 		q := r.URL.Query()
 		id := q.Get("id")
 		expires, err := parseCancelToken(secret, id, q.Get("expires"), q.Get("sig"))
@@ -821,9 +873,13 @@ func makeGetStartHandler(store *StartStore, cfg NotificationsConfig, history *Hi
 // retry (retryHistoryItem). Unlike /cancel, the StartStore entry is never
 // consumed: retryHistoryItem's own outcome guard (dispatched/downloaded ->
 // error) already makes a replayed /start link idempotent.
-func makePostStartHandler(store *StartStore, cfg NotificationsConfig, history *HistoryFile, retry retryFunc, accessLog *logrus.Logger) http.HandlerFunc {
-	secret := []byte(cfg.HMACSecret)
+func makePostStartHandler(store *StartStore, notif func() NotificationsConfig, history *HistoryFile, retry retryFunc, accessLog *logrus.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		secret, ok := liveSecret(notif)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid form body", http.StatusBadRequest)
 			return

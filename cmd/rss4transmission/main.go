@@ -19,10 +19,12 @@ package main
  */
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/alecthomas/kong"
 	"github.com/hekmon/transmissionrpc/v3"
@@ -52,10 +54,12 @@ var CONFIG_FILE = []string{
 }
 
 type RunContext struct {
-	Ctx                 *kong.Context
-	Cli                 *CLI
-	Konf                *koanf.Koanf
-	configFile          string
+	Ctx        *kong.Context
+	Cli        *CLI
+	configFile string
+	// seenFileOverride is a non-empty --seen-file flag. It pins the cache
+	// path, so a later config reload must not follow a changed SeenFile.
+	seenFileOverride    string
 	Config              Config
 	Cache               *CacheFile
 	History             *HistoryFile
@@ -68,8 +72,26 @@ type RunContext struct {
 	CancelRoutesEnabled bool
 	StartStore          *StartStore
 	StartRoutesEnabled  bool
-	Transmission        *transmissionrpc.Client
 	Provider            *file.File
+
+	// transmission is the RPC client, and txURL is the origin it points at
+	// (the client does not expose it). A reload can replace both when the
+	// Transmission block moves, while the monitors and the web handlers read
+	// the client from their own goroutines, so every access goes through Tx().
+	txMu         sync.RWMutex
+	transmission *transmissionrpc.Client
+	txURL        string
+
+	// The long-lived components watch builds and a config reload updates in
+	// place. They are written only from WatchCmd.Run and applyConfig, both of
+	// which hold the reload lock.
+	Gluetun      *Gluetun
+	PortMonitor  *PortMonitor
+	SpeedMonitor *SpeedMonitor
+	// speedCancel stops the running speed monitor. Rebuilding the monitor
+	// abandons a measurement in flight, which is acceptable at the hourly
+	// cadence the monitor runs at.
+	speedCancel context.CancelFunc
 }
 
 type CLI struct {
@@ -145,51 +167,84 @@ func main() {
 		log.Fatalf("Unable to locate config file")
 	}
 
-	var err error
-	if rc.Konf, err = rc.loadConfig(rc.configFile); err != nil {
+	if err := rc.loadConfig(rc.configFile); err != nil {
 		log.WithError(err).Fatalf("Unable to load %s", rc.configFile)
 	}
 
 	if !commandNeedsTransmission(ctx.Command()) {
-		if err = ctx.Run(rc); err != nil {
+		if err := ctx.Run(rc); err != nil {
 			log.WithError(err).Fatalf("Error running command")
 		}
 		return
 	}
 
 	// use our SeenFile
-	seenFileName := rc.Konf.String("SeenFile")
-	if cli.SeenFile != "" {
-		seenFileName = cli.SeenFile
-	}
+	rc.seenFileOverride = cli.SeenFile
+	seenFileName := rc.seenFile()
 
+	var err error
 	if rc.Cache, err = OpenCache(seenFileName); err != nil {
 		log.WithError(err).Fatalf("Unable to open cache file: %s", seenFileName)
 	}
 
-	if rc.Konf.Int("Transmission.Port") < 0 || rc.Konf.Int("Transmission.Port") > 65535 {
-		log.Fatalf("Invalid port number: %d", rc.Konf.Int("Transmission.Port"))
-	}
-	config := transmissionrpc.Config{
-		UserAgent: fmt.Sprintf("rss4transmission/%s", Version),
-	}
-	proto := "http"
-	if rc.Konf.Bool("Transmission.HTTPS") {
-		proto = "https"
-	}
-	transmissionUrl := fmt.Sprintf("%s://%s:%d%s", proto,
-		rc.Konf.String("Transmission.Host"), rc.Konf.Int("Transmission.Port"), rc.Konf.String("Transmission.Path"))
-	log.Debugf("Transmission URL: %s", transmissionUrl)
-	connectUrl, err := url.Parse(transmissionUrl)
+	client, err := newTransmissionClient(rc.Config.Transmission)
 	if err != nil {
-		log.WithError(err).Fatalf("Unable to parse Transmission URL: %s", transmissionUrl)
-	}
-	if rc.Transmission, err = transmissionrpc.New(connectUrl, &config); err != nil {
 		log.WithError(err).Fatalf("Unable to setup Transmission client")
 	}
+	rc.setTx(client, rc.Config.Transmission.URL())
 	if err = ctx.Run(rc); err != nil {
 		log.WithError(err).Fatalf("Error running command")
 	}
+}
+
+// Tx is the Transmission RPC client in effect. Read it per call rather than
+// holding on to it: a config reload can point the daemon at a different
+// Transmission server.
+func (rc *RunContext) Tx() *transmissionrpc.Client {
+	rc.txMu.RLock()
+	defer rc.txMu.RUnlock()
+	return rc.transmission
+}
+
+// setTx installs a client and records the origin it talks to.
+func (rc *RunContext) setTx(client *transmissionrpc.Client, txURL string) {
+	rc.txMu.Lock()
+	defer rc.txMu.Unlock()
+	rc.transmission = client
+	rc.txURL = txURL
+}
+
+// seenFile is the cache path in effect: the --seen-file flag when given,
+// otherwise the config file's SeenFile.
+func (rc *RunContext) seenFile() string {
+	return rc.seenFileFor(rc.Config)
+}
+
+// seenFileFor is the cache path cfg asks for, with the --seen-file flag still
+// winning. applyConfig calls it with a config it is in the middle of applying,
+// which is why the config is a parameter.
+func (rc *RunContext) seenFileFor(cfg Config) string {
+	if rc.seenFileOverride != "" {
+		return rc.seenFileOverride
+	}
+	return cfg.SeenFile
+}
+
+// newTransmissionClient builds the RPC client for a Transmission block. cfg
+// must already have passed Transmission.Validate(), which loadConfig runs.
+//
+// Username and Password are deliberately not applied here: the RPC client
+// takes credentials through the URL userinfo, and the configured pair is used
+// only by the web reverse proxy in transmissionweb.go.
+func newTransmissionClient(cfg Transmission) (*transmissionrpc.Client, error) {
+	log.Debugf("Transmission URL: %s", cfg.URL())
+	connectUrl, err := url.Parse(cfg.URL())
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse Transmission URL %q: %w", cfg.URL(), err)
+	}
+	return transmissionrpc.New(connectUrl, &transmissionrpc.Config{
+		UserAgent: fmt.Sprintf("rss4transmission/%s", Version),
+	})
 }
 
 // commandNeedsTransmission reports whether a subcommand needs the seen cache
@@ -222,7 +277,7 @@ func GetPath(path string) string {
 	return strings.Replace(path, "~", os.Getenv("HOME"), 1)
 }
 
-func (rc *RunContext) loadConfig(configFile string) (*koanf.Koanf, error) {
+func (rc *RunContext) loadConfig(configFile string) error {
 	konf := koanf.New(".")
 
 	// load our defaults
@@ -239,29 +294,51 @@ func (rc *RunContext) loadConfig(configFile string) (*koanf.Koanf, error) {
 	}
 
 	if err := konf.Load(provider, yaml.Parser()); err != nil {
-		return konf, err
+		return err
 	}
 
 	var cfg Config
 	if err := konf.Unmarshal("", &cfg); err != nil {
-		return konf, err
+		return err
 	}
 
 	if err := cfg.Ntfy.Validate(); err != nil {
-		return konf, fmt.Errorf("invalid ntfy template: %w", err)
+		return fmt.Errorf("invalid ntfy template: %w", err)
 	}
 
 	if err := cfg.SpeedTest.Validate(); err != nil {
-		return konf, fmt.Errorf("invalid SpeedTest configuration: %w", err)
+		return fmt.Errorf("invalid SpeedTest configuration: %w", err)
+	}
+
+	if err := cfg.Transmission.Validate(); err != nil {
+		return fmt.Errorf("invalid Transmission configuration: %w", err)
+	}
+
+	if err := cfg.Gluetun.Validate(); err != nil {
+		return fmt.Errorf("invalid Gluetun configuration: %w", err)
+	}
+
+	// Compiling the extractors here does double duty: it rejects a bad Regexp
+	// or Normalize pattern up front instead of at first use, and it means the
+	// map is fully built before anything shares it, so handing a Config copy
+	// to another goroutine cannot race on the lazy compile.
+	for name, es := range cfg.Extractors {
+		if err := es.Compile(); err != nil {
+			return fmt.Errorf("invalid extractor %q: %w", name, err)
+		}
 	}
 
 	if err := validateFeedNames(cfg.Feeds); err != nil {
-		return konf, fmt.Errorf("invalid feed configuration: %w", err)
+		return fmt.Errorf("invalid feed configuration: %w", err)
 	}
 
-	for _, feedCfg := range cfg.Feeds {
+	for i := range cfg.Feeds {
+		feedCfg := &cfg.Feeds[i]
 		if err := feedCfg.Validate(feedCfg.Name, cfg.Extractors); err != nil {
-			return konf, fmt.Errorf("invalid feed %q config: %w", feedCfg.Name, err)
+			return fmt.Errorf("invalid feed %q config: %w", feedCfg.Name, err)
+		}
+		if err := feedCfg.Compile(); err != nil {
+			return fmt.Errorf("invalid feed %q config: %w", feedCfg.Name, err)
 		}
 	}
 
@@ -270,5 +347,5 @@ func (rc *RunContext) loadConfig(configFile string) (*koanf.Koanf, error) {
 	// previously running config fully intact instead of partially applied.
 	rc.Config = cfg
 
-	return konf, nil
+	return nil
 }

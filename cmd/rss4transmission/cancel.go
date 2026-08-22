@@ -45,18 +45,48 @@ type storeEntry struct {
 
 // Store maps per-download UUIDs to Transmission torrent IDs.
 type Store struct {
-	ttl time.Duration
-	m   sync.Map
+	// mu guards ttl, which a config reload can change while the reaper
+	// goroutine and the request goroutines are running.
+	mu      sync.Mutex
+	ttl     time.Duration
+	ttlWake chan struct{} // buffered(1): tells the reaper its TTL changed
+	m       sync.Map
 }
 
 func NewStore(ttl time.Duration) *Store {
-	return &Store{ttl: ttl}
+	return &Store{ttl: ttl, ttlWake: make(chan struct{}, 1)}
+}
+
+// SetTTL replaces the token lifetime. New entries expire on the new value and
+// the reaper sweeps on it from its next cycle. Entries already registered keep
+// the expiry they were given, which is also what their signed token carries.
+func (s *Store) SetTTL(ttl time.Duration) {
+	s.mu.Lock()
+	changed := s.ttl != ttl
+	s.ttl = ttl
+	s.mu.Unlock()
+	if !changed {
+		return
+	}
+	// Buffered and non-blocking: the reaper only needs to know that the TTL
+	// moved, so a wake-up already queued covers this change too.
+	select {
+	case s.ttlWake <- struct{}{}:
+	default:
+	}
+}
+
+// TTL is the token lifetime currently in effect.
+func (s *Store) TTL() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ttl
 }
 
 func (s *Store) Register(id string, torrentID int64, meta CancelMetadata) {
 	s.m.Store(id, &storeEntry{
 		torrentID: torrentID,
-		expiresAt: time.Now().Add(s.ttl),
+		expiresAt: time.Now().Add(s.TTL()),
 		meta:      meta,
 	})
 }
@@ -87,19 +117,36 @@ func (s *Store) Delete(id string) {
 }
 
 // StartReaper launches a goroutine that removes entries whose token TTL has
-// elapsed. It stops when ctx is cancelled. It is a no-op if the TTL is non-positive.
+// elapsed. It stops when ctx is cancelled.
+//
+// The goroutine runs even with a non-positive TTL, where it only waits: the
+// store is created before the config is known to enable it, so a later
+// SetTTL has to be able to start the sweeping.
 func (s *Store) StartReaper(ctx context.Context) {
-	if s.ttl <= 0 {
-		return
-	}
 	go func() {
-		ticker := time.NewTicker(s.ttl)
-		defer ticker.Stop()
 		for {
+			ttl := s.TTL()
+			if ttl <= 0 {
+				// Nothing expires, so wait for a TTL rather than spin.
+				select {
+				case <-ctx.Done():
+					return
+				case <-s.ttlWake:
+					continue
+				}
+			}
+
+			ticker := time.NewTicker(ttl)
 			select {
 			case <-ctx.Done():
+				ticker.Stop()
 				return
+			case <-s.ttlWake:
+				// The TTL changed: rebuild the ticker on the new interval.
+				ticker.Stop()
+				continue
 			case <-ticker.C:
+				ticker.Stop()
 				now := time.Now()
 				s.m.Range(func(key, val interface{}) bool {
 					if val.(*storeEntry).expiresAt.Before(now) {

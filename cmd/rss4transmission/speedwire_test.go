@@ -70,7 +70,7 @@ func enabledSpeedCtx(t *testing.T) *RunContext {
 func TestNewSpeedMonitorFor_DisabledReturnsNil(t *testing.T) {
 	ctx := &RunContext{Config: Config{SpeedTest: SpeedTestConfig{Enabled: false}}}
 
-	m, err := newSpeedMonitorFor(ctx, nil)
+	m, err := newSpeedMonitorFor(ctx, ctx.Config, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -85,7 +85,7 @@ func TestNewSpeedMonitorFor_DisabledReturnsNil(t *testing.T) {
 func TestNewSpeedMonitorFor_OpensStore(t *testing.T) {
 	ctx := enabledSpeedCtx(t)
 
-	m, err := newSpeedMonitorFor(ctx, nil)
+	m, err := newSpeedMonitorFor(ctx, ctx.Config, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -102,7 +102,7 @@ func TestNewSpeedMonitorFor_OpensStore(t *testing.T) {
 func TestNewSpeedMonitorFor_NoGluetunMeansNoRotate(t *testing.T) {
 	ctx := enabledSpeedCtx(t)
 
-	m, err := newSpeedMonitorFor(ctx, nil)
+	m, err := newSpeedMonitorFor(ctx, ctx.Config, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -115,7 +115,7 @@ func TestNewSpeedMonitorFor_GluetunWiresRotate(t *testing.T) {
 	ctx := enabledSpeedCtx(t)
 	g := &Gluetun{}
 
-	m, err := newSpeedMonitorFor(ctx, g)
+	m, err := newSpeedMonitorFor(ctx, ctx.Config, g)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -133,7 +133,7 @@ func TestNewSpeedMonitorFor_RequiresResultsFile(t *testing.T) {
 	ctx := enabledSpeedCtx(t)
 	ctx.Config.SpeedTest.ResultsFile = ""
 
-	if _, err := newSpeedMonitorFor(ctx, nil); err == nil {
+	if _, err := newSpeedMonitorFor(ctx, ctx.Config, nil); err == nil {
 		t.Fatal("expected an error when ResultsFile is unset")
 	} else if !strings.Contains(err.Error(), "ResultsFile") {
 		t.Errorf("error does not name the missing setting: %s", err)
@@ -144,7 +144,7 @@ func TestNewSpeedMonitorFor_BadProxyIsAnError(t *testing.T) {
 	ctx := enabledSpeedCtx(t)
 	ctx.Config.SpeedTest.Proxy = "://nope"
 
-	if _, err := newSpeedMonitorFor(ctx, nil); err == nil {
+	if _, err := newSpeedMonitorFor(ctx, ctx.Config, nil); err == nil {
 		t.Error("expected an error for an unusable proxy")
 	}
 }
@@ -244,7 +244,7 @@ func TestNewSpeedActions_NoMonitorNoGluetun(t *testing.T) {
 
 func TestNewSpeedActions_MonitorWiresRun(t *testing.T) {
 	ctx := enabledSpeedCtx(t)
-	m, err := newSpeedMonitorFor(ctx, nil)
+	m, err := newSpeedMonitorFor(ctx, ctx.Config, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}

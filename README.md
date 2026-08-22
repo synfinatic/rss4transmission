@@ -67,6 +67,38 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
   immediately, resuming with the next feed on the following `once`/`watch` tick
 - **fail2ban integration** — optional access log with timestamps and client IPs lets fail2ban
   detect and ban brute-force attempts against the cancel endpoint
+- **Live config reload** — `watch` re-reads the whole config file when you save it and applies
+  every setting to the running process. A bad edit is rejected, and the previous config keeps
+  running
+
+## Live config reload
+
+The `watch` command watches the config file. When you save a change, `watch` reads the whole file
+again and applies every setting to the running process. A restart is not necessary.
+
+The settings below all take effect on the next save:
+
+- `Feeds` and `Extractors`
+- `Transmission`, including a new host or port, new credentials, and `WebUI`
+- `Gluetun`, including the rotation policy and the control server address
+- `SpeedTest` and `PortCheck.Enabled`
+- `Ntfy` and `Notifications`, including `HMACSecret`, `TokenTTLH`, and `BaseURL`
+- `SeenFile` and `SeenCacheDays`
+
+Two changes cost a little work. A new `SpeedTest` or `Gluetun` block rebuilds the speed monitor,
+which abandons a measurement in progress. A new `SeenFile` saves the current cache before it opens
+the new path.
+
+If the new file is not valid, `watch` rejects it and keeps the config that is already running. It
+logs the error and sends the config-failed ntfy alert. Fix the file and save it again.
+
+The command line flags are read once at start. To change one of the flags below, restart the
+process:
+
+- `--private-listen`, `--public-listen`, `--history-file`, and `--access-log`
+- `--sleep`, `--torrent-cache-dir`, and `--feed`
+- `--download` and `--download-path`
+- `--seen-file`, which pins the cache path and overrides `SeenFile` in the config file
 
 ## Documentation
 

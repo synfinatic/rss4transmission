@@ -138,56 +138,105 @@ type speedActions struct {
 // /metrics is registered even with a nil store so a scrape configuration does
 // not have to care whether SpeedTest is enabled; the two pages are not, because
 // a page with nothing to show is worse than a 404.
-func registerSpeedRoutes(mux *http.ServeMux, speed *SpeedFile, portOpen portOpenFunc,
-	peerPort peerPortFunc, exitIP exitIPFunc, actions speedActions, nav navConfig,
+func registerSpeedRoutes(mux *http.ServeMux, speed func() *SpeedFile, portOpen portOpenFunc,
+	peerPort peerPortFunc, exitIP func() exitIPFunc, actions func() speedActions, nav navConfig,
 ) {
-	if speed != nil {
-		// Both pages share the nav partial and the same formatting helpers.
-		// speedtestEnabled is what the nav uses to decide whether to link the
-		// VPN pages at all; on these two pages it is true by construction,
-		// since neither route is registered without a speed store.
-		nav.Speedtest = true
-		funcs := template.FuncMap{
-			"mbps":    func(v float64) string { return fmt.Sprintf("%.1f", v) },
-			"ms":      func(v float64) string { return fmt.Sprintf("%.1f", v) },
-			"fmtTime": func(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05") },
+	// speed, actions and exitIP are getters because a config reload rebuilds
+	// the speed monitor, which replaces the store, the action funcs and the
+	// exit-IP source. The routes
+	// are registered once and read the current values per request, so turning
+	// SpeedTest on or off does not need a restart.
+	liveSpeed := func() *SpeedFile {
+		if speed == nil {
+			return nil
 		}
-		for name, fn := range nav.navFuncs() {
-			funcs[name] = fn
-		}
-		tmpl := template.Must(template.Must(
-			template.New("speedtest").Funcs(funcs).Parse(navTmpl)).Parse(speedTmpl))
-		rotTmpl := template.Must(template.Must(
-			template.New("rotations").Funcs(funcs).Parse(navTmpl)).Parse(rotationsTmpl))
-
-		mux.HandleFunc("GET /speedtest", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			data := buildSpeedPageData(speed, portOpen, peerPort, exitIP)
-			data.CanRun = actions.Run != nil
-			data.CanRotate = actions.Rotate != nil
-			if err := tmpl.Execute(w, data); err != nil {
-				log.WithError(err).Error("Failed to render speedtest template")
-			}
-		})
-
-		mux.HandleFunc("GET /rotations", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			if err := rotTmpl.Execute(w, buildRotationsPageData(speed, exitIP)); err != nil {
-				log.WithError(err).Error("Failed to render rotations template")
-			}
-		})
-
-		if actions.Run != nil {
-			mux.HandleFunc("POST /speedtest/run", makeSpeedRunHandler(actions.Run))
-		}
-		if actions.Rotate != nil {
-			mux.HandleFunc("POST /speedtest/rotate", makeSpeedRotateHandler(actions))
-		}
+		return speed()
 	}
+	liveActions := func() speedActions {
+		if actions == nil {
+			return speedActions{}
+		}
+		return actions()
+	}
+	// A nil source is not the same as one that answers "unknown": the pages
+	// read nil as Gluetun not being configured and fall back to what the last
+	// measurement saw. Adding or removing a Gluetun block therefore has to be
+	// able to hand the pages a nil again, which is why this getter returns the
+	// func rather than the address.
+	liveExitIP := func() exitIPFunc {
+		if exitIP == nil {
+			return nil
+		}
+		return exitIP()
+	}
+
+	// Both pages share the nav partial and the same formatting helpers.
+	// speedtestEnabled is what the nav uses to decide whether to link the VPN
+	// pages at all; on these two pages it is true by construction, since
+	// neither answers anything but a 404 without a speed store.
+	nav.Speedtest = alwaysNav
+	funcs := template.FuncMap{
+		"mbps":    func(v float64) string { return fmt.Sprintf("%.1f", v) },
+		"ms":      func(v float64) string { return fmt.Sprintf("%.1f", v) },
+		"fmtTime": func(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05") },
+	}
+	for name, fn := range nav.navFuncs() {
+		funcs[name] = fn
+	}
+	tmpl := template.Must(template.Must(
+		template.New("speedtest").Funcs(funcs).Parse(navTmpl)).Parse(speedTmpl))
+	rotTmpl := template.Must(template.Must(
+		template.New("rotations").Funcs(funcs).Parse(navTmpl)).Parse(rotationsTmpl))
+
+	mux.HandleFunc("GET /speedtest", func(w http.ResponseWriter, r *http.Request) {
+		s := liveSpeed()
+		if s == nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		data := buildSpeedPageData(s, portOpen, peerPort, liveExitIP())
+		acts := liveActions()
+		data.CanRun = acts.Run != nil
+		data.CanRotate = acts.Rotate != nil
+		if err := tmpl.Execute(w, data); err != nil {
+			log.WithError(err).Error("Failed to render speedtest template")
+		}
+	})
+
+	mux.HandleFunc("GET /rotations", func(w http.ResponseWriter, r *http.Request) {
+		s := liveSpeed()
+		if s == nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := rotTmpl.Execute(w, buildRotationsPageData(s, liveExitIP())); err != nil {
+			log.WithError(err).Error("Failed to render rotations template")
+		}
+	})
+
+	mux.HandleFunc("POST /speedtest/run", func(w http.ResponseWriter, r *http.Request) {
+		run := liveActions().Run
+		if liveSpeed() == nil || run == nil {
+			http.NotFound(w, r)
+			return
+		}
+		makeSpeedRunHandler(run)(w, r)
+	})
+
+	mux.HandleFunc("POST /speedtest/rotate", func(w http.ResponseWriter, r *http.Request) {
+		acts := liveActions()
+		if liveSpeed() == nil || acts.Rotate == nil {
+			http.NotFound(w, r)
+			return
+		}
+		makeSpeedRotateHandler(acts)(w, r)
+	})
 
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-		_, _ = w.Write([]byte(renderMetrics(speed, portOpen)))
+		_, _ = w.Write([]byte(renderMetrics(liveSpeed(), portOpen)))
 	})
 }
 

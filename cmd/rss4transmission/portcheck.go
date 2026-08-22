@@ -43,15 +43,128 @@ type PortMonitor struct {
 	peerPortErr  bool // the last refresh failed; used to log the transition once
 
 	trigger chan struct{} // buffered(1): an out-of-band check request
+
+	// enabled is PortCheck.Enabled. With it off and no Gluetun there is
+	// nothing to check, so check() does nothing and the goroutine stays
+	// running. That makes the setting a live toggle instead of a
+	// start-a-goroutine-at-startup decision.
+	enabled bool
+
+	// pendingMu guards pending, which the config-reload goroutine writes via
+	// ApplyConfig and check() consumes. It is deliberately not m.mu: check()
+	// holds that for the whole of CheckVpnTunnel, which runs for tens of
+	// seconds during a rotation, and a reload must not block that long.
+	pendingMu sync.Mutex
+	pending   *portMonitorUpdate
 }
 
+// portMonitorUpdate is a config change waiting to be applied to the monitor.
+// It carries everything a reload can alter, because it replaces any update
+// that has not been consumed yet rather than merging with it.
+type portMonitorUpdate struct {
+	// Gluetun is the new Gluetun block; GluetunOn says whether one is
+	// configured at all. An existing client is reconfigured in place so the
+	// rotation policy does not read a reload as a fresh tunnel.
+	Gluetun   GluetunConfig
+	GluetunOn bool
+
+	// Client is a client the caller already built, for the case where the
+	// Gluetun block was added by a reload. The caller keeps the same pointer,
+	// so it can wire the rest of the process to it without reading m.Gluetun
+	// from another goroutine. It is nil when the block was only edited.
+	Client *Gluetun
+
+	Ntfy NtfyConfig
+
+	// PortCheckOn is PortCheck.Enabled.
+	PortCheckOn bool
+
+	// Transmission is the RPC client in effect, which a reload can replace
+	// when the Transmission origin changes.
+	Transmission *transmissionrpc.Client
+
+	// OnRotated is the hook Gluetun calls after a rotation. It is rebuilt on
+	// reload because it captures the ntfy config and the speed store.
+	OnRotated func(RotationOutcome)
+}
+
+// NewPortMonitor builds a monitor that checks on every tick. The live
+// PortCheck.Enabled value arrives through ApplyConfig, which the caller pushes
+// before Run starts.
 func NewPortMonitor(t *transmissionrpc.Client, g *Gluetun, ntfyCfg NtfyConfig) *PortMonitor {
 	return &PortMonitor{
 		Transmission: t,
 		Gluetun:      g,
 		Ntfy:         ntfyCfg,
+		enabled:      true,
 		trigger:      make(chan struct{}, 1),
 	}
+}
+
+// ApplyConfig queues a config change for the monitor to adopt on its next
+// check. It never blocks on m.mu, so a reload cannot be held up by a rotation
+// in progress.
+//
+// A queued update that has not been consumed is replaced, not merged: each
+// update is a complete picture of the config, so the newest one is the right
+// one to apply.
+//
+// It is safe to call from another goroutine while Run() is going. Trigger() is
+// the only other method with that property.
+func (m *PortMonitor) ApplyConfig(u portMonitorUpdate) {
+	m.pendingMu.Lock()
+	defer m.pendingMu.Unlock()
+	m.pending = &u
+}
+
+// takePending removes the queued update, if any.
+func (m *PortMonitor) takePending() *portMonitorUpdate {
+	m.pendingMu.Lock()
+	defer m.pendingMu.Unlock()
+	u := m.pending
+	m.pending = nil
+	return u
+}
+
+// applyPending adopts a queued config change. It must be called with m.mu
+// held, which is what makes it safe to touch Gluetun: that struct has no
+// locking of its own and every other access to it happens under m.mu.
+func (m *PortMonitor) applyPending() {
+	u := m.takePending()
+	if u == nil {
+		return
+	}
+
+	m.Ntfy = u.Ntfy
+	m.enabled = u.PortCheckOn
+	m.Transmission = u.Transmission
+
+	switch {
+	case !u.GluetunOn:
+		// The block was removed. Rotation and peer-port sync stop; the port
+		// test falls back to asking Transmission directly.
+		m.Gluetun = nil
+		return
+	case u.Client != nil:
+		// Either the client we already have, or one the caller built because
+		// the block was added by a reload.
+		m.Gluetun = u.Client
+	case m.Gluetun == nil:
+		m.Gluetun = NewGluetun(u.Gluetun, u.Transmission)
+	}
+
+	m.Gluetun.applyConfig(u.Gluetun)
+	m.Gluetun.Transmission = u.Transmission
+	m.Gluetun.OnRotated = u.OnRotated
+}
+
+// gluetunConfigured reports whether a Gluetun sidecar is currently attached.
+// The VPN page uses it to decide whether Gluetun is the authority on the exit
+// IP or whether it must fall back to what the last measurement observed.
+func (m *PortMonitor) gluetunConfigured() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.Gluetun != nil
 }
 
 // Trigger asks for a port check without waiting for the next tick. It returns
@@ -83,7 +196,7 @@ func (m *PortMonitor) Run() {
 		case <-ticker.C:
 		case <-m.trigger:
 		}
-		if _, err := m.check(); err != nil {
+		if _, _, err := m.check(); err != nil {
 			log.WithError(err).Warn("Unable to check Transmission port state")
 		}
 	}
@@ -93,9 +206,12 @@ func (m *PortMonitor) Run() {
 // sends the startup-specific ntfy alert (separate from the transition alert,
 // since lastOpen starts nil and can't itself trigger a transition).
 func (m *PortMonitor) checkStartup() {
-	open, err := m.check()
+	open, checked, err := m.check()
 	if err != nil {
 		log.WithError(err).Warn("Unable to check Transmission port state")
+		return
+	}
+	if !checked {
 		return
 	}
 	if !open {
@@ -103,18 +219,26 @@ func (m *PortMonitor) checkStartup() {
 	}
 }
 
-// check performs a single port-open check, logs the result, and fires a
-// transition notification when the state changed since the previous check.
-// It holds m.mu for its entire body: Gluetun.CheckVpnTunnel mutates
-// unexported Gluetun fields with no locking of its own, and time.AfterFunc's
-// callback runs in its own goroutine, so the startup check and the ticker
-// loop's periodic checks could otherwise overlap.
-func (m *PortMonitor) check() (bool, error) {
+// check adopts any queued config change, performs a single port-open check,
+// logs the result, and fires a transition notification when the state changed
+// since the previous check. It holds m.mu for its entire body:
+// Gluetun.CheckVpnTunnel mutates unexported Gluetun fields with no locking of
+// its own, and time.AfterFunc's callback runs in its own goroutine, so the
+// startup check and the ticker loop's periodic checks could otherwise overlap.
+//
+// checked is false when there is nothing to check -- no Gluetun and PortCheck
+// turned off -- so a caller can tell that apart from a port that is closed. A
+// queued config change is still adopted first, which is how turning PortCheck
+// back on takes effect.
+func (m *PortMonitor) check() (open bool, checked bool, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var open bool
-	var err error
+	m.applyPending()
+	if m.Gluetun == nil && !m.enabled {
+		return false, false, nil
+	}
+
 	if m.Gluetun != nil {
 		open, err = m.Gluetun.CheckVpnTunnel()
 	} else {
@@ -127,7 +251,7 @@ func (m *PortMonitor) check() (bool, error) {
 	m.refreshPeerPort()
 
 	if err != nil {
-		return false, err
+		return false, true, err
 	}
 
 	if open {
@@ -145,7 +269,7 @@ func (m *PortMonitor) check() (bool, error) {
 	}
 	m.lastOpen = &open
 
-	return open, nil
+	return open, true, nil
 }
 
 // refreshPublicIP asks Gluetun which exit it is on and caches the answer. It

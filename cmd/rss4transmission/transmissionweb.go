@@ -65,6 +65,11 @@ func transmissionProxyTarget(cfg Transmission) *url.URL {
 // deployments. Proxying also makes the frame same-origin and lets us attach
 // the configured credentials, so the browser never prompts inside the frame.
 //
+// tx reads the live Transmission block. Both routes are registered once and
+// resolve the origin per request, so turning Transmission.WebUI on or off in
+// the config file takes effect without a restart. Either route answers 404
+// while WebUI is false or the block cannot produce a usable origin.
+//
 // These routes are for the private mux only. Like GET /, they are
 // unauthenticated, and they give their caller full control of Transmission.
 //
@@ -75,13 +80,31 @@ func transmissionProxyTarget(cfg Transmission) *url.URL {
 // The proxy is registered once per method rather than as a bare
 // "/transmission/" pattern. The history page owns "GET /", and Go rejects a
 // pattern that matches more methods on a more specific path as a conflict.
-func registerTransmissionRoutes(mux *http.ServeMux, target *url.URL, user, pass string, nav navConfig) {
-	nav.Transmission = true
+func registerTransmissionRoutes(mux *http.ServeMux, tx func() Transmission, nav navConfig) {
+	nav.Transmission = alwaysNav
 	funcs := nav.navFuncs()
 	tmpl := template.Must(template.Must(
 		template.New("transmission").Funcs(funcs).Parse(navTmpl)).Parse(transmissionTmpl))
 
+	// live is the origin and credentials for one request. ok is false when the
+	// page is off, which both handlers answer with a 404.
+	live := func() (target *url.URL, user, pass string, ok bool) {
+		if tx == nil {
+			return nil, "", "", false
+		}
+		cfg := tx()
+		target = transmissionProxyTarget(cfg)
+		if target == nil {
+			return nil, "", "", false
+		}
+		return target, cfg.Username, cfg.Password, true
+	}
+
 	mux.HandleFunc("GET /transmission", func(w http.ResponseWriter, r *http.Request) {
+		if _, _, _, ok := live(); !ok {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tmpl.Execute(w, nil); err != nil {
 			log.WithError(err).Error("Failed to render transmission template")
@@ -90,6 +113,9 @@ func registerTransmissionRoutes(mux *http.ServeMux, target *url.URL, user, pass 
 
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
+			// The gate below already rejected the request when live() says
+			// the page is off, so a target is always available here.
+			target, user, pass, _ := live()
 			pr.SetURL(target)
 			// SetURL joins target.Path onto the inbound path. target has no
 			// path, so the inbound path reaches the upstream unchanged.
@@ -107,8 +133,19 @@ func registerTransmissionRoutes(mux *http.ServeMux, target *url.URL, user, pass 
 			http.Error(w, "Transmission is unreachable", http.StatusBadGateway)
 		},
 	}
+	// The proxy is wrapped rather than registered directly so the same gate
+	// that hides the page also hides the RPC endpoint behind it. The URL the
+	// proxy forwards to comes from the config file, never from the request, so
+	// the caller cannot steer it at an arbitrary host.
+	gated := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, _, _, ok := live(); !ok {
+			http.NotFound(w, r)
+			return
+		}
+		proxy.ServeHTTP(w, r) // nolint:gosec // G704: the target is configured, not user input
+	})
 	for _, method := range proxyMethods {
-		mux.Handle(method+" /transmission/", proxy)
+		mux.Handle(method+" /transmission/", gated)
 	}
 }
 

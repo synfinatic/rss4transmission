@@ -43,7 +43,7 @@ func countDownloading(torrents []transmissionrpc.Torrent) int {
 // decide whether it is safe to measure.
 func activeDownloads(ctx *RunContext) activeDownloadsFunc {
 	return func(rCtx context.Context) (int, error) {
-		torrents, err := ctx.Transmission.TorrentGet(rCtx, []string{"status", "rateDownload"}, nil)
+		torrents, err := ctx.Tx().TorrentGet(rCtx, []string{"status", "rateDownload"}, nil)
 		if err != nil {
 			return 0, err
 		}
@@ -51,14 +51,17 @@ func activeDownloads(ctx *RunContext) activeDownloadsFunc {
 	}
 }
 
-// newSpeedMonitorFor assembles the SpeedMonitor from the live config, opening
-// the results store and setting ctx.Speed as a side effect so the web UI can
-// serve the same data. Returns (nil, nil) when SpeedTest is disabled.
+// newSpeedMonitorFor assembles the SpeedMonitor from full, opening the results
+// store and setting ctx.Speed as a side effect so the web UI can serve the
+// same data. Returns (nil, nil) when SpeedTest is disabled.
+//
+// The config is a parameter rather than a read of ctx.Config so a caller can
+// build a monitor for a config it is in the middle of applying.
 //
 // When g is nil the monitor runs in measure-only mode: results are still
 // recorded and served, but nothing can rotate the VPN egress.
-func newSpeedMonitorFor(ctx *RunContext, g *Gluetun) (*SpeedMonitor, error) {
-	cfg := ctx.Config.SpeedTest
+func newSpeedMonitorFor(ctx *RunContext, full Config, g *Gluetun) (*SpeedMonitor, error) {
+	cfg := full.SpeedTest
 	if !cfg.Enabled {
 		return nil, nil
 	}
@@ -85,40 +88,12 @@ func newSpeedMonitorFor(ctx *RunContext, g *Gluetun) (*SpeedMonitor, error) {
 		rotate = g.RequestRotate
 	}
 
-	monitor := NewSpeedMonitor(cfg, ctx.Config.Ntfy, speed, runTest, activeDownloads(ctx), rotate)
+	monitor := NewSpeedMonitor(cfg, full.Ntfy, speed, runTest, activeDownloads(ctx), rotate)
 	// Gluetun's own view of the exit, cached by the port monitor. nil in
 	// measure-only mode, where the rotation alert has no exit to name anyway.
 	monitor.ExitIP = ctx.ExitIP
 
 	return monitor, nil
-}
-
-// startSpeedMonitor launches the speed monitor when configured and returns it
-// so the VPN page's buttons can reach Trigger. A setup failure is logged and
-// swallowed -- a bad speedtest config must not stop feed processing, which is
-// what the daemon is actually here to do -- so nil covers both "disabled" and
-// "misconfigured".
-func startSpeedMonitor(ctx *RunContext, g *Gluetun) *SpeedMonitor {
-	monitor, err := newSpeedMonitorFor(ctx, g)
-	if err != nil {
-		log.WithError(err).Error("SpeedTest is enabled but could not be started")
-		return nil
-	}
-	if monitor == nil {
-		return nil
-	}
-
-	if g == nil {
-		log.Info("SpeedTest is enabled without Gluetun: recording measurements only, VPN rotation is disabled")
-	} else {
-		log.Infof("SpeedTest enabled: measuring every %s via %s, rotating below %.1f Mbps",
-			ctx.Config.SpeedTest.IntervalDuration(), ctx.Config.SpeedTest.Proxy,
-			ctx.Config.SpeedTest.MinDownloadMbps)
-	}
-
-	go monitor.Run(context.Background())
-
-	return monitor
 }
 
 // newSpeedActions builds the operations behind the VPN page's buttons. Each is
