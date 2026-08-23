@@ -118,9 +118,9 @@
     </style>
 </head>
 <body>
+    {{ template "nav" "torrents" }}
     <h1>Torrents</h1>
     <p id="count">{{ len . }} record(s) &mdash; auto-refreshes every 60 seconds.</p>
-{{ template "nav" "torrents" }}
 
     <div id="filters">
         <span>

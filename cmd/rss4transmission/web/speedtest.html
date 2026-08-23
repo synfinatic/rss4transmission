@@ -73,9 +73,9 @@
     </style>
 </head>
 <body>
+    {{ template "nav" "speedtest" }}
     <h1>VPN Speed</h1>
     <p id="count">{{ len .Rows }} measurement(s) &mdash; auto-refreshes every 60 seconds.</p>
-    {{ template "nav" "speedtest" }}
 
     <div id="summary">
         <div>
