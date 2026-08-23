@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -347,5 +348,64 @@ func TestGroupMatchScore_EmptyRequire(t *testing.T) {
 	labels := map[string]string{"series": "MotoGP"}
 	if got := g.MatchScore(labels); got != 0 {
 		t.Errorf("MatchScore = %d, want 0 (nothing to require, nothing to score)", got)
+	}
+}
+
+// --- Group.MismatchedRequire ---
+
+func TestGroupMismatchedRequire_MissingLabel(t *testing.T) {
+	g := Group{Require: map[string][]string{
+		"series":  {"MotoGP"},
+		"session": {"Race"},
+	}}
+	labels := map[string]string{"series": "MotoGP"} // session missing
+	got := g.MismatchedRequire(labels)
+	want := []string{"session"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("MismatchedRequire = %v, want %v", got, want)
+	}
+}
+
+func TestGroupMismatchedRequire_WrongValue(t *testing.T) {
+	g := Group{Require: map[string][]string{
+		"series": {"MotoGP"},
+	}}
+	labels := map[string]string{"series": "Moto2"}
+	got := g.MismatchedRequire(labels)
+	want := []string{"series"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("MismatchedRequire = %v, want %v", got, want)
+	}
+}
+
+func TestGroupMismatchedRequire_MultipleFailingKeysSorted(t *testing.T) {
+	g := Group{Require: map[string][]string{
+		"series":  {"MotoGP"},
+		"session": {"Race"},
+	}}
+	labels := map[string]string{"series": "Moto2"} // series wrong, session missing
+	got := g.MismatchedRequire(labels)
+	want := []string{"series", "session"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("MismatchedRequire = %v, want %v (sorted)", got, want)
+	}
+}
+
+func TestGroupMismatchedRequire_EmptyRequire(t *testing.T) {
+	g := Group{Require: map[string][]string{}}
+	labels := map[string]string{"series": "MotoGP"}
+	if got := g.MismatchedRequire(labels); got != nil {
+		t.Errorf("MismatchedRequire = %v, want nil (nothing to require, nothing can mismatch)", got)
+	}
+}
+
+func TestGroupMismatchedRequire_AllSatisfied(t *testing.T) {
+	g := Group{Require: map[string][]string{
+		"series":  {"MotoGP"},
+		"session": {"Race", "Qualifying"},
+	}}
+	labels := map[string]string{"series": "MotoGP", "session": "Qualifying"}
+	if got := g.MismatchedRequire(labels); got != nil {
+		t.Errorf("MismatchedRequire = %v, want nil (every Require key satisfied)", got)
 	}
 }

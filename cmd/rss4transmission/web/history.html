@@ -185,7 +185,7 @@
                     {{ if .Labels }}<div class="labels">{{ range $k, $v := .Labels }}{{ $k }}={{ $v }} {{ end }}</div>{{ end }}
                 </td>
                 <td class="outcome {{ outcomeClass .Outcome }}">{{ .Outcome }}</td>
-                <td>{{ .Reason }}</td>
+                <td>{{ .Reason }}{{ if .MismatchedLabels }}<div class="labels">not matched: {{ range $i, $l := .MismatchedLabels }}{{ if $i }}, {{ end }}{{ $l }}{{ end }}</div>{{ end }}</td>
                 <td class="action">
                     {{ if and .TorrentURL (ne .Outcome "dispatched") (ne .Outcome "downloaded") (feedConfigured .Feed) }}
                     <button class="btn-torrent" data-feed="{{ .Feed }}" data-guid="{{ .GUID }}">Torrent</button>

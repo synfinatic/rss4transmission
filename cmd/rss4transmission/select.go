@@ -52,6 +52,22 @@ func (g *Group) MatchScore(labels map[string]string) int {
 	return score
 }
 
+// MismatchedRequire returns the names of Require labels that reject labels:
+// either absent from labels, or present with a value outside the acceptable
+// set. Returns nil when every Require key is satisfied. Sorted for a stable
+// order.
+func (g *Group) MismatchedRequire(labels map[string]string) []string {
+	var mismatched []string
+	for label, acceptable := range g.Require {
+		v, ok := labels[label]
+		if !ok || !slices.Contains(acceptable, v) {
+			mismatched = append(mismatched, label)
+		}
+	}
+	slices.Sort(mismatched)
+	return mismatched
+}
+
 // IdentityKey computes a stable string key from the given labels using the
 // declared identity label names. Returns ("", false) if any identity label is
 // absent from labels.

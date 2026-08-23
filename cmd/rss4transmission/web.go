@@ -215,6 +215,9 @@ type historyRow struct {
 	HistoryRecord
 	IsPrimary bool
 	GroupSize int // total records sharing this GUID; 1 = ungrouped
+	// MismatchedLabels lists the Require label(s) that kept every group from
+	// matching, populated only when isNoGroupMatched(HistoryRecord) is true.
+	MismatchedLabels []string
 }
 
 // isNoGroupMatched reports whether a record's feed never applied to the item
@@ -238,6 +241,41 @@ func bestGroupScore(groups []Group, labels map[string]string) int {
 		}
 	}
 	return best
+}
+
+// mismatchedLabels returns the Require label names responsible for a
+// "no group matched labels" row: the sorted, deduplicated union of
+// Group.MismatchedRequire() across whichever group(s) in groups came closest
+// to matching labels (the highest Group.MatchScore, ties included). Unlike
+// bestGroupScore, a negative score is not clamped to 0 — the closest group is
+// the true maximum, even when every group contradicts. Returns nil when
+// groups is empty.
+func mismatchedLabels(groups []Group, labels map[string]string) []string {
+	best := 0
+	var closest []Group
+	for i, g := range groups {
+		s := g.MatchScore(labels)
+		switch {
+		case i == 0 || s > best:
+			best = s
+			closest = []Group{g}
+		case s == best:
+			closest = append(closest, g)
+		}
+	}
+
+	seen := map[string]bool{}
+	var mismatched []string
+	for _, g := range closest {
+		for _, label := range g.MismatchedRequire(labels) {
+			if !seen[label] {
+				seen[label] = true
+				mismatched = append(mismatched, label)
+			}
+		}
+	}
+	sort.Strings(mismatched)
+	return mismatched
 }
 
 // groupHistoryRows reorders records so rows sharing a GUID are contiguous.
@@ -304,11 +342,15 @@ func groupHistoryRows(records []HistoryRecord, feedGroups func(name string) []Gr
 			return recs[i].Feed < recs[j].Feed
 		})
 		for i, r := range recs {
-			rows = append(rows, historyRow{
+			row := historyRow{
 				HistoryRecord: r,
 				IsPrimary:     i == 0,
 				GroupSize:     len(recs),
-			})
+			}
+			if isNoGroupMatched(r) {
+				row.MismatchedLabels = mismatchedLabels(feedGroups(r.Feed), r.Labels)
+			}
+			rows = append(rows, row)
 		}
 	}
 	return rows
