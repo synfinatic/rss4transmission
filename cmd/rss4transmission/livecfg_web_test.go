@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -23,10 +22,6 @@ import (
 
 func staticNotif(cfg NotificationsConfig) func() NotificationsConfig {
 	return func() NotificationsConfig { return cfg }
-}
-
-func staticNtfy(cfg NtfyConfig) func() NtfyConfig {
-	return func() NtfyConfig { return cfg }
 }
 
 func staticTx(cfg Transmission) func() Transmission {
@@ -155,38 +150,6 @@ func TestCancelAndStartRoutes_404WhileSecretIsEmpty(t *testing.T) {
 		mux.ServeHTTP(rr, req)
 		assert.Equalf(t, http.StatusOK, rr.Code, "%s after the secret was configured", path)
 	}
-}
-
-// --- /notify-complete ---
-
-func TestNotifyCompleteRoute_GateIsLive(t *testing.T) {
-	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ntfySrv.Close()
-
-	var live atomic.Value
-	live.Store(NtfyConfig{})
-
-	mux := http.NewServeMux()
-	registerNotifyCompleteRoute(mux, func() NtfyConfig {
-		return live.Load().(NtfyConfig)
-	}, staticNotif(NotificationsConfig{}), nil)
-
-	post := func() int {
-		body := bytes.NewBufferString(`{"name":"My.Show","dir":"/dl","id":1}`)
-		req := httptest.NewRequest("POST", "/notify-complete", body)
-		req.Header.Set("Content-Type", "application/json")
-		rr := httptest.NewRecorder()
-		mux.ServeHTTP(rr, req)
-		return rr.Code
-	}
-	assert.Equal(t, http.StatusNotFound, post(), "ntfy is not configured yet")
-
-	on := NtfyConfig{BaseURL: ntfySrv.URL, Topic: "t"}
-	require.NoError(t, on.Validate())
-	live.Store(on)
-	assert.Equal(t, http.StatusOK, post(), "route must work once ntfy is configured")
 }
 
 // --- /transmission ---

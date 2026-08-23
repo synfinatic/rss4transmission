@@ -20,9 +20,7 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -514,103 +512,6 @@ func liveSecret(notif func() NotificationsConfig) ([]byte, bool) {
 		return nil, false
 	}
 	return []byte(secret), true
-}
-
-// registerNotifyCompleteRoute adds POST /notify-complete to mux. The route is
-// always registered and answers 404 while ntfy is not configured, so turning
-// ntfy on in the config file does not need a restart.
-//
-// When the live HMACSecret is non-empty the endpoint requires
-// Authorization: Bearer <HMACSecret>. accessLog is optional.
-func registerNotifyCompleteRoute(mux *http.ServeMux, ntfy func() NtfyConfig, notif func() NotificationsConfig, accessLog *logrus.Logger) {
-	mux.HandleFunc("POST /notify-complete", makeNotifyCompleteHandler(ntfy, notif, accessLog))
-}
-
-// notifyCompleteRequest is the JSON body accepted by POST /notify-complete.
-type notifyCompleteRequest struct {
-	Name string `json:"name"`
-	Dir  string `json:"dir"`
-	ID   int64  `json:"id"`
-}
-
-func makeNotifyCompleteHandler(ntfy func() NtfyConfig, notif func() NotificationsConfig, accessLog *logrus.Logger) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var ntfyCfg NtfyConfig
-		if ntfy != nil {
-			ntfyCfg = ntfy()
-		}
-		if ntfyCfg.BaseURL == "" || ntfyCfg.Topic == "" {
-			http.NotFound(w, r)
-			return
-		}
-		var cancelCfg NotificationsConfig
-		if notif != nil {
-			cancelCfg = notif()
-		}
-
-		if cancelCfg.HMACSecret != "" {
-			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if subtle.ConstantTimeCompare([]byte(got), []byte(cancelCfg.HMACSecret)) != 1 {
-				if accessLog != nil {
-					accessLog.WithFields(logrus.Fields{
-						"endpoint": "/notify-complete",
-						"result":   "unauthorized",
-					}).Warn("notify-complete access")
-				}
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-		}
-
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
-		var req notifyCompleteRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			if accessLog != nil {
-				accessLog.WithFields(logrus.Fields{
-					"endpoint": "/notify-complete",
-					"result":   "bad_request",
-				}).Warn("notify-complete access")
-			}
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
-			return
-		}
-		if req.Name == "" {
-			if accessLog != nil {
-				accessLog.WithFields(logrus.Fields{
-					"endpoint": "/notify-complete",
-					"result":   "bad_request",
-				}).Warn("notify-complete access")
-			}
-			http.Error(w, "name is required", http.StatusBadRequest)
-			return
-		}
-		ctx := &NtfyTemplateContext{
-			Title:     req.Name,
-			Dir:       req.Dir,
-			TorrentID: req.ID,
-			Size:      formatGB(0), // no size info available from Transmission hook
-		}
-		client := NewNtfyClient(ntfyCfg)
-		if err := client.SendTorrentCompleted(ctx); err != nil {
-			if accessLog != nil {
-				accessLog.WithFields(logrus.Fields{
-					"endpoint": "/notify-complete",
-					"result":   "ntfy_error",
-					"error":    err.Error(),
-				}).Warn("notify-complete access")
-			}
-			http.Error(w, "failed to send notification", http.StatusInternalServerError)
-			return
-		}
-		if accessLog != nil {
-			accessLog.WithFields(logrus.Fields{
-				"endpoint": "/notify-complete",
-				"result":   "ok",
-				"name":     req.Name,
-			}).Info("notify-complete access")
-		}
-		w.WriteHeader(http.StatusOK)
-	}
 }
 
 // tokenErrorResponse translates a parseCancelToken error into the appropriate

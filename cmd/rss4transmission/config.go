@@ -55,19 +55,22 @@ var ConfigDefaults = map[string]interface{}{
 	"SpeedTest.DownloadOnly":       true,
 	"SpeedTest.SkipWhenActive":     true,
 	"SpeedTest.RetentionDays":      30,
+
+	"TorrentComplete.PollInterval": "30s",
 }
 
 type Config struct {
-	Feeds         []Feed                   `koanf:"Feeds"`
-	Extractors    map[string]*ExtractorSet `koanf:"Extractors"`
-	Transmission  Transmission             `koanf:"Transmission"`
-	Gluetun       GluetunConfig            `koanf:"Gluetun"`
-	Ntfy          NtfyConfig               `koanf:"Ntfy"`
-	Notifications NotificationsConfig      `koanf:"Notifications"`
-	PortCheck     PortCheckConfig          `koanf:"PortCheck"`
-	SpeedTest     SpeedTestConfig          `koanf:"SpeedTest"`
-	SeenFile      string                   `koanf:"SeenFile"`
-	SeenCacheDays int                      `koanf:"SeenCacheDays"`
+	Feeds           []Feed                   `koanf:"Feeds"`
+	Extractors      map[string]*ExtractorSet `koanf:"Extractors"`
+	Transmission    Transmission             `koanf:"Transmission"`
+	Gluetun         GluetunConfig            `koanf:"Gluetun"`
+	Ntfy            NtfyConfig               `koanf:"Ntfy"`
+	Notifications   NotificationsConfig      `koanf:"Notifications"`
+	PortCheck       PortCheckConfig          `koanf:"PortCheck"`
+	SpeedTest       SpeedTestConfig          `koanf:"SpeedTest"`
+	TorrentComplete TorrentCompleteConfig    `koanf:"TorrentComplete"`
+	SeenFile        string                   `koanf:"SeenFile"`
+	SeenCacheDays   int                      `koanf:"SeenCacheDays"`
 }
 
 type NtfyConfig struct {
@@ -212,6 +215,34 @@ func (s *SpeedTestConfig) CooldownDuration() time.Duration { return s.cooldown }
 func (s *SpeedTestConfig) RetentionDuration() time.Duration {
 	return time.Duration(s.RetentionDays) * 24 * time.Hour
 }
+
+// TorrentCompleteConfig controls how often watch polls Transmission for
+// torrents that have finished downloading, to send the "torrent completed"
+// ntfy notification.
+type TorrentCompleteConfig struct {
+	PollInterval string `koanf:"PollInterval"`
+
+	// parsed form of PollInterval, filled in by Validate()
+	pollInterval time.Duration
+}
+
+// Validate parses PollInterval and checks it is usable. It returns an error
+// rather than calling log.Fatalf so a bad live reload leaves the running
+// config intact.
+func (t *TorrentCompleteConfig) Validate() error {
+	var err error
+	if t.pollInterval, err = str2duration.ParseDuration(t.PollInterval); err != nil {
+		return fmt.Errorf("unable to parse TorrentComplete.PollInterval %q: %w", t.PollInterval, err)
+	}
+	if t.pollInterval <= 0 {
+		return fmt.Errorf("TorrentComplete.PollInterval must be positive, got %q", t.PollInterval)
+	}
+	return nil
+}
+
+// PollIntervalDuration returns the parsed PollInterval. Only valid after
+// Validate().
+func (t *TorrentCompleteConfig) PollIntervalDuration() time.Duration { return t.pollInterval }
 
 type NotificationsConfig struct {
 	HMACSecret string `koanf:"HMACSecret"` //nolint:gosec
