@@ -1,0 +1,20 @@
+<svg viewBox="0 0 340 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="RSS4Transmission logo">
+  <style>
+    .logo-text { fill: #24292f; }
+    @media (prefers-color-scheme: dark) {
+      .logo-text { fill: #e6edf3; }
+    }
+  </style>
+  <g transform="scale(2)">
+    <rect x="1" y="1" width="30" height="30" rx="8" fill="#16181c" stroke="#2c3036"/>
+    <circle cx="9" cy="24" r="3" fill="#ffaa33"/>
+    <path d="M9 17 A7 7 0 0 1 16 24" fill="none" stroke="#ffaa33"
+          stroke-width="3.2" stroke-linecap="round"/>
+    <path d="M9 10 A14 14 0 0 1 23 24" fill="none" stroke="#ffaa33"
+          stroke-width="3.2" stroke-linecap="round"/>
+    <path d="M19 8 L24 13 L29 8" fill="none" stroke="#6aa8e0"
+          stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="76" y="42" font-family="Helvetica Neue, Arial, sans-serif" font-size="30"
+        font-weight="700" class="logo-text">RSS4Transmission</text>
+</svg>
