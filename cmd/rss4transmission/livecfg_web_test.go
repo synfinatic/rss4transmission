@@ -24,6 +24,10 @@ func staticNotif(cfg NotificationsConfig) func() NotificationsConfig {
 	return func() NotificationsConfig { return cfg }
 }
 
+func staticNtfy(cfg NtfyConfig) func() NtfyConfig {
+	return func() NtfyConfig { return cfg }
+}
+
 func staticTx(cfg Transmission) func() Transmission {
 	return func() Transmission { return cfg }
 }

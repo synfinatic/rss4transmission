@@ -53,8 +53,10 @@ var navTmpl string
 // page on or off, and the nav bar must agree with the gate on the next render.
 // A nil field means the page is off.
 type navConfig struct {
-	Speedtest    func() bool
-	Transmission func() bool
+	Speedtest     func() bool
+	Transmission  func() bool
+	Notifications func() bool
+	Alerts        func() bool
 }
 
 // navFuncs returns the FuncMap entries that web/nav.html needs. Every template
@@ -62,8 +64,10 @@ type navConfig struct {
 // render time, so the templates still compile once.
 func (n navConfig) navFuncs() template.FuncMap {
 	return template.FuncMap{
-		"speedtestEnabled":    func() bool { return n.Speedtest != nil && n.Speedtest() },
-		"transmissionEnabled": func() bool { return n.Transmission != nil && n.Transmission() },
+		"speedtestEnabled":     func() bool { return n.Speedtest != nil && n.Speedtest() },
+		"transmissionEnabled":  func() bool { return n.Transmission != nil && n.Transmission() },
+		"notificationsEnabled": func() bool { return n.Notifications != nil && n.Notifications() },
+		"alertsEnabled":        func() bool { return n.Alerts != nil && n.Alerts() },
 	}
 }
 

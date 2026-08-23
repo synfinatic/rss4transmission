@@ -38,9 +38,9 @@
     </style>
 </head>
 <body>
+    {{ template "nav" "rotations" }}
     <h1>VPN Rotations</h1>
     <p id="count">{{ len .Rotations }} rotation(s) &mdash; auto-refreshes every 60 seconds.</p>
-    {{ template "nav" "rotations" }}
 
     <div id="summary">
         <div>
