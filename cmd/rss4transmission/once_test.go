@@ -970,6 +970,36 @@ func TestSelectWinners_PicksHighestPreference(t *testing.T) {
 	}
 }
 
+func TestSelectWinners_OutrankedThisRun_RecordsBetterFeedAndGUID(t *testing.T) {
+	c1 := makeCandidate("tnt-1080p",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race", "network": "TNT", "resolution": "1080p"},
+		nil,
+	)
+	c2 := makeCandidate("global-720p",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race", "network": "Global", "resolution": "720p"},
+		nil,
+	)
+	feed := makeFeed(
+		[]string{"series", "round", "session"},
+		[]PreferDimension{
+			{Label: "network", Order: []string{"TNT", "Global"}},
+			{Label: "resolution", Order: []string{"1080p", "720p"}},
+		},
+		[]Group{{Require: map[string][]string{"series": {"MotoGP"}}}},
+	)
+	feed.Name = "MotoGP"
+	_, skipped := selectWinners([]*candidate{c1, c2}, feed, emptyCache())
+	if len(skipped) != 1 {
+		t.Fatalf("expected 1 skipped candidate, got %d", len(skipped))
+	}
+	if skipped[0].reason != "outranked by better candidate in this run" {
+		t.Errorf("reason = %q, want %q", skipped[0].reason, "outranked by better candidate in this run")
+	}
+	if skipped[0].betterFeed != "MotoGP" || skipped[0].betterGUID != "tnt-1080p" {
+		t.Errorf("betterFeed/betterGUID = %q/%q, want MotoGP/tnt-1080p", skipped[0].betterFeed, skipped[0].betterGUID)
+	}
+}
+
 func TestSelectWinners_GroupFilter(t *testing.T) {
 	c := makeCandidate("guid1",
 		map[string]string{"series": "WorldSBK", "round": "RD01", "session": "Race"},

@@ -627,17 +627,24 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) ([]*
 		inBest[e.cand] = true
 	}
 
+	betterFeed := map[*candidate]string{}
+	betterGUID := map[*candidate]string{}
+
 	skipReasons := map[*candidate]string{}
 	for _, c := range candidates {
 		if !matchedCands[c] {
 			skipReasons[c] = skipReasonNoGroupMatched
 		} else if !inBest[c] {
 			skipReasons[c] = "outranked by better candidate in this run"
+			for _, cov := range c.coverages(feedCfg.Identity) {
+				if e, ok := best[cov.identityKey]; ok && e.cand != c {
+					betterFeed[c], betterGUID[c] = feedCfg.Name, e.cand.item.Item.GUID
+					break
+				}
+			}
 		}
 	}
 
-	betterFeed := map[*candidate]string{}
-	betterGUID := map[*candidate]string{}
 	seen := map[*candidate]bool{}
 	var winners []*candidate
 	for key, e := range best {
