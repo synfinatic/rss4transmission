@@ -34,6 +34,24 @@ func TestFeedCheck_Excluded(t *testing.T) {
 	}
 }
 
+func TestFeedCheck_ExcludedReasonIncludesPattern(t *testing.T) {
+	f := &Feed{Exclude: []string{`(?i).*Highlights.*`}}
+	_, reason := f.Check(makeItem("MyShow.Highlights.S01E01", ""))
+	want := "matched exclude filter: (?i).*Highlights.*"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+}
+
+func TestFeedCheck_ExcludedReasonUsesMatchingPattern(t *testing.T) {
+	f := &Feed{Exclude: []string{`(?i).*720p.*`, `(?i).*Highlights.*`}}
+	_, reason := f.Check(makeItem("MyShow.Highlights.S01E01", ""))
+	want := "matched exclude filter: (?i).*Highlights.*"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+}
+
 func TestFeedCheck_NoFilters(t *testing.T) {
 	f := &Feed{}
 	if ok, _ := f.Check(makeItem("AnythingAtAll", "")); !ok {

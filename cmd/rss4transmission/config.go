@@ -411,7 +411,7 @@ func (f *Feed) Check(item *gofeed.Item) (bool, string) {
 
 	for _, r := range f.exclude {
 		if r.Find([]byte(item.Title)) != nil {
-			return false, "matched exclude filter"
+			return false, "matched exclude filter: " + r.String()
 		}
 	}
 

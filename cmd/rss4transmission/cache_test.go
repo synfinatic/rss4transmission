@@ -88,7 +88,7 @@ func TestAddSkippedItem_IsFoundByExists(t *testing.T) {
 		Version:       CACHE_VERSION,
 		Errors:        map[string]int64{},
 		Seen:          []CacheRecord{},
-		identityIndex: map[string][]map[string]string{},
+		identityIndex: map[string][]CacheRecord{},
 	}
 	c.AddSkippedItem(fi)
 
@@ -109,7 +109,7 @@ func TestAddSkippedItem_DoesNotUpdateIdentityIndex(t *testing.T) {
 		Version:       CACHE_VERSION,
 		Errors:        map[string]int64{},
 		Seen:          []CacheRecord{},
-		identityIndex: map[string][]map[string]string{},
+		identityIndex: map[string][]CacheRecord{},
 	}
 	c.AddSkippedItem(fi)
 
@@ -130,7 +130,7 @@ func TestRemoveEntry_RemovesExisting(t *testing.T) {
 		Version:       CACHE_VERSION,
 		Errors:        map[string]int64{},
 		Seen:          []CacheRecord{},
-		identityIndex: map[string][]map[string]string{},
+		identityIndex: map[string][]CacheRecord{},
 	}
 	c.AddSkippedItem(fi)
 	c.needSave = false
@@ -154,7 +154,7 @@ func TestRemoveEntry_RebuildsIdentityIndex(t *testing.T) {
 		Version:       CACHE_VERSION,
 		Errors:        map[string]int64{},
 		Seen:          []CacheRecord{},
-		identityIndex: map[string][]map[string]string{},
+		identityIndex: map[string][]CacheRecord{},
 	}
 	labels := map[string]string{"series": "MotoGP"}
 	c.AddItem(fi, labels, []string{"series=MotoGP"})
@@ -172,7 +172,7 @@ func TestRemoveEntry_UnknownPair_NoOp(t *testing.T) {
 		Version:       CACHE_VERSION,
 		Errors:        map[string]int64{},
 		Seen:          []CacheRecord{},
-		identityIndex: map[string][]map[string]string{},
+		identityIndex: map[string][]CacheRecord{},
 	}
 	c.AddSkippedItem(fi)
 	c.needSave = false
@@ -196,7 +196,7 @@ func TestAddItem(t *testing.T) {
 		Errors:        map[string]int64{},
 		Seen:          []CacheRecord{},
 		needSave:      false,
-		identityIndex: map[string][]map[string]string{},
+		identityIndex: map[string][]CacheRecord{},
 	}
 	fi := makeFeedItem("guid-add")
 	labels := map[string]string{"series": "MotoGP", "resolution": "1080p"}
@@ -226,7 +226,7 @@ func TestAddItem(t *testing.T) {
 }
 
 func TestBestRankForKey_Miss(t *testing.T) {
-	c := &CacheFile{identityIndex: map[string][]map[string]string{}}
+	c := &CacheFile{identityIndex: map[string][]CacheRecord{}}
 	prefer := []PreferDimension{{Label: "resolution", Order: []string{"1080p", "720p"}}}
 	_, ok := c.BestRankForKey("series=MotoGP|round=RD01|session=Race", prefer)
 	if ok {
@@ -237,10 +237,9 @@ func TestBestRankForKey_Miss(t *testing.T) {
 func TestBestRankForKey_Single(t *testing.T) {
 	prefer := []PreferDimension{{Label: "resolution", Order: []string{"1080p", "720p"}}}
 	key := "series=MotoGP|round=RD01|session=Race"
-	labels := map[string]string{"resolution": "720p"}
 	c := &CacheFile{
-		identityIndex: map[string][]map[string]string{
-			key: {labels},
+		identityIndex: map[string][]CacheRecord{
+			key: {{Labels: map[string]string{"resolution": "720p"}}},
 		},
 	}
 	rank, ok := c.BestRankForKey(key, prefer)
@@ -256,10 +255,10 @@ func TestBestRankForKey_PicksBest(t *testing.T) {
 	prefer := []PreferDimension{{Label: "resolution", Order: []string{"1080p", "720p"}}}
 	key := "series=MotoGP|round=RD01|session=Race"
 	c := &CacheFile{
-		identityIndex: map[string][]map[string]string{
+		identityIndex: map[string][]CacheRecord{
 			key: {
-				{"resolution": "720p"},
-				{"resolution": "1080p"},
+				{Labels: map[string]string{"resolution": "720p"}},
+				{Labels: map[string]string{"resolution": "1080p"}},
 			},
 		},
 	}
@@ -269,6 +268,44 @@ func TestBestRankForKey_PicksBest(t *testing.T) {
 	}
 	if rank[0] != 0 { // 1080p is index 0 (best)
 		t.Errorf("rank[0] = %d, want 0 (1080p)", rank[0])
+	}
+}
+
+func TestBestRecordForKey_Miss(t *testing.T) {
+	c := &CacheFile{identityIndex: map[string][]CacheRecord{}}
+	prefer := []PreferDimension{{Label: "resolution", Order: []string{"1080p", "720p"}}}
+	_, ok := c.BestRecordForKey("series=MotoGP|round=RD01|session=Race", prefer)
+	if ok {
+		t.Error("expected ok=false for key not in index")
+	}
+}
+
+func TestBestRecordForKey_Single(t *testing.T) {
+	prefer := []PreferDimension{{Label: "resolution", Order: []string{"1080p", "720p"}}}
+	key := "series=MotoGP|round=RD01|session=Race"
+	rec := CacheRecord{Feed: "MotoGP", GUID: "guid-1", Labels: map[string]string{"resolution": "720p"}}
+	c := &CacheFile{identityIndex: map[string][]CacheRecord{key: {rec}}}
+	got, ok := c.BestRecordForKey(key, prefer)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if got.Feed != "MotoGP" || got.GUID != "guid-1" {
+		t.Errorf("got Feed=%q GUID=%q, want Feed=MotoGP GUID=guid-1", got.Feed, got.GUID)
+	}
+}
+
+func TestBestRecordForKey_PicksBest(t *testing.T) {
+	prefer := []PreferDimension{{Label: "resolution", Order: []string{"1080p", "720p"}}}
+	key := "series=MotoGP|round=RD01|session=Race"
+	worse := CacheRecord{Feed: "MotoGP", GUID: "guid-worse", Labels: map[string]string{"resolution": "720p"}}
+	better := CacheRecord{Feed: "MotoGP", GUID: "guid-better", Labels: map[string]string{"resolution": "1080p"}}
+	c := &CacheFile{identityIndex: map[string][]CacheRecord{key: {worse, better}}}
+	got, ok := c.BestRecordForKey(key, prefer)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if got.GUID != "guid-better" {
+		t.Errorf("GUID = %q, want guid-better", got.GUID)
 	}
 }
 
@@ -460,7 +497,7 @@ func TestSaveCache_PruningRebuildsIdentityIndex(t *testing.T) {
 		},
 		filename:      path,
 		needSave:      true,
-		identityIndex: map[string][]map[string]string{},
+		identityIndex: map[string][]CacheRecord{},
 	}
 	c.rebuildIdentityIndex()
 

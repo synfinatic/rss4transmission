@@ -878,6 +878,37 @@ func TestGroupHistoryRows_PopulatesMismatchedLabelsOnNoGroupMatched(t *testing.T
 	assert.Equal(t, []string{"series"}, rows[0].MismatchedLabels)
 }
 
+func TestGroupHistoryRows_PopulatesBetterLinkWhenTargetPresent(t *testing.T) {
+	skipped := NewHistoryRecord("MotoGP", makeGofeedItem("MotoGP 720p", "guid-1"), "skipped", skipReasonCacheBetter, nil)
+	skipped.BetterFeed = "MotoGP"
+	skipped.BetterGUID = "guid-2"
+	winner := NewHistoryRecord("MotoGP", makeGofeedItem("MotoGP 1080p", "guid-2"), "dispatched", "", nil)
+	records := []HistoryRecord{skipped, winner}
+
+	rows := groupHistoryRows(records, nil)
+
+	require.Len(t, rows, 2)
+	skippedRow := rows[0]
+	if skippedRow.GUID != "guid-1" {
+		skippedRow = rows[1]
+	}
+	assert.Equal(t, "MotoGP", skippedRow.BetterFeed)
+	assert.Equal(t, "guid-2", skippedRow.BetterGUID)
+}
+
+func TestGroupHistoryRows_OmitsBetterLinkWhenTargetAbsent(t *testing.T) {
+	skipped := NewHistoryRecord("MotoGP", makeGofeedItem("MotoGP 720p", "guid-1"), "skipped", skipReasonCacheBetter, nil)
+	skipped.BetterFeed = "MotoGP"
+	skipped.BetterGUID = "guid-pruned"
+	records := []HistoryRecord{skipped}
+
+	rows := groupHistoryRows(records, nil)
+
+	require.Len(t, rows, 1)
+	assert.Empty(t, rows[0].BetterFeed)
+	assert.Empty(t, rows[0].BetterGUID)
+}
+
 func TestGroupHistoryRows_MismatchedLabelsEmptyForOtherReasons(t *testing.T) {
 	records := []HistoryRecord{
 		NewHistoryRecord("MotoGP", makeGofeedItem("MotoGP Title", "guid-1"), "dispatched", "",
@@ -1078,6 +1109,46 @@ func TestHistoryPage_NoMismatchedLabelsLineForOtherReasons(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rr.Code)
 	assert.NotContains(t, rr.Body.String(), "not matched:")
+}
+
+func TestHistoryPage_RendersBetterLinkWhenTargetPresent(t *testing.T) {
+	h := emptyHistory()
+	skipped := NewHistoryRecord("MotoGP",
+		makeGofeedItemWithEnclosure("MotoGP 720p", "guid-1", "https://example.com/motogp-720p.torrent"),
+		"skipped", skipReasonCacheBetter, nil)
+	skipped.BetterFeed = "MotoGP"
+	skipped.BetterGUID = "guid-2"
+	h.AddOrUpdateRecord(skipped)
+	h.AddOrUpdateRecord(NewHistoryRecord("MotoGP",
+		makeGofeedItemWithEnclosure("MotoGP 1080p", "guid-2", "https://example.com/motogp-1080p.torrent"),
+		"dispatched", "", nil))
+
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil, nil, navConfig{})
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, `class="better-link" data-feed="MotoGP" data-guid="guid-2"`)
+}
+
+func TestHistoryPage_OmitsBetterLinkWhenTargetAbsent(t *testing.T) {
+	h := emptyHistory()
+	skipped := NewHistoryRecord("MotoGP",
+		makeGofeedItemWithEnclosure("MotoGP 720p", "guid-1", "https://example.com/motogp-720p.torrent"),
+		"skipped", skipReasonCacheBetter, nil)
+	skipped.BetterFeed = "MotoGP"
+	skipped.BetterGUID = "guid-pruned"
+	h.AddOrUpdateRecord(skipped)
+
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil, nil, navConfig{})
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.NotContains(t, rr.Body.String(), `class="better-link"`)
 }
 
 func TestHistoryPage_UniqueGUIDRendersUngrouped(t *testing.T) {

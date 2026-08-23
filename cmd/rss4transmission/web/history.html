@@ -113,6 +113,8 @@
         tr.group-child:hover td { background: #2b333e; }
         tr.group-child td:first-child { box-shadow: inset 3px 0 0 #3a6ea5; }
         tr.group-child td:nth-child(2) { padding-left: 1.8em; }
+
+        tr.flash-highlight td { background: #3a4d63; }
     </style>
 </head>
 <body>
@@ -185,7 +187,7 @@
                     {{ if .Labels }}<div class="labels">{{ range $k, $v := .Labels }}{{ $k }}={{ $v }} {{ end }}</div>{{ end }}
                 </td>
                 <td class="outcome {{ outcomeClass .Outcome }}">{{ .Outcome }}</td>
-                <td>{{ .Reason }}{{ if .MismatchedLabels }}<div class="labels">not matched: {{ range $i, $l := .MismatchedLabels }}{{ if $i }}, {{ end }}{{ $l }}{{ end }}</div>{{ end }}</td>
+                <td>{{ .Reason }}{{ if .MismatchedLabels }}<div class="labels">not matched: {{ range $i, $l := .MismatchedLabels }}{{ if $i }}, {{ end }}{{ $l }}{{ end }}</div>{{ end }}{{ if .BetterFeed }}<div class="labels"><a href="#" class="better-link" data-feed="{{ .BetterFeed }}" data-guid="{{ .BetterGUID }}">view better version</a></div>{{ end }}</td>
                 <td class="action">
                     {{ if and .TorrentURL (ne .Outcome "dispatched") (ne .Outcome "downloaded") (feedConfigured .Feed) }}
                     <button class="btn-torrent" data-feed="{{ .Feed }}" data-guid="{{ .GUID }}">Torrent</button>
@@ -331,6 +333,24 @@
                 var guid = toggle.dataset.guid;
                 if (expandedGroups.has(guid)) expandedGroups.delete(guid); else expandedGroups.add(guid);
                 apply();
+                return;
+            }
+
+            var betterLink = e.target.closest('.better-link');
+            if (betterLink) {
+                e.preventDefault();
+                var bFeed = betterLink.dataset.feed;
+                var bGuid = betterLink.dataset.guid;
+                var target = rows.find(function (r) { return r.dataset.feed === bFeed && r.dataset.guid === bGuid; });
+                if (!target) return;
+
+                if (isChild(target) && !expandedGroups.has(target.dataset.guid)) {
+                    expandedGroups.add(target.dataset.guid);
+                    apply();
+                }
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                target.classList.add('flash-highlight');
+                setTimeout(function () { target.classList.remove('flash-highlight'); }, 1500);
                 return;
             }
 

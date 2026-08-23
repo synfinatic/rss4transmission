@@ -49,6 +49,11 @@ type HistoryRecord struct {
 	Labels      map[string]string `json:"Labels,omitempty"`
 	TorrentURL  string            `json:"TorrentURL,omitempty"`
 	SizeBytes   int64             `json:"SizeBytes,omitempty"`
+	// BetterFeed/BetterGUID identify the cache record that beat this one out
+	// (see skipReasonCacheBetter in once.go), letting the history page link to
+	// it. Empty unless that reason applies and the winner is known.
+	BetterFeed string `json:"BetterFeed,omitempty"`
+	BetterGUID string `json:"BetterGUID,omitempty"`
 }
 
 // outcomeRank returns a rank for dedup: lower is more interesting.
@@ -170,13 +175,21 @@ func (h *HistoryFile) SaveHistory(d time.Duration) error {
 // to the history file when one is configured. The log always fires — it's the
 // only visibility into per-item outcomes when --history-file isn't set.
 func (ctx *RunContext) recordHistory(feedName string, item *gofeed.Item, outcome, reason string, labels map[string]string) {
-	if reason != "" {
-		log.Infof("[%s] %s: %s (%s)", feedName, outcome, item.Title, reason)
+	ctx.recordHistoryRecord(NewHistoryRecord(feedName, item, outcome, reason, labels))
+}
+
+// recordHistoryRecord logs and persists a caller-built HistoryRecord. Used
+// instead of recordHistory when a call site needs to set fields recordHistory's
+// signature doesn't carry (e.g. BetterFeed/BetterGUID for cache-rejected
+// skips).
+func (ctx *RunContext) recordHistoryRecord(rec HistoryRecord) {
+	if rec.Reason != "" {
+		log.Infof("[%s] %s: %s (%s)", rec.Feed, rec.Outcome, rec.Title, rec.Reason)
 	} else {
-		log.Infof("[%s] %s: %s", feedName, outcome, item.Title)
+		log.Infof("[%s] %s: %s", rec.Feed, rec.Outcome, rec.Title)
 	}
 	if ctx.History != nil {
-		ctx.History.AddOrUpdateRecord(NewHistoryRecord(feedName, item, outcome, reason, labels))
+		ctx.History.AddOrUpdateRecord(rec)
 	}
 }
 

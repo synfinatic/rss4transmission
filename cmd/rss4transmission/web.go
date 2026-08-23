@@ -218,6 +218,12 @@ type historyRow struct {
 	// MismatchedLabels lists the Require label(s) that kept every group from
 	// matching, populated only when isNoGroupMatched(HistoryRecord) is true.
 	MismatchedLabels []string
+	// BetterFeed/BetterGUID identify the row this one lost to (see
+	// skipReasonCacheBetter), populated only when that row is present among
+	// the records passed to groupHistoryRows — otherwise left empty so the
+	// template renders no link to a row that doesn't exist on this page.
+	BetterFeed string
+	BetterGUID string
 }
 
 // isNoGroupMatched reports whether a record's feed never applied to the item
@@ -299,6 +305,11 @@ func groupHistoryRows(records []HistoryRecord, feedGroups func(name string) []Gr
 		records []HistoryRecord
 	}
 
+	recordExists := make(map[string]bool, len(records))
+	for _, r := range records {
+		recordExists[r.Feed+"\x00"+r.GUID] = true
+	}
+
 	order := make([]string, 0, len(records))
 	groups := make(map[string]*group, len(records))
 	empties := 0
@@ -349,6 +360,10 @@ func groupHistoryRows(records []HistoryRecord, feedGroups func(name string) []Gr
 			}
 			if isNoGroupMatched(r) {
 				row.MismatchedLabels = mismatchedLabels(feedGroups(r.Feed), r.Labels)
+			}
+			if r.BetterFeed != "" && recordExists[r.BetterFeed+"\x00"+r.BetterGUID] {
+				row.BetterFeed = r.BetterFeed
+				row.BetterGUID = r.BetterGUID
 			}
 			rows = append(rows, row)
 		}
