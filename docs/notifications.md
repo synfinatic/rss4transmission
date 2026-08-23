@@ -444,9 +444,9 @@ unchanged. If you set a custom `Path`, Transmission already sits behind a proxy 
 
 `watch` polls Transmission on its own to find torrents that finished downloading, instead of
 relying on a script hook installed inside the Transmission container. On each poll, it checks
-every torrent's `IsFinished` state. A torrent that flips from not-finished to finished since the
-last poll triggers a "Torrent completed" ntfy notification, rendered from your configured
-`CompletedTitle`, `CompletedBody`, and `CompletedPriority` templates.
+how many bytes remain to download for every torrent. A torrent that reaches zero bytes
+remaining since the last poll triggers a "Torrent completed" ntfy notification, rendered from
+your configured `CompletedTitle`, `CompletedBody`, and `CompletedPriority` templates.
 
 A torrent already finished the first time `watch` sees it does not trigger a notification: only
 an observed transition counts, matching the port-open check's rule for its own first check.

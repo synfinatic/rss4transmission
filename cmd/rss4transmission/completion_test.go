@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,13 +13,13 @@ import (
 )
 
 // fakeTorrent is the minimal torrent-get shape completionTestTransmissionServer
-// serves back over RPC.
+// serves back over RPC. LeftUntilDone == 0 means fully downloaded.
 type fakeTorrent struct {
-	ID           int64
-	Name         string
-	DownloadDir  string
-	IsFinished   bool
-	SizeWhenDone int64 // bytes
+	ID            int64
+	Name          string
+	DownloadDir   string
+	LeftUntilDone int64
+	SizeWhenDone  int64 // bytes
 }
 
 // completionTestTransmissionServer simulates Transmission's "torrent-get" RPC
@@ -45,11 +46,11 @@ func completionTestTransmissionServer(t *testing.T, torrents *[]fakeTorrent) *ht
 			list := make([]map[string]any, 0, len(*torrents))
 			for _, tor := range *torrents {
 				list = append(list, map[string]any{
-					"id":           tor.ID,
-					"name":         tor.Name,
-					"downloadDir":  tor.DownloadDir,
-					"isFinished":   tor.IsFinished,
-					"sizeWhenDone": tor.SizeWhenDone,
+					"id":            tor.ID,
+					"name":          tor.Name,
+					"downloadDir":   tor.DownloadDir,
+					"leftUntilDone": tor.LeftUntilDone,
+					"sizeWhenDone":  tor.SizeWhenDone,
 				})
 			}
 			resp["result"] = "success"
@@ -99,8 +100,7 @@ func newTestNtfyCaptureServer(t *testing.T) (*httptest.Server, *[]string, *[]str
 	var titles, bodies []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		titles = append(titles, r.Header.Get("Title"))
-		body := make([]byte, r.ContentLength)
-		_, _ = r.Body.Read(body)
+		body, _ := io.ReadAll(r.Body)
 		bodies = append(bodies, string(body))
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -108,7 +108,7 @@ func newTestNtfyCaptureServer(t *testing.T) (*httptest.Server, *[]string, *[]str
 }
 
 func TestCompletionMonitor_Check_AlreadyFinished_NoNotifyOnFirstSight(t *testing.T) {
-	torrents := []fakeTorrent{{ID: 1, Name: "Foo", DownloadDir: "/downloads", IsFinished: true, SizeWhenDone: 1024}}
+	torrents := []fakeTorrent{{ID: 1, Name: "Foo", DownloadDir: "/downloads", LeftUntilDone: 0, SizeWhenDone: 1024}}
 	transmissionSrv := completionTestTransmissionServer(t, &torrents)
 	defer transmissionSrv.Close()
 	ntfySrv, titles, _ := newTestNtfyCaptureServer(t)
@@ -123,7 +123,7 @@ func TestCompletionMonitor_Check_AlreadyFinished_NoNotifyOnFirstSight(t *testing
 }
 
 func TestCompletionMonitor_Check_FalseToTrue_NotifiesOnce(t *testing.T) {
-	torrents := []fakeTorrent{{ID: 1, Name: "Foo", DownloadDir: "/downloads", IsFinished: false}}
+	torrents := []fakeTorrent{{ID: 1, Name: "Foo", DownloadDir: "/downloads", LeftUntilDone: 100}}
 	transmissionSrv := completionTestTransmissionServer(t, &torrents)
 	defer transmissionSrv.Close()
 	ntfySrv, titles, _ := newTestNtfyCaptureServer(t)
@@ -135,7 +135,7 @@ func TestCompletionMonitor_Check_FalseToTrue_NotifiesOnce(t *testing.T) {
 	m.check()
 	assert.Empty(t, *titles)
 
-	torrents[0].IsFinished = true
+	torrents[0].LeftUntilDone = 0
 	m.check()
 	require.Len(t, *titles, 1)
 	assert.Equal(t, "Torrent Complete", (*titles)[0])
@@ -146,13 +146,13 @@ func TestCompletionMonitor_Check_FalseToTrue_NotifiesOnce(t *testing.T) {
 }
 
 func TestCompletionMonitor_ApplyConfig_AdoptedOnNextCheck(t *testing.T) {
-	torrents := []fakeTorrent{{ID: 1, Name: "Foo", DownloadDir: "/downloads", IsFinished: false}}
+	torrents := []fakeTorrent{{ID: 1, Name: "Foo", DownloadDir: "/downloads", LeftUntilDone: 100}}
 	transmissionSrv := completionTestTransmissionServer(t, &torrents)
 	defer transmissionSrv.Close()
 	ntfySrv, titles, _ := newTestNtfyCaptureServer(t)
 	defer ntfySrv.Close()
 
-	// Start with ntfy unconfigured: even a false->true transition must not notify.
+	// Start with ntfy unconfigured: even a completion transition must not notify.
 	m := NewCompletionMonitor(newTestTransmissionClient(t, transmissionSrv.URL), NtfyConfig{}, time.Minute)
 
 	m.check()
@@ -163,7 +163,7 @@ func TestCompletionMonitor_ApplyConfig_AdoptedOnNextCheck(t *testing.T) {
 	})
 
 	// The queued update is not adopted until the next check().
-	torrents[0].IsFinished = true
+	torrents[0].LeftUntilDone = 0
 	next := m.check()
 	assert.Equal(t, 30*time.Second, next)
 	require.Len(t, *titles, 1)
@@ -171,7 +171,7 @@ func TestCompletionMonitor_ApplyConfig_AdoptedOnNextCheck(t *testing.T) {
 }
 
 func TestCompletionMonitor_Check_StaysFinished_NoRenotify(t *testing.T) {
-	torrents := []fakeTorrent{{ID: 1, Name: "Foo", IsFinished: false}}
+	torrents := []fakeTorrent{{ID: 1, Name: "Foo", LeftUntilDone: 100}}
 	transmissionSrv := completionTestTransmissionServer(t, &torrents)
 	defer transmissionSrv.Close()
 	ntfySrv, titles, _ := newTestNtfyCaptureServer(t)
@@ -181,7 +181,7 @@ func TestCompletionMonitor_Check_StaysFinished_NoRenotify(t *testing.T) {
 		mustValidateNtfyConfig(t, NtfyConfig{BaseURL: ntfySrv.URL, Topic: "torrents"}), time.Minute)
 
 	m.check()
-	torrents[0].IsFinished = true
+	torrents[0].LeftUntilDone = 0
 	m.check()
 	require.Len(t, *titles, 1)
 
@@ -192,7 +192,7 @@ func TestCompletionMonitor_Check_StaysFinished_NoRenotify(t *testing.T) {
 }
 
 func TestCompletionMonitor_Check_NtfyNotConfigured_NoNotify(t *testing.T) {
-	torrents := []fakeTorrent{{ID: 1, Name: "Foo", IsFinished: false}}
+	torrents := []fakeTorrent{{ID: 1, Name: "Foo", LeftUntilDone: 100}}
 	transmissionSrv := completionTestTransmissionServer(t, &torrents)
 	defer transmissionSrv.Close()
 
@@ -208,13 +208,13 @@ func TestCompletionMonitor_Check_NtfyNotConfigured_NoNotify(t *testing.T) {
 		NtfyConfig{BaseURL: ntfySrv.URL}, time.Minute)
 
 	m.check()
-	torrents[0].IsFinished = true
+	torrents[0].LeftUntilDone = 0
 	m.check()
 	assert.False(t, posted, "ntfy must not be contacted when Topic is unset")
 }
 
 func TestCompletionMonitor_Check_RPCError_LeavesStateUnchanged(t *testing.T) {
-	torrents := []fakeTorrent{{ID: 1, Name: "Foo", IsFinished: false}}
+	torrents := []fakeTorrent{{ID: 1, Name: "Foo", LeftUntilDone: 100}}
 	goodSrv := completionTestTransmissionServer(t, &torrents)
 	defer goodSrv.Close()
 	ntfySrv, titles, _ := newTestNtfyCaptureServer(t)
@@ -225,8 +225,8 @@ func TestCompletionMonitor_Check_RPCError_LeavesStateUnchanged(t *testing.T) {
 
 	// Seed a known "seen, not finished" state via a real check.
 	m.check()
-	require.Contains(t, m.finished, int64(1))
-	assert.False(t, m.finished[1])
+	require.Contains(t, m.downloaded, int64(1))
+	assert.False(t, m.downloaded[1])
 
 	failingSrv := completionTestFailingTransmissionServer(t)
 	defer failingSrv.Close()
@@ -235,18 +235,18 @@ func TestCompletionMonitor_Check_RPCError_LeavesStateUnchanged(t *testing.T) {
 	next := m.check()
 	assert.Equal(t, time.Minute, next)
 	assert.Empty(t, *titles)
-	require.Contains(t, m.finished, int64(1))
-	assert.False(t, m.finished[1], "state must be left unchanged on an RPC error")
+	require.Contains(t, m.downloaded, int64(1))
+	assert.False(t, m.downloaded[1], "state must be left unchanged on an RPC error")
 
-	// A later real transition must still be correctly detected as false->true.
+	// A later real transition must still be correctly detected.
 	m.Transmission = newTestTransmissionClient(t, goodSrv.URL)
-	torrents[0].IsFinished = true
+	torrents[0].LeftUntilDone = 0
 	m.check()
 	require.Len(t, *titles, 1)
 }
 
 func TestCompletionMonitor_Check_RemovedTorrentDropped_NoImpossibleState(t *testing.T) {
-	torrents := []fakeTorrent{{ID: 1, Name: "Foo", IsFinished: true}}
+	torrents := []fakeTorrent{{ID: 1, Name: "Foo", LeftUntilDone: 0}}
 	transmissionSrv := completionTestTransmissionServer(t, &torrents)
 	defer transmissionSrv.Close()
 	ntfySrv, titles, _ := newTestNtfyCaptureServer(t)
@@ -258,24 +258,24 @@ func TestCompletionMonitor_Check_RemovedTorrentDropped_NoImpossibleState(t *test
 	// Baseline sighting: already finished, no notify.
 	m.check()
 	assert.Empty(t, *titles)
-	require.Contains(t, m.finished, int64(1))
+	require.Contains(t, m.downloaded, int64(1))
 
 	// The torrent disappears from Transmission's list entirely.
 	torrents = torrents[:0]
 	m.check()
-	assert.NotContains(t, m.finished, int64(1))
+	assert.NotContains(t, m.downloaded, int64(1))
 
 	// It reappears, already finished. Treated as a fresh baseline sighting,
 	// so it must not notify (and must not panic on the "impossible"
 	// previously-finished-but-now-unknown state).
-	torrents = append(torrents, fakeTorrent{ID: 1, Name: "Foo", IsFinished: true})
+	torrents = append(torrents, fakeTorrent{ID: 1, Name: "Foo", LeftUntilDone: 0})
 	assert.NotPanics(t, func() { m.check() })
 	assert.Empty(t, *titles)
 }
 
 func TestCompletionMonitor_NotifyCompleted_PopulatesSizeFromSizeWhenDone(t *testing.T) {
 	const gib = int64(1) << 30
-	torrents := []fakeTorrent{{ID: 1, Name: "Foo", DownloadDir: "/downloads", IsFinished: false, SizeWhenDone: gib}}
+	torrents := []fakeTorrent{{ID: 1, Name: "Foo", DownloadDir: "/downloads", LeftUntilDone: 100, SizeWhenDone: gib}}
 	transmissionSrv := completionTestTransmissionServer(t, &torrents)
 	defer transmissionSrv.Close()
 	ntfySrv, titles, bodies := newTestNtfyCaptureServer(t)
@@ -289,7 +289,7 @@ func TestCompletionMonitor_NotifyCompleted_PopulatesSizeFromSizeWhenDone(t *test
 		}), time.Minute)
 
 	m.check()
-	torrents[0].IsFinished = true
+	torrents[0].LeftUntilDone = 0
 	m.check()
 
 	require.Len(t, *bodies, 1)

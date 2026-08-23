@@ -10,13 +10,20 @@ import (
 
 // torrentCompletionFields is the minimal set of torrent-get fields the
 // completion poll needs.
-var torrentCompletionFields = []string{"id", "name", "downloadDir", "isFinished", "sizeWhenDone"}
+//
+// LeftUntilDone, not IsFinished, is what tracks download completion: in
+// Transmission's RPC, IsFinished mirrors tr_stat.finished, which is true only
+// once a torrent has met its seed ratio and stopped -- a torrent with no
+// ratio limit configured never sets it. LeftUntilDone reaching zero is the
+// same "download complete" transition the old script-torrent-done hook fired
+// on.
+var torrentCompletionFields = []string{"id", "name", "downloadDir", "leftUntilDone", "sizeWhenDone"}
 
 // CompletionMonitor periodically polls Transmission for torrents whose
-// IsFinished state has flipped from false to true, sending an ntfy
-// "torrent completed" notification for each transition observed. It replaces
-// the old "torrent done" shell-script hook: rss4transmission already holds a
-// live RPC client, so it can find out for itself.
+// download has just completed (LeftUntilDone transitioning to zero), sending
+// an ntfy "torrent completed" notification for each transition observed. It
+// replaces the old "torrent done" shell-script hook: rss4transmission
+// already holds a live RPC client, so it can find out for itself.
 type CompletionMonitor struct {
 	Transmission *transmissionrpc.Client
 	Ntfy         NtfyConfig
@@ -25,15 +32,16 @@ type CompletionMonitor struct {
 	// interval is the poll interval in effect, read by Run() after each
 	// check() to decide whether the ticker needs to be reset.
 	interval time.Duration
-	// finished is the IsFinished state observed on the previous poll, keyed
-	// by torrent ID. It is rebuilt from scratch on every check(), so a
-	// torrent no longer reported by Transmission falls out of it instead of
-	// leaking memory. A torrent absent from the map (never seen, or seen and
-	// then dropped) is treated as an unknown baseline: it can only notify
-	// starting from the poll after it is first recorded, never the poll it
-	// first appears (or reappears) on, mirroring PortMonitor's rule that the
-	// very first observation can't itself be a transition.
-	finished map[int64]bool
+	// downloaded is whether LeftUntilDone was zero for a torrent on the
+	// previous poll, keyed by torrent ID. It is rebuilt from scratch on every
+	// check(), so a torrent no longer reported by Transmission falls out of
+	// it instead of leaking memory. A torrent absent from the map (never
+	// seen, or seen and then dropped) is treated as an unknown baseline: it
+	// can only notify starting from the poll after it is first recorded,
+	// never the poll it first appears (or reappears) on, mirroring
+	// PortMonitor's rule that the very first observation can't itself be a
+	// transition.
+	downloaded map[int64]bool
 
 	trigger chan struct{} // buffered(1): an out-of-band check request
 
@@ -60,7 +68,7 @@ func NewCompletionMonitor(t *transmissionrpc.Client, ntfyCfg NtfyConfig, interva
 		Transmission: t,
 		Ntfy:         ntfyCfg,
 		interval:     interval,
-		finished:     make(map[int64]bool),
+		downloaded:   make(map[int64]bool),
 		trigger:      make(chan struct{}, 1),
 	}
 }
@@ -143,12 +151,13 @@ func (m *CompletionMonitor) Run() {
 }
 
 // check adopts any queued config change, polls Transmission for every
-// torrent's IsFinished state, and fires a completion notification for each
-// torrent observed to transition from false to true since the previous poll.
-// It holds m.mu for its entire body, matching PortMonitor.check().
+// torrent's LeftUntilDone, and fires a completion notification for each
+// torrent observed to transition from not-fully-downloaded to
+// fully-downloaded since the previous poll. It holds m.mu for its entire
+// body, matching PortMonitor.check().
 //
-// A TorrentGet error is logged and leaves m.finished untouched: a transient
-// RPC failure must not be read as "every torrent went back to unfinished".
+// A TorrentGet error is logged and leaves m.downloaded untouched: a
+// transient RPC failure must not be read as "every torrent lost its data".
 func (m *CompletionMonitor) check() time.Duration {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -163,18 +172,18 @@ func (m *CompletionMonitor) check() time.Duration {
 
 	next := make(map[int64]bool, len(torrents))
 	for _, t := range torrents {
-		if t.ID == nil || t.IsFinished == nil {
+		if t.ID == nil || t.LeftUntilDone == nil {
 			continue
 		}
 		id := *t.ID
-		isFinished := *t.IsFinished
+		isDone := *t.LeftUntilDone == 0
 
-		if wasFinished, seen := m.finished[id]; seen && !wasFinished && isFinished {
+		if wasDone, seen := m.downloaded[id]; seen && !wasDone && isDone {
 			m.notifyCompleted(t)
 		}
-		next[id] = isFinished
+		next[id] = isDone
 	}
-	m.finished = next
+	m.downloaded = next
 
 	return m.interval
 }
