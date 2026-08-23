@@ -656,6 +656,40 @@ func TestRecordHistory_WithHistory_AddsRecord(t *testing.T) {
 	}
 }
 
+func TestRecordHistoryRecord_PersistsBetterFeedAndGUID(t *testing.T) {
+	h := emptyHistory()
+	ctx := &RunContext{History: h}
+	rec := NewHistoryRecord("feed", makeGofeedItem("Show S01E01", "guid1"), "skipped", skipReasonCacheBetter, nil)
+	rec.BetterFeed = "otherfeed"
+	rec.BetterGUID = "guid2"
+	ctx.recordHistoryRecord(rec)
+
+	if len(h.Records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(h.Records))
+	}
+	if h.Records[0].BetterFeed != "otherfeed" || h.Records[0].BetterGUID != "guid2" {
+		t.Errorf("BetterFeed/BetterGUID = %q/%q, want otherfeed/guid2", h.Records[0].BetterFeed, h.Records[0].BetterGUID)
+	}
+}
+
+func TestRecordHistoryRecord_LogsOneInfoLineWithOutcome(t *testing.T) {
+	hook := withTestLogHook(t)
+	ctx := &RunContext{} // History is nil
+	rec := NewHistoryRecord("myfeed", makeGofeedItem("Show S01E01", "guid1"), "dispatched", "", nil)
+	ctx.recordHistoryRecord(rec)
+
+	entries := hook.AllEntries()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log entry, got %d", len(entries))
+	}
+	msg := entries[0].Message
+	for _, want := range []string{"myfeed", "Show S01E01", "dispatched"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("log message %q does not contain %q", msg, want)
+		}
+	}
+}
+
 func TestOpenHistory_UsesProcessedAtWhenPublishedZero(t *testing.T) {
 	dir := t.TempDir()
 	h := &HistoryFile{

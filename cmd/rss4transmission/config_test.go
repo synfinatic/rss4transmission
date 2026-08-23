@@ -34,6 +34,24 @@ func TestFeedCheck_Excluded(t *testing.T) {
 	}
 }
 
+func TestFeedCheck_ExcludedReasonIncludesPattern(t *testing.T) {
+	f := &Feed{Exclude: []string{`(?i).*Highlights.*`}}
+	_, reason := f.Check(makeItem("MyShow.Highlights.S01E01", ""))
+	want := "matched exclude filter: (?i).*Highlights.*"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+}
+
+func TestFeedCheck_ExcludedReasonUsesMatchingPattern(t *testing.T) {
+	f := &Feed{Exclude: []string{`(?i).*720p.*`, `(?i).*Highlights.*`}}
+	_, reason := f.Check(makeItem("MyShow.Highlights.S01E01", ""))
+	want := "matched exclude filter: (?i).*Highlights.*"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+}
+
 func TestFeedCheck_NoFilters(t *testing.T) {
 	f := &Feed{}
 	if ok, _ := f.Check(makeItem("AnythingAtAll", "")); !ok {
@@ -54,6 +72,24 @@ func TestFeedCheck_MaxSize(t *testing.T) {
 	// 2GB enclosure — above 100MB maximum
 	if ok, _ := f.Check(makeItem("Anything", "2147483648")); ok {
 		t.Error("item above MaxSize should return false")
+	}
+}
+
+func TestFeedCheck_MinSizeReasonIncludesActualAndThreshold(t *testing.T) {
+	f := &Feed{MinSize: "1GB"}
+	_, reason := f.Check(makeItem("Anything", "104857600")) // 100MB
+	want := "below minimum size: 0.10 GB < 1.00 GB"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+}
+
+func TestFeedCheck_MaxSizeReasonIncludesActualAndThreshold(t *testing.T) {
+	f := &Feed{MaxSize: "100MB"}
+	_, reason := f.Check(makeItem("Anything", "2147483648")) // 2GB
+	want := "above maximum size: 2.00 GB > 0.10 GB"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
 	}
 }
 

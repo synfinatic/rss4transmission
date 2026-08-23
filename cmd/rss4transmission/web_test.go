@@ -860,6 +860,70 @@ func TestGroupHistoryRows_MatchScoreIgnoresGroupsWithNoOverlap(t *testing.T) {
 		"BSB's positive match must win even though WSBK sorts first alphabetically")
 }
 
+func TestGroupHistoryRows_PopulatesMismatchedLabelsOnNoGroupMatched(t *testing.T) {
+	records := []HistoryRecord{
+		NewHistoryRecord("MotoGP", makeGofeedItem("MotoGP Title", "guid-1"), "skipped", skipReasonNoGroupMatched,
+			map[string]string{"series": "Moto2"}),
+	}
+	feedGroups := func(name string) []Group {
+		if name == "MotoGP" {
+			return []Group{{Require: map[string][]string{"series": {"MotoGP"}}}}
+		}
+		return nil
+	}
+
+	rows := groupHistoryRows(records, feedGroups)
+
+	require.Len(t, rows, 1)
+	assert.Equal(t, []string{"series"}, rows[0].MismatchedLabels)
+}
+
+func TestGroupHistoryRows_PopulatesBetterLinkWhenTargetPresent(t *testing.T) {
+	skipped := NewHistoryRecord("MotoGP", makeGofeedItem("MotoGP 720p", "guid-1"), "skipped", skipReasonCacheBetter, nil)
+	skipped.BetterFeed = "MotoGP"
+	skipped.BetterGUID = "guid-2"
+	winner := NewHistoryRecord("MotoGP", makeGofeedItem("MotoGP 1080p", "guid-2"), "dispatched", "", nil)
+	records := []HistoryRecord{skipped, winner}
+
+	rows := groupHistoryRows(records, nil)
+
+	require.Len(t, rows, 2)
+	skippedRow := rows[0]
+	if skippedRow.GUID != "guid-1" {
+		skippedRow = rows[1]
+	}
+	assert.Equal(t, "MotoGP", skippedRow.BetterFeed)
+	assert.Equal(t, "guid-2", skippedRow.BetterGUID)
+}
+
+func TestGroupHistoryRows_OmitsBetterLinkWhenTargetAbsent(t *testing.T) {
+	skipped := NewHistoryRecord("MotoGP", makeGofeedItem("MotoGP 720p", "guid-1"), "skipped", skipReasonCacheBetter, nil)
+	skipped.BetterFeed = "MotoGP"
+	skipped.BetterGUID = "guid-pruned"
+	records := []HistoryRecord{skipped}
+
+	rows := groupHistoryRows(records, nil)
+
+	require.Len(t, rows, 1)
+	assert.Empty(t, rows[0].BetterFeed)
+	assert.Empty(t, rows[0].BetterGUID)
+}
+
+func TestGroupHistoryRows_MismatchedLabelsEmptyForOtherReasons(t *testing.T) {
+	records := []HistoryRecord{
+		NewHistoryRecord("MotoGP", makeGofeedItem("MotoGP Title", "guid-1"), "dispatched", "",
+			map[string]string{"series": "MotoGP"}),
+	}
+	feedGroups := func(name string) []Group {
+		return []Group{{Require: map[string][]string{"series": {"Moto2"}}}}
+	}
+
+	rows := groupHistoryRows(records, feedGroups)
+
+	require.Len(t, rows, 1)
+	assert.Nil(t, rows[0].MismatchedLabels, "MismatchedLabels must only be populated for no-group-matched rows")
+}
+
 func TestGroupHistoryRows_NilFeedGroupsFallsBackToAlphabetical(t *testing.T) {
 	records := []HistoryRecord{
 		NewHistoryRecord("WSBK", makeGofeedItem("BSB Title", "guid-1"), "skipped", skipReasonNoGroupMatched, nil),
@@ -871,6 +935,69 @@ func TestGroupHistoryRows_NilFeedGroupsFallsBackToAlphabetical(t *testing.T) {
 	require.Len(t, rows, 2)
 	assert.True(t, rows[0].IsPrimary)
 	assert.Equal(t, "BSB", rows[0].Feed, "a nil feedGroups must behave like every feed scoring 0")
+}
+
+// --- mismatchedLabels ---
+
+func TestMismatchedLabels_SingleGroupMissingKey(t *testing.T) {
+	groups := []Group{{Require: map[string][]string{"series": {"MotoGP"}, "session": {"Race"}}}}
+	labels := map[string]string{"series": "MotoGP"} // session missing
+	got := mismatchedLabels(groups, labels)
+	want := []string{"session"}
+	assert.Equal(t, want, got)
+}
+
+func TestMismatchedLabels_SingleGroupWrongValue(t *testing.T) {
+	groups := []Group{{Require: map[string][]string{"series": {"MotoGP"}}}}
+	labels := map[string]string{"series": "Moto2"}
+	got := mismatchedLabels(groups, labels)
+	want := []string{"series"}
+	assert.Equal(t, want, got)
+}
+
+func TestMismatchedLabels_TiedGroupsUnionFailingKeys(t *testing.T) {
+	// Both groups score 0 (no positive evidence, no contradiction) — a tie —
+	// so the result must be the union of both groups' missing Require keys.
+	groups := []Group{
+		{Require: map[string][]string{"series": {"MotoGP"}}},
+		{Require: map[string][]string{"session": {"Race"}}},
+	}
+	labels := map[string]string{"resolution": "1080p"}
+	got := mismatchedLabels(groups, labels)
+	want := []string{"series", "session"}
+	assert.Equal(t, want, got)
+}
+
+func TestMismatchedLabels_ContradictionBeatsNoOverlapAsClosest(t *testing.T) {
+	// The "series" group scores -1 (present contradiction), the "class" group
+	// scores 0 (no overlap at all). -1 > ... no: -1 is still the higher of the
+	// two only if class's score is lower. Here class has zero overlap (score
+	// 0), which is HIGHER than a contradiction's -1, so class is the closest
+	// group and its own missing key is what gets reported.
+	groups := []Group{
+		{Require: map[string][]string{"series": {"Moto2"}}},    // present, contradicted: score -1
+		{Require: map[string][]string{"class": {"Superbike"}}}, // absent, no contradiction: score 0
+	}
+	labels := map[string]string{"series": "MotoGP"}
+	got := mismatchedLabels(groups, labels)
+	want := []string{"class"}
+	assert.Equal(t, want, got, "the group with no overlap (score 0) is closer than the contradicted group (score -1)")
+}
+
+func TestMismatchedLabels_AllGroupsContradictReturnsUnion(t *testing.T) {
+	groups := []Group{
+		{Require: map[string][]string{"series": {"Moto2"}}},
+		{Require: map[string][]string{"series": {"Moto3"}}},
+	}
+	labels := map[string]string{"series": "MotoGP"} // contradicts both, tied at -1
+	got := mismatchedLabels(groups, labels)
+	want := []string{"series"}
+	assert.Equal(t, want, got)
+}
+
+func TestMismatchedLabels_EmptyGroupsReturnsNil(t *testing.T) {
+	assert.Nil(t, mismatchedLabels(nil, map[string]string{"series": "MotoGP"}))
+	assert.Nil(t, mismatchedLabels([]Group{}, map[string]string{"series": "MotoGP"}))
 }
 
 func TestHistoryPage_GroupsRecordsSharingGUID(t *testing.T) {
@@ -945,6 +1072,83 @@ func TestHistoryPage_FeedGroupsBreaksNoGroupMatchedTie(t *testing.T) {
 	assert.Contains(t, primaryRow, `data-feed="MotoGP"`,
 		"the record whose own group Require is actually satisfied by its labels must be the primary row, "+
 			"even though its siblings extracted the identical labels via a shared Extractor")
+}
+
+func TestHistoryPage_RendersMismatchedLabelsForNoGroupMatched(t *testing.T) {
+	h := emptyHistory()
+	h.AddOrUpdateRecord(NewHistoryRecord("MotoGP",
+		makeGofeedItemWithEnclosure("MotoGP Title", "guid-1", "https://example.com/motogp.torrent"),
+		"skipped", skipReasonNoGroupMatched, map[string]string{"series": "Moto2"}))
+
+	feedGroups := func(name string) []Group {
+		if name == "MotoGP" {
+			return []Group{{Require: map[string][]string{"series": {"MotoGP"}}}}
+		}
+		return nil
+	}
+
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, feedGroups, nil, navConfig{})
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "not matched: series")
+}
+
+func TestHistoryPage_NoMismatchedLabelsLineForOtherReasons(t *testing.T) {
+	h := emptyHistory()
+	h.AddOrUpdateRecord(NewHistoryRecord("MotoGP",
+		makeGofeedItemWithEnclosure("MotoGP Title", "guid-1", "https://example.com/motogp.torrent"),
+		"dispatched", "", map[string]string{"series": "MotoGP"}))
+
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil, nil, navConfig{})
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.NotContains(t, rr.Body.String(), "not matched:")
+}
+
+func TestHistoryPage_RendersBetterLinkWhenTargetPresent(t *testing.T) {
+	h := emptyHistory()
+	skipped := NewHistoryRecord("MotoGP",
+		makeGofeedItemWithEnclosure("MotoGP 720p", "guid-1", "https://example.com/motogp-720p.torrent"),
+		"skipped", skipReasonCacheBetter, nil)
+	skipped.BetterFeed = "MotoGP"
+	skipped.BetterGUID = "guid-2"
+	h.AddOrUpdateRecord(skipped)
+	h.AddOrUpdateRecord(NewHistoryRecord("MotoGP",
+		makeGofeedItemWithEnclosure("MotoGP 1080p", "guid-2", "https://example.com/motogp-1080p.torrent"),
+		"dispatched", "", nil))
+
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil, nil, navConfig{})
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	body := rr.Body.String()
+	assert.Contains(t, body, `class="better-link" data-feed="MotoGP" data-guid="guid-2"`)
+}
+
+func TestHistoryPage_OmitsBetterLinkWhenTargetAbsent(t *testing.T) {
+	h := emptyHistory()
+	skipped := NewHistoryRecord("MotoGP",
+		makeGofeedItemWithEnclosure("MotoGP 720p", "guid-1", "https://example.com/motogp-720p.torrent"),
+		"skipped", skipReasonCacheBetter, nil)
+	skipped.BetterFeed = "MotoGP"
+	skipped.BetterGUID = "guid-pruned"
+	h.AddOrUpdateRecord(skipped)
+
+	mux := newWebMux(h, makeRetryFunc(new(bool), nil, 0, nil), nil, nil, nil, navConfig{})
+	req := httptest.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.NotContains(t, rr.Body.String(), `class="better-link"`)
 }
 
 func TestHistoryPage_UniqueGUIDRendersUngrouped(t *testing.T) {

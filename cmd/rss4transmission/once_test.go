@@ -38,7 +38,7 @@ func makeFeed(identity []string, prefer []PreferDimension, groups []Group) Feed 
 }
 
 func emptyCache() *CacheFile {
-	return &CacheFile{identityIndex: map[string][]map[string]string{}}
+	return &CacheFile{identityIndex: map[string][]CacheRecord{}}
 }
 
 // --- candidate.coverages ---
@@ -435,7 +435,7 @@ func TestRealMotoGPFeeds_ExcludedHighlightsShowsLabelsAndMotoGPWinsPrimary(t *te
 	require.Len(t, records, 3)
 	for _, r := range records {
 		assert.Equal(t, "excluded", r.Outcome)
-		assert.Equal(t, "matched exclude filter", r.Reason)
+		assert.Equal(t, "matched exclude filter: (?i).*Highlights.*", r.Reason)
 		assert.Equal(t, "MotoGP", r.Labels["class"],
 			"excluded records must carry extracted labels for the group tie-break to use")
 	}
@@ -883,13 +883,42 @@ func TestSelectWinners_CacheHit_Equal(t *testing.T) {
 	)
 	key := "series=MotoGP|round=RD01|session=Race"
 	cache := &CacheFile{
-		identityIndex: map[string][]map[string]string{
-			key: {{"resolution": "1080p"}},
+		identityIndex: map[string][]CacheRecord{
+			key: {{Labels: map[string]string{"resolution": "1080p"}}},
 		},
 	}
 	winners, _ := selectWinners([]*candidate{c}, feed, cache)
 	if len(winners) != 0 {
 		t.Errorf("expected 0 winners (cache at equal preference), got %d", len(winners))
+	}
+}
+
+func TestSelectWinners_CacheHit_RecordsBetterFeedAndGUID(t *testing.T) {
+	c := makeCandidate("guid1",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race", "network": "TNT", "resolution": "1080p"},
+		nil,
+	)
+	feed := makeFeed(
+		[]string{"series", "round", "session"},
+		[]PreferDimension{{Label: "resolution", Order: []string{"1080p", "720p"}}},
+		[]Group{{Require: map[string][]string{"series": {"MotoGP"}}}},
+	)
+	feed.Name = "MotoGP"
+	key := "series=MotoGP|round=RD01|session=Race"
+	cache := &CacheFile{
+		identityIndex: map[string][]CacheRecord{
+			key: {{Feed: "MotoGP", GUID: "better-guid", Labels: map[string]string{"resolution": "1080p"}}},
+		},
+	}
+	_, skipped := selectWinners([]*candidate{c}, feed, cache)
+	if len(skipped) != 1 {
+		t.Fatalf("expected 1 skipped candidate, got %d", len(skipped))
+	}
+	if skipped[0].reason != skipReasonCacheBetter {
+		t.Errorf("reason = %q, want %q", skipped[0].reason, skipReasonCacheBetter)
+	}
+	if skipped[0].betterFeed != "MotoGP" || skipped[0].betterGUID != "better-guid" {
+		t.Errorf("betterFeed/betterGUID = %q/%q, want MotoGP/better-guid", skipped[0].betterFeed, skipped[0].betterGUID)
 	}
 }
 
@@ -905,8 +934,8 @@ func TestSelectWinners_CacheHit_BetterAvailable(t *testing.T) {
 	)
 	key := "series=MotoGP|round=RD01|session=Race"
 	cache := &CacheFile{
-		identityIndex: map[string][]map[string]string{
-			key: {{"resolution": "720p"}}, // worse than new candidate
+		identityIndex: map[string][]CacheRecord{
+			key: {{Labels: map[string]string{"resolution": "720p"}}}, // worse than new candidate
 		},
 	}
 	winners, _ := selectWinners([]*candidate{c}, feed, cache)
@@ -938,6 +967,36 @@ func TestSelectWinners_PicksHighestPreference(t *testing.T) {
 	}
 	if winners[0].item.Item.GUID != "tnt-1080p" {
 		t.Errorf("expected TNT+1080p winner, got %s", winners[0].item.Item.GUID)
+	}
+}
+
+func TestSelectWinners_OutrankedThisRun_RecordsBetterFeedAndGUID(t *testing.T) {
+	c1 := makeCandidate("tnt-1080p",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race", "network": "TNT", "resolution": "1080p"},
+		nil,
+	)
+	c2 := makeCandidate("global-720p",
+		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race", "network": "Global", "resolution": "720p"},
+		nil,
+	)
+	feed := makeFeed(
+		[]string{"series", "round", "session"},
+		[]PreferDimension{
+			{Label: "network", Order: []string{"TNT", "Global"}},
+			{Label: "resolution", Order: []string{"1080p", "720p"}},
+		},
+		[]Group{{Require: map[string][]string{"series": {"MotoGP"}}}},
+	)
+	feed.Name = "MotoGP"
+	_, skipped := selectWinners([]*candidate{c1, c2}, feed, emptyCache())
+	if len(skipped) != 1 {
+		t.Fatalf("expected 1 skipped candidate, got %d", len(skipped))
+	}
+	if skipped[0].reason != "outranked by better candidate in this run" {
+		t.Errorf("reason = %q, want %q", skipped[0].reason, "outranked by better candidate in this run")
+	}
+	if skipped[0].betterFeed != "MotoGP" || skipped[0].betterGUID != "tnt-1080p" {
+		t.Errorf("betterFeed/betterGUID = %q/%q, want MotoGP/tnt-1080p", skipped[0].betterFeed, skipped[0].betterGUID)
 	}
 }
 
@@ -1132,7 +1191,7 @@ func TestMarkSkippedSeen_AddsCacheRejected(t *testing.T) {
 		Version:       CACHE_VERSION,
 		Errors:        map[string]int64{},
 		Seen:          []CacheRecord{},
-		identityIndex: map[string][]map[string]string{},
+		identityIndex: map[string][]CacheRecord{},
 	}
 	skipped := []skippedCandidate{
 		{cand: c, reason: skipReasonCacheBetter},
@@ -1157,7 +1216,7 @@ func TestMarkSkippedSeen_AddsAllReasons(t *testing.T) {
 		Version:       CACHE_VERSION,
 		Errors:        map[string]int64{},
 		Seen:          []CacheRecord{},
-		identityIndex: map[string][]map[string]string{},
+		identityIndex: map[string][]CacheRecord{},
 	}
 	skipped := []skippedCandidate{
 		{cand: c, reason: "no group matched labels"},

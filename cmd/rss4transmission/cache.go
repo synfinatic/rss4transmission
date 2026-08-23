@@ -36,9 +36,9 @@ type CacheFile struct {
 	filename string
 	needSave bool
 
-	// identityIndex maps identity key → all label maps seen for that key.
+	// identityIndex maps identity key → all cache records seen for that key.
 	// Rebuilt from Seen on load; never persisted.
-	identityIndex map[string][]map[string]string
+	identityIndex map[string][]CacheRecord
 }
 
 type CacheRecord struct {
@@ -73,13 +73,13 @@ func OpenCache(path string) (*CacheFile, error) {
 }
 
 func (c *CacheFile) rebuildIdentityIndex() {
-	c.identityIndex = make(map[string][]map[string]string)
+	c.identityIndex = make(map[string][]CacheRecord)
 	for _, r := range c.Seen {
 		if len(r.Labels) == 0 {
 			continue
 		}
 		for _, key := range r.IdentityKeys {
-			c.identityIndex[key] = append(c.identityIndex[key], r.Labels)
+			c.identityIndex[key] = append(c.identityIndex[key], r)
 		}
 	}
 }
@@ -87,15 +87,27 @@ func (c *CacheFile) rebuildIdentityIndex() {
 // BestRankForKey returns the best (lowest) preference rank seen for the given
 // identity key, or (nil, false) if the key has never been cached.
 func (c *CacheFile) BestRankForKey(key string, prefer []PreferDimension) ([]int, bool) {
-	labelSets, ok := c.identityIndex[key]
+	rec, ok := c.BestRecordForKey(key, prefer)
 	if !ok {
 		return nil, false
 	}
-	var best []int
-	for _, labels := range labelSets {
-		rank := PreferenceRank(labels, prefer)
-		if best == nil || IsBetter(rank, best) {
-			best = rank
+	return PreferenceRank(rec.Labels, prefer), true
+}
+
+// BestRecordForKey returns the cache record with the best (lowest) preference
+// rank for the given identity key, or (CacheRecord{}, false) if the key has
+// never been cached.
+func (c *CacheFile) BestRecordForKey(key string, prefer []PreferDimension) (CacheRecord, bool) {
+	records, ok := c.identityIndex[key]
+	if !ok {
+		return CacheRecord{}, false
+	}
+	best := records[0]
+	bestRank := PreferenceRank(best.Labels, prefer)
+	for _, rec := range records[1:] {
+		rank := PreferenceRank(rec.Labels, prefer)
+		if IsBetter(rank, bestRank) {
+			best, bestRank = rec, rank
 		}
 	}
 	return best, true
@@ -188,10 +200,10 @@ func (c *CacheFile) AddItem(item *FeedItem, labels map[string]string, identityKe
 
 	// Update in-memory identity index immediately.
 	if c.identityIndex == nil {
-		c.identityIndex = make(map[string][]map[string]string)
+		c.identityIndex = make(map[string][]CacheRecord)
 	}
 	for _, key := range identityKeys {
-		c.identityIndex[key] = append(c.identityIndex[key], labels)
+		c.identityIndex[key] = append(c.identityIndex[key], cr)
 	}
 
 	c.needSave = true

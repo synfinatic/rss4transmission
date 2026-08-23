@@ -274,7 +274,9 @@ func (cmd *OnceCmd) processFeed(ctx *RunContext, feedName string, feedCfg Feed, 
 	winners, skipped := selectWinners(candidates, feedCfg, ctx.Cache)
 	markSkippedSeen(skipped, ctx.Cache)
 	for _, s := range skipped {
-		ctx.recordHistory(feedName, s.cand.item.Item, "skipped", s.reason, s.cand.titleLabels)
+		rec := NewHistoryRecord(feedName, s.cand.item.Item, "skipped", s.reason, s.cand.titleLabels)
+		rec.BetterFeed, rec.BetterGUID = s.betterFeed, s.betterGUID
+		ctx.recordHistoryRecord(rec)
 	}
 
 	// Phase 4: Dispatch winners.
@@ -587,6 +589,10 @@ func markSkippedSeen(skipped []skippedCandidate, cache *CacheFile) {
 type skippedCandidate struct {
 	cand   *candidate
 	reason string
+	// betterFeed/betterGUID identify the cache record that beat this
+	// candidate, set only when reason is skipReasonCacheBetter.
+	betterFeed string
+	betterGUID string
 }
 
 // selectWinners returns winners and skipped candidates with reasons. For each
@@ -621,12 +627,21 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) ([]*
 		inBest[e.cand] = true
 	}
 
+	betterFeed := map[*candidate]string{}
+	betterGUID := map[*candidate]string{}
+
 	skipReasons := map[*candidate]string{}
 	for _, c := range candidates {
 		if !matchedCands[c] {
 			skipReasons[c] = skipReasonNoGroupMatched
 		} else if !inBest[c] {
 			skipReasons[c] = "outranked by better candidate in this run"
+			for _, cov := range c.coverages(feedCfg.Identity) {
+				if e, ok := best[cov.identityKey]; ok && e.cand != c {
+					betterFeed[c], betterGUID[c] = feedCfg.Name, e.cand.item.Item.GUID
+					break
+				}
+			}
 		}
 	}
 
@@ -638,6 +653,9 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) ([]*
 			log.Debugf("Skipping %s for key %s: cache has equal or better preference", e.cand.item.Item.Title, key)
 			if !seen[e.cand] {
 				skipReasons[e.cand] = skipReasonCacheBetter
+				if rec, ok := cache.BestRecordForKey(key, feedCfg.Prefer); ok {
+					betterFeed[e.cand], betterGUID[e.cand] = rec.Feed, rec.GUID
+				}
 			}
 			continue
 		}
@@ -674,7 +692,12 @@ func selectWinners(candidates []*candidate, feedCfg Feed, cache *CacheFile) ([]*
 	var skipped []skippedCandidate
 	for _, c := range candidates {
 		if reason, ok := skipReasons[c]; ok {
-			skipped = append(skipped, skippedCandidate{cand: c, reason: reason})
+			skipped = append(skipped, skippedCandidate{
+				cand:       c,
+				reason:     reason,
+				betterFeed: betterFeed[c],
+				betterGUID: betterGUID[c],
+			})
 		}
 	}
 
