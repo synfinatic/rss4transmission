@@ -75,6 +75,24 @@ func TestFeedCheck_MaxSize(t *testing.T) {
 	}
 }
 
+func TestFeedCheck_MinSizeReasonIncludesActualAndThreshold(t *testing.T) {
+	f := &Feed{MinSize: "1GB"}
+	_, reason := f.Check(makeItem("Anything", "104857600")) // 100MB
+	want := "below minimum size: 0.10 GB < 1.00 GB"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+}
+
+func TestFeedCheck_MaxSizeReasonIncludesActualAndThreshold(t *testing.T) {
+	f := &Feed{MaxSize: "100MB"}
+	_, reason := f.Check(makeItem("Anything", "2147483648")) // 2GB
+	want := "above maximum size: 2.00 GB > 0.10 GB"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+}
+
 func TestFeedCheck_SizeRange(t *testing.T) {
 	f := &Feed{MinSize: "100MB", MaxSize: "10GB"}
 	// 1GB — within range

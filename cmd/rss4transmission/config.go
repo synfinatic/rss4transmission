@@ -427,12 +427,14 @@ func (f *Feed) Check(item *gofeed.Item) (bool, string) {
 
 	if f.minSize > 0 && totalSize < f.minSize {
 		log.Debugf("Too small: %s [%d]", item.Title, totalSize)
-		return false, "below minimum size"
+		return false, fmt.Sprintf("below minimum size: %s < %s",
+			formatGB(int64(totalSize)), formatGB(int64(f.minSize))) //nolint:gosec // G115: torrent sizes are well within int64 range
 	}
 
 	if f.maxSize > 0 && totalSize > f.maxSize {
 		log.Debugf("Too large: %s [%d]", item.Title, totalSize)
-		return false, "above maximum size"
+		return false, fmt.Sprintf("above maximum size: %s > %s",
+			formatGB(int64(totalSize)), formatGB(int64(f.maxSize))) //nolint:gosec // G115: torrent sizes are well within int64 range
 	}
 
 	return true, ""
