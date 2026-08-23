@@ -1,10 +1,12 @@
 {{- define "nav" -}}
-{{- /* The dot is the current page: "torrents", "speedtest", "rotations" or
-       "transmission".
+{{- /* The dot is the current page: "torrents", "speedtest", "rotations",
+       "transmission", "notifications" or "alerts".
        The page you are on is named but not linked, so the bar reads the same
        everywhere and still says where you are. The VPN pages only exist when a
        speed store is configured, so their links are gated on the same flag that
-       decides whether those routes were registered at all. */ -}}
+       decides whether those routes were registered at all. Notifications and
+       Alerts are gated independently of each other -- one ntfy topic can be
+       configured without the other. */ -}}
     <p id="nav">
         {{- if eq . "torrents" }}<span class="here">Torrents</span>
         {{- else }}<a href="/">Torrents</a>{{ end }}
@@ -20,6 +22,16 @@
         &middot;
         {{- if eq . "transmission" }} <span class="here">Transmission</span>
         {{- else }} <a href="/transmission">Transmission</a>{{ end }}
+        {{- end }}
+        {{- if notificationsEnabled }}
+        &middot;
+        {{- if eq . "notifications" }} <span class="here">Notifications</span>
+        {{- else }} <a href="/notifications">Notifications</a>{{ end }}
+        {{- end }}
+        {{- if alertsEnabled }}
+        &middot;
+        {{- if eq . "alerts" }} <span class="here">Alerts</span>
+        {{- else }} <a href="/alerts">Alerts</a>{{ end }}
         {{- end }}
     </p>
 {{- end -}}

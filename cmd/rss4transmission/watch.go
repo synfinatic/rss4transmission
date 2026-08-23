@@ -283,9 +283,18 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, removeT rem
 	// so a link never leads to a 404.
 	notif := func() NotificationsConfig { return live.Config().Notifications }
 	tx := func() Transmission { return live.Config().Transmission }
+	ntfyCfg := func() NtfyConfig { return live.Config().Ntfy }
 	nav := navConfig{
 		Speedtest:    func() bool { return live.Speed() != nil },
 		Transmission: func() bool { return transmissionProxyTarget(tx()) != nil },
+		Notifications: func() bool {
+			c := ntfyCfg()
+			return ntfyTopicURL(c.BaseURL, c.Topic) != ""
+		},
+		Alerts: func() bool {
+			c := ntfyCfg()
+			return ntfyTopicURL(c.BaseURL, c.AlertTopic) != ""
+		},
 	}
 
 	if cmd.PublicListen != "" {
@@ -313,6 +322,7 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, removeT rem
 			privMux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, nav)
 			registerSpeedRoutes(privMux, live.Speed, ctx.PeerPortOpen, ctx.PeerPort, live.ExitIP, live.Actions, nav)
 			registerTransmissionRoutes(privMux, tx, nav)
+			registerNtfyRoutes(privMux, ntfyCfg, nav)
 			go startWebServer("private", privMux, histAddr)
 		}
 	} else if cmd.PrivateListen != "" {
@@ -327,6 +337,7 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, removeT rem
 		mux := newWebMux(ctx.History, retryHistory, feedConfigured, feedGroups, forgetHistory, nav)
 		registerSpeedRoutes(mux, live.Speed, ctx.PeerPortOpen, ctx.PeerPort, live.ExitIP, live.Actions, nav)
 		registerTransmissionRoutes(mux, tx, nav)
+		registerNtfyRoutes(mux, ntfyCfg, nav)
 		registerCancelRoutes(mux, ctx.CancelStore, notif, removeT, getProgress, accessLog)
 		ctx.CancelRoutesEnabled = true
 		if ctx.History != nil {

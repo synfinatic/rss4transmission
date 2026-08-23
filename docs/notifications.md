@@ -357,7 +357,8 @@ publication date, outcome, and extracted labels. Records are pruned on the same 
 seen cache (`SeenCacheDays`). When `SpeedTest` is enabled it carries a nav bar linking the
 **VPN Speed** (`/speedtest`) and **Rotations** (`/rotations`) pages; see
 [VPN Speed Testing](speedtest.md#viewing-results). The nav bar also links the
-[Transmission page](#transmission-page).
+[Transmission page](#transmission-page) and, when the respective ntfy topic is configured, the
+[Notifications and Alerts pages](#notifications-and-alerts-pages).
 
 When multiple sibling feeds share one RSS URL — for example, separate feeds for different
 categories of content that all happen to be published through the same feed URL — the same item
@@ -427,6 +428,26 @@ listener already needs for `POST /torrent` and `POST /forget`. The proxy is neve
 unchanged. If you set a custom `Path`, Transmission already sits behind a proxy of your own. Set
 `WebUI: false` and use that proxy.
 
+## Notifications and Alerts Pages
+
+The **Notifications** page (`/notifications`) and **Alerts** page (`/alerts`) each show the ntfy
+web page for one topic inside a frame, next to the Transmission page in the nav bar. Notifications
+frames `Ntfy.Topic` (torrent started/completed/found); Alerts frames `Ntfy.AlertTopic`
+(config-reload and port-state alerts). The two pages are gated independently: each is on only
+when `Ntfy.BaseURL` and that page's own topic are both set, so you can enable one without the
+other.
+
+Unlike the Transmission page, there is no reverse proxy here. The frame loads
+`{Ntfy.BaseURL}/{Topic}` (or `{Ntfy.BaseURL}/{AlertTopic}`) directly from the browser. A proxy
+would not work the way it does for Transmission: ntfy's web app serves its static assets from the
+domain root, so proxying it under a path prefix would break those asset URLs, and proxying the
+whole domain would collide with rss4transmission's own routes. This works because `Ntfy.BaseURL`
+is already the externally reachable server your ntfy client subscribes to.
+
+Because there is no proxy, the browser talks to the ntfy server directly: it must be reachable
+from wherever you view the page, and it must not send `X-Frame-Options` or a CSP
+`frame-ancestors` directive that blocks framing, or the frame stays blank.
+
 ## Routes Overview
 
 | Route | `--private-listen` (single) | `--private-listen` (split) | `--public-listen` (split) |
@@ -436,6 +457,8 @@ unchanged. If you set a custom `Path`, Transmission already sits behind a proxy 
 | `/forget` | ✓ (requires `--history-file`) | ✓ (requires `--history-file`) | — |
 | `/transmission` (page) | ✓ (requires `WebUI`) | ✓ (requires `WebUI`) | — |
 | `/transmission/` (proxy) | ✓ (requires `WebUI`) | ✓ (requires `WebUI`) | — |
+| `/notifications` | ✓ (requires `Ntfy.BaseURL` + `Ntfy.Topic`) | ✓ (requires `Ntfy.BaseURL` + `Ntfy.Topic`) | — |
+| `/alerts` | ✓ (requires `Ntfy.BaseURL` + `Ntfy.AlertTopic`) | ✓ (requires `Ntfy.BaseURL` + `Ntfy.AlertTopic`) | — |
 | `/cancel` | ✓ | — | ✓ |
 | `/start` | ✓ (requires `--history-file`) | — | ✓ (requires `--history-file`) |
 | `/healthz` | ✓ | ✓ | ✓ |

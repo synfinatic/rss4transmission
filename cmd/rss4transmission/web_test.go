@@ -57,12 +57,14 @@ func TestNewCancelMux_FaviconReachable(t *testing.T) {
 // per-page test, so a new page cannot ship without picking up the link.
 func TestPageTemplates_LinkTheFavicon(t *testing.T) {
 	pages := map[string]string{
-		"history.html":      historyTmpl,
-		"cancel.html":       cancelTmpl,
-		"start.html":        startTmpl,
-		"speedtest.html":    speedTmpl,
-		"rotations.html":    rotationsTmpl,
-		"transmission.html": transmissionTmpl,
+		"history.html":       historyTmpl,
+		"cancel.html":        cancelTmpl,
+		"start.html":         startTmpl,
+		"speedtest.html":     speedTmpl,
+		"rotations.html":     rotationsTmpl,
+		"transmission.html":  transmissionTmpl,
+		"notifications.html": notificationsTmpl,
+		"alerts.html":        alertsTmpl,
 	}
 	for name, tmpl := range pages {
 		assert.Contains(t, tmpl, `rel="icon"`, "%s is missing the favicon link", name)
