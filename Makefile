@@ -224,5 +224,5 @@ $(OUTPUT_NAME): .build_files
 
 .PHONY: docker
 docker:
-	docker build -t $(DOCKER_REPO)/$(PROJECT_NAME):v$(PROJECT_VERSION) .
+	docker buildx build -t $(DOCKER_REPO)/$(PROJECT_NAME):v$(PROJECT_VERSION) .
 
