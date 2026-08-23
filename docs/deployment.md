@@ -24,7 +24,7 @@ services:
       - LOG_LEVEL=info
       - HISTORY_FILE=       # path to history JSON file (e.g. /config/history.json)
       - PRIVATE_LISTEN=     # host:port or bare port — enables history UI (private/internal)
-      - PUBLIC_LISTEN=      # public-facing /cancel, /notify-complete, and /healthz only
+      - PUBLIC_LISTEN=      # public-facing /cancel, /start, and /healthz only
       - TORRENT_CACHE_DIR=  # directory to cache .torrent files (e.g. /config/torrent-cache)
     volumes:
       - /volume1/docker/transmission/rss4transmission:/config
@@ -39,7 +39,7 @@ services:
       - "traefik.http.routers.rss4tx.tls.certresolver=letsencrypt"
       - "traefik.http.services.rss4tx.loadbalancer.server.port=8080"
     # Option B — no Traefik; firewall port-forwards directly to PUBLIC_LISTEN port
-    # (/cancel, /notify-complete, /healthz). Set PUBLIC_LISTEN=0.0.0.0:8080 and add:
+    # (/cancel, /start, /healthz). Set PUBLIC_LISTEN=0.0.0.0:8080 and add:
     # ports:
     #   - "8080:8080"
     # Remove the networks/labels above; use network_mode: host or a single internal network.
@@ -54,14 +54,9 @@ services:
       - TZ=US/Pacific
       - USER=admin
       - PASS=admin
-      # ntfy credentials used by torrent-complete.sh
-      - NTFY_BASE_URL=https://ntfy.sh
-      - NTFY_TOPIC=<your-topic-name>
-      - NTFY_TOKEN=
     volumes:
       - /volume1/docker/transmission/data:/config
       - /volume1/video/torrents:/torrents
-      - ./bin:/scripts   # makes torrent-complete.sh available inside the container
     networks:
       - internal
 
@@ -101,7 +96,7 @@ services:
       - LOG_LEVEL=info
       - HISTORY_FILE=
       - PRIVATE_LISTEN=
-      - PUBLIC_LISTEN=      # /cancel, /notify-complete, /healthz (e.g. 0.0.0.0:8080); port-forward from your firewall to this port
+      - PUBLIC_LISTEN=      # /cancel, /start, /healthz (e.g. 0.0.0.0:8080); port-forward from your firewall to this port
       - TORRENT_CACHE_DIR=
     # Uncomment to expose PUBLIC_LISTEN externally:
     # ports:
@@ -262,6 +257,6 @@ environment:
 | `LOG_LEVEL` | Log verbosity: `error`, `warn`, `info`, `debug`, `trace` (default: `info`) |
 | `HISTORY_FILE` | Path to the history JSON file; enables history recording when set |
 | `PRIVATE_LISTEN` | `host:port` or bare port — starts the private history web UI |
-| `PUBLIC_LISTEN` | `host:port` — public-facing listener for `/cancel`, `/notify-complete`, and `/healthz` |
+| `PUBLIC_LISTEN` | `host:port` — public-facing listener for `/cancel`, `/start`, and `/healthz` |
 | `TORRENT_CACHE_DIR` | Directory to cache fetched `.torrent` files across runs |
 | `ACCESS_LOG` | Path to the fail2ban-compatible HTTP access log file (append mode); disabled when empty |

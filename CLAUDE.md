@@ -127,7 +127,7 @@ port into Transmission's session settings.
 env `HISTORY_FILE` in Docker), `--private-listen` (env `PRIVATE_LISTEN`), and `--public-listen`
 (env `PUBLIC_LISTEN`). `--history-file` enables recording; `--private-listen` starts a private HTTP
 server (bare port or `host:port`) serving the history UI and optionally `/cancel`; `--public-listen`
-starts a separate public-facing server for `/cancel`, `/healthz`, and `/notify-complete` only.
+starts a separate public-facing server for `/cancel`, `/start`, and `/healthz` only.
 In the gluetun docker-compose, expose the port explicitly via the `ports:` block; in the plain
 docker-compose `network_mode: host` already exposes all ports.
 

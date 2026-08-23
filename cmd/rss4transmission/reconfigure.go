@@ -60,6 +60,7 @@ func (rc *RunContext) applyConfig(prev, next Config) error {
 	}
 
 	rc.pushPortMonitorConfig(next)
+	rc.pushCompletionMonitorConfig(next)
 
 	return nil
 }
@@ -161,6 +162,19 @@ func (rc *RunContext) pushPortMonitorConfig(cfg Config) {
 		PortCheckOn:  cfg.PortCheck.Enabled,
 		Transmission: rc.Tx(),
 		OnRotated:    vpnRotatedHook(cfg.Ntfy, rc.Speed, cfg.SpeedTest.RetentionDuration()),
+	})
+}
+
+// pushCompletionMonitorConfig queues the current config on the completion
+// monitor. The monitor adopts it at the top of its next poll.
+func (rc *RunContext) pushCompletionMonitorConfig(cfg Config) {
+	if rc.CompletionMonitor == nil {
+		return
+	}
+	rc.CompletionMonitor.ApplyConfig(completionMonitorUpdate{
+		Transmission: rc.Tx(),
+		Ntfy:         cfg.Ntfy,
+		Interval:     cfg.TorrentComplete.PollIntervalDuration(),
 	})
 }
 

@@ -27,7 +27,7 @@ type WatchCmd struct {
 	Sleep           int      `kong:"short='s',default='300',help='Seconds to sleep between scraping'"`
 	HistoryFile     string   `kong:"help='Path to history JSON file'"`
 	PrivateListen   string   `kong:"help='Address to serve torrent history on (internal only), as host:port or bare port (disabled if empty)'"`
-	PublicListen    string   `kong:"help='Address to serve /cancel, /start, /notify-complete, and /healthz on (host:port or bare port); splits listeners so history stays on the private listener'"`
+	PublicListen    string   `kong:"help='Address to serve /cancel, /start, and /healthz on (host:port or bare port); splits listeners so history stays on the private listener'"`
 	TorrentCacheDir string   `kong:"help='Directory to cache fetched .torrent files across runs'"`
 	AccessLog       string   `kong:"help='Path to append-mode HTTP access log for fail2ban integration (disabled if empty)'"`
 }
@@ -268,9 +268,9 @@ type liveState struct {
 }
 
 // setupWebServers wires and starts the HTTP listener(s) for /cancel, /start,
-// /notify-complete, /healthz, and (on the private listener) the history UI,
-// based on which of --public-listen / --private-listen were configured. It
-// sets ctx.CancelRoutesEnabled / ctx.StartRoutesEnabled to reflect what was
+// /healthz, and (on the private listener) the history UI, based on which of
+// --public-listen / --private-listen were configured. It sets
+// ctx.CancelRoutesEnabled / ctx.StartRoutesEnabled to reflect what was
 // actually registered. Factored out of WatchCmd.Run to keep its cyclomatic
 // complexity down.
 func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, removeT removeFunc,
@@ -282,7 +282,6 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, removeT rem
 	// page on or off without a restart. The nav bar uses the same predicates,
 	// so a link never leads to a 404.
 	notif := func() NotificationsConfig { return live.Config().Notifications }
-	ntfy := func() NtfyConfig { return live.Config().Ntfy }
 	tx := func() Transmission { return live.Config().Transmission }
 	nav := navConfig{
 		Speedtest:    func() bool { return live.Speed() != nil },
@@ -290,9 +289,9 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, removeT rem
 	}
 
 	if cmd.PublicListen != "" {
-		// Split-listener mode: /cancel, /start, /notify-complete, and /healthz on the
-		// public port, history on a separate private port. Cancel/start routes are NOT
-		// registered on the private mux.
+		// Split-listener mode: /cancel, /start, and /healthz on the public
+		// port, history on a separate private port. Cancel/start routes are
+		// NOT registered on the private mux.
 		ctx.CancelRoutesEnabled = true
 		ctx.StartRoutesEnabled = ctx.History != nil
 		addr, err := parseListenAddr(cmd.PublicListen)
@@ -301,7 +300,6 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, removeT rem
 		}
 		cancelMux := newCancelMux(ctx.CancelStore, notif, removeT, getProgress,
 			ctx.StartStore, retryHistory, ctx.History, accessLog)
-		registerNotifyCompleteRoute(cancelMux, ntfy, notif, accessLog)
 		go startWebServer("public", cancelMux, addr)
 
 		if cmd.PrivateListen != "" {
@@ -335,7 +333,6 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, removeT rem
 			registerStartRoutes(mux, ctx.StartStore, notif, retryHistory, ctx.History, accessLog)
 			ctx.StartRoutesEnabled = true
 		}
-		registerNotifyCompleteRoute(mux, ntfy, notif, accessLog)
 		go startWebServer("private", mux, addr)
 	}
 }
@@ -500,6 +497,11 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	ctx.PeerPortOpen = ctx.PortMonitor.LastOpen
 	ctx.PeerPort = ctx.PortMonitor.LastPeerPort
 
+	// The completion monitor polls Transmission for torrents that finished
+	// downloading, replacing the old "torrent done" shell-script hook.
+	ctx.CompletionMonitor = NewCompletionMonitor(ctx.Tx(), ctx.Config.Ntfy,
+		ctx.Config.TorrentComplete.PollIntervalDuration())
+
 	// Builds the Gluetun client, the speed monitor and the VPN page's actions
 	// from the config as loaded. An empty previous config makes every block
 	// count as changed, so startup and reload run the same code and cannot
@@ -513,6 +515,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		feedConfigured, feedGroups, forgetHistory, accessLog)
 
 	go ctx.PortMonitor.Run()
+	go ctx.CompletionMonitor.Run()
 
 	// Run once and then sleep between later runs...
 	for ; true; <-ticker.C {

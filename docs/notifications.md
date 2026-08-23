@@ -12,9 +12,9 @@ RSS4Transmission supports five kinds of push notifications via [ntfy](https://nt
   `Action: notify` (see [Notify-only feeds](feeds.md#notify-only-feeds)). Includes a **Start
   Download** action button that opens a confirmation page; nothing is submitted to Transmission
   until you confirm there. See [Start Endpoint](#start-endpoint) below.
-- **Torrent completed** — sent via the `POST /notify-complete` endpoint, which is called by
-  `bin/torrent-complete.sh` running as Transmission's "torrent done" hook. The endpoint renders
-  your configured templates and sends the notification to ntfy.
+- **Torrent completed** — sent by `watch`'s periodic poll of Transmission (see
+  [Torrent Completed Polling](#torrent-completed-polling) below). The poll renders your
+  configured templates and sends the notification to ntfy.
 - **Config reloaded** — sent by `watch` whenever it picks up a change to the config file, to its
   own `Ntfy.AlertTopic` (separate from the torrent notifications' `Ntfy.Topic`). Reports whether
   the reload succeeded or failed; on failure, the notification body includes the actual error
@@ -104,11 +104,11 @@ are available:
 |---|---|---|---|
 | `{{.Title}}` | `string` | Torrent/RSS item title | |
 | `{{.FeedName}}` | `string` | Name of the feed | Empty for completions |
-| `{{.Dir}}` | `string` | Download directory | Populated for completions (`TR_TORRENT_DIR`) |
+| `{{.Dir}}` | `string` | Download directory | Populated for completions |
 | `{{.Files}}` | `[]string` | List of file names in the torrent | Empty for completions |
 | `{{.Labels}}` | `map[string]string` | Extracted labels (e.g. resolution, language) | Empty for completions |
 | `{{.SizeBytes}}` | `int64` | Raw size in bytes | `0` when unknown |
-| `{{.Size}}` | `string` | Human-readable size (e.g. `"4.32 GB"`) | `"Unknown"` when size is 0 or unavailable (always `"Unknown"` for completions) |
+| `{{.Size}}` | `string` | Human-readable size (e.g. `"4.32 GB"`) | `"Unknown"` when size is 0 or unavailable; populated for completions from Transmission's reported size |
 | `{{.GUID}}` | `string` | RSS item GUID | Empty for completions |
 | `{{.Link}}` | `string` | RSS item URL (web page) | Empty for completions |
 | `{{.Published}}` | `*time.Time` | RSS item publication time | May be `nil`; guard with `{{if .Published}}` |
@@ -286,8 +286,7 @@ labels route only those paths externally while keeping the history page (`/`) in
 **Model 2 — Direct port-forward (no reverse proxy)**
 
 Use `--public-listen` to start a separate public-facing listener that serves only `/cancel`,
-`/start`, `/notify-complete`, and `/healthz`, keeping the history page on `--private-listen`
-(internal only):
+`/start`, and `/healthz`, keeping the history page on `--private-listen` (internal only):
 
 ```bash
 rss4transmission watch --config config.yaml \
@@ -439,43 +438,28 @@ unchanged. If you set a custom `Path`, Transmission already sits behind a proxy 
 | `/transmission/` (proxy) | ✓ (requires `WebUI`) | ✓ (requires `WebUI`) | — |
 | `/cancel` | ✓ | — | ✓ |
 | `/start` | ✓ (requires `--history-file`) | — | ✓ (requires `--history-file`) |
-| `/notify-complete` | ✓ | — | ✓ |
 | `/healthz` | ✓ | ✓ | ✓ |
 
-## Completed Notification (POST /notify-complete)
+## Torrent Completed Polling
 
-`bin/torrent-complete.sh` is configured as Transmission's "torrent done" hook. It posts torrent
-details to the `/notify-complete` endpoint, which renders your configured `CompletedTitle`,
-`CompletedBody`, and `CompletedPriority` templates before sending to ntfy.
+`watch` polls Transmission on its own to find torrents that finished downloading, instead of
+relying on a script hook installed inside the Transmission container. On each poll, it checks
+every torrent's `IsFinished` state. A torrent that flips from not-finished to finished since the
+last poll triggers a "Torrent completed" ntfy notification, rendered from your configured
+`CompletedTitle`, `CompletedBody`, and `CompletedPriority` templates.
 
-Set `RSS4TRANSMISSION_URL` to the base URL of your rss4transmission server (same host:port as
-`--public-listen` or `--private-listen`). If `Notifications.HMACSecret` is configured, also set
-`HMAC_SECRET` to the same value — the endpoint will then require
-`Authorization: Bearer <secret>` and reject unauthenticated requests with `401`.
+A torrent already finished the first time `watch` sees it does not trigger a notification: only
+an observed transition counts, matching the port-open check's rule for its own first check.
+
+Set the poll interval with `TorrentComplete.PollInterval` in your config file:
 
 ```yaml
-# Transmission container environment
-environment:
-  - RSS4TRANSMISSION_URL=http://rss4transmission:8080
-  - HMAC_SECRET=<same value as Notifications.HMACSecret in config.yaml>
+TorrentComplete:
+  PollInterval: 30s   # default; accepts duration strings like "1m", "90s"
 ```
 
-The endpoint accepts `POST /notify-complete` with a JSON body:
-
-```json
-{"name": "My.Show.S01E01", "dir": "/downloads", "id": 42}
-```
-
-| Field | Source | Description |
-|---|---|---|
-| `name` | `TR_TORRENT_NAME` | Torrent name (maps to `{{.Title}}`) |
-| `dir` | `TR_TORRENT_DIR` | Download directory (maps to `{{.Dir}}`) |
-| `id` | `TR_TORRENT_ID` | Transmission torrent ID (maps to `{{.TorrentID}}`) |
-
-Copy `bin/torrent-complete.sh` into your Transmission data volume and configure Transmission to
-run it via its "torrent done" script hook. The [docker-compose.yaml](../docker-compose.yaml)
-example mounts `./bin:/scripts` to make the script available inside the Transmission container
-at `/scripts/torrent-complete.sh`.
+`TorrentComplete.PollInterval` is live-reloadable: editing it and saving the config file changes
+the poll cadence without a restart, the same way `SpeedTest.Interval` does.
 
 ## Per-Feed Opt-Out
 

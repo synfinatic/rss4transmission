@@ -238,12 +238,21 @@ func newReconfigureContext(t *testing.T, cfg Config) *RunContext {
 	rc.CancelStore = NewStore(time.Hour)
 	rc.StartStore = NewStartStore(time.Hour)
 	rc.PortMonitor = NewPortMonitor(nil, nil, cfg.Ntfy)
+	rc.CompletionMonitor = NewCompletionMonitor(nil, cfg.Ntfy, cfg.TorrentComplete.PollIntervalDuration())
 	return rc
 }
 
 // drainPending makes the monitor adopt a queued config change, which
 // production does at the top of its next check.
 func drainPending(m *PortMonitor) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.applyPending()
+}
+
+// drainCompletionPending makes the completion monitor adopt a queued config
+// change, which production does at the top of its next check.
+func drainCompletionPending(m *CompletionMonitor) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.applyPending()
@@ -273,6 +282,22 @@ func TestApplyConfig_PushesPortCheckAndNtfyToTheMonitor(t *testing.T) {
 
 	assert.True(t, m.enabled, "PortCheck.Enabled must reach the monitor")
 	assert.Equal(t, "https://ntfy.example.com", m.Ntfy.BaseURL)
+}
+
+func TestApplyConfig_PushesTorrentCompleteAndNtfyToTheCompletionMonitor(t *testing.T) {
+	rc := newReconfigureContext(t, Config{})
+
+	next := Config{}
+	next.Ntfy.BaseURL = "https://ntfy.example.com"
+	next.TorrentComplete.PollInterval = "45s"
+	require.NoError(t, next.TorrentComplete.Validate())
+	require.NoError(t, rc.applyConfig(rc.Config, next))
+
+	m := rc.CompletionMonitor
+	drainCompletionPending(m)
+
+	assert.Equal(t, "https://ntfy.example.com", m.Ntfy.BaseURL, "Ntfy must reach the completion monitor")
+	assert.Equal(t, 45*time.Second, m.interval, "TorrentComplete.PollInterval must reach the completion monitor")
 }
 
 func TestApplyConfig_AttachesAndDetachesGluetun(t *testing.T) {

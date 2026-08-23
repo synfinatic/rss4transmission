@@ -81,7 +81,7 @@ The settings below all take effect on the next save:
 - `Feeds` and `Extractors`
 - `Transmission`, including a new host or port, new credentials, and `WebUI`
 - `Gluetun`, including the rotation policy and the control server address
-- `SpeedTest` and `PortCheck.Enabled`
+- `SpeedTest`, `PortCheck.Enabled`, and `TorrentComplete.PollInterval`
 - `Ntfy` and `Notifications`, including `HMACSecret`, `TokenTTLH`, and `BaseURL`
 - `SeenFile` and `SeenCacheDays`
 
@@ -110,7 +110,8 @@ process:
   deduplication, preference ranking, full config example
 - [Notifications & History](docs/notifications.md) — ntfy push notifications with customizable
   templates and priority, cancel endpoint (Traefik and direct port-forward models), history web
-  UI, completed notification via `/notify-complete` endpoint
+  UI, completed notification via periodic Transmission polling
+  (`TorrentComplete.PollInterval`)
 - [fail2ban Integration](docs/fail2ban.md) — access log setup, filter and jail configuration,
   Docker volume-mount example, client IP resolution with Cloudflare support
 

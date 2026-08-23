@@ -85,9 +85,10 @@ type RunContext struct {
 	// The long-lived components watch builds and a config reload updates in
 	// place. They are written only from WatchCmd.Run and applyConfig, both of
 	// which hold the reload lock.
-	Gluetun      *Gluetun
-	PortMonitor  *PortMonitor
-	SpeedMonitor *SpeedMonitor
+	Gluetun           *Gluetun
+	PortMonitor       *PortMonitor
+	CompletionMonitor *CompletionMonitor
+	SpeedMonitor      *SpeedMonitor
 	// speedCancel stops the running speed monitor. Rebuilding the monitor
 	// abandons a measurement in flight, which is acceptable at the hourly
 	// cadence the monitor runs at.
@@ -308,6 +309,10 @@ func (rc *RunContext) loadConfig(configFile string) error {
 
 	if err := cfg.SpeedTest.Validate(); err != nil {
 		return fmt.Errorf("invalid SpeedTest configuration: %w", err)
+	}
+
+	if err := cfg.TorrentComplete.Validate(); err != nil {
+		return fmt.Errorf("invalid TorrentComplete configuration: %w", err)
 	}
 
 	if err := cfg.Transmission.Validate(); err != nil {

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mmcdole/gofeed"
 )
@@ -707,5 +708,87 @@ Feeds:
 	}
 	if len(rc.Config.Feeds) != 1 || rc.Config.Feeds[0].Exclude[0] != "^sample" {
 		t.Errorf("previous config was not preserved: %+v", rc.Config.Feeds)
+	}
+}
+
+func TestTorrentCompleteConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		poll    string
+		wantErr bool
+	}{
+		{"valid duration", "30s", false},
+		{"valid minutes", "5m", false},
+		{"empty string", "", true},
+		{"unparseable", "not-a-duration", true},
+		{"zero", "0s", true},
+		{"negative", "-5s", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := TorrentCompleteConfig{PollInterval: tt.poll}
+			err := cfg.Validate()
+			if tt.wantErr && err == nil {
+				t.Fatalf("Validate() = nil for PollInterval %q, want an error", tt.poll)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("Validate() = %q for PollInterval %q, want nil", err, tt.poll)
+			}
+		})
+	}
+}
+
+func TestTorrentCompleteConfig_PollIntervalDuration(t *testing.T) {
+	cfg := TorrentCompleteConfig{PollInterval: "45s"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %q, want nil", err)
+	}
+	if got, want := cfg.PollIntervalDuration(), 45*time.Second; got != want {
+		t.Errorf("PollIntervalDuration() = %s, want %s", got, want)
+	}
+}
+
+func TestConfigDefaults_TorrentCompletePollInterval(t *testing.T) {
+	got, ok := ConfigDefaults["TorrentComplete.PollInterval"]
+	if !ok {
+		t.Fatal(`ConfigDefaults missing "TorrentComplete.PollInterval"`)
+	}
+	if got != "30s" {
+		t.Errorf(`ConfigDefaults["TorrentComplete.PollInterval"] = %v, want "30s"`, got)
+	}
+}
+
+func TestLoadConfig_TorrentCompletePollInterval(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want time.Duration
+	}{
+		{"unset falls back to the default", "Transmission:\n  Host: gluetun\n", 30 * time.Second},
+		{"explicit value wins", "Transmission:\n  Host: gluetun\nTorrentComplete:\n  PollInterval: 90s\n", 90 * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfgFile := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(cfgFile, []byte(tt.yaml), 0600); err != nil {
+				t.Fatal(err)
+			}
+			rc := &RunContext{}
+			if err := rc.loadConfig(cfgFile); err != nil {
+				t.Fatalf("loadConfig returned error: %v", err)
+			}
+			if got := rc.Config.TorrentComplete.PollIntervalDuration(); got != tt.want {
+				t.Errorf("TorrentComplete.PollIntervalDuration() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+
+	badFile := filepath.Join(t.TempDir(), "bad.yaml")
+	if err := os.WriteFile(badFile, []byte("TorrentComplete:\n  PollInterval: not-a-duration\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rc := &RunContext{}
+	if err := rc.loadConfig(badFile); err == nil {
+		t.Fatal("loadConfig with an unparseable TorrentComplete.PollInterval returned nil error")
 	}
 }
