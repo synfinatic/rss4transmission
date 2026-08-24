@@ -11,7 +11,7 @@ require (
 	github.com/knadh/koanf v1.5.0
 	github.com/knadh/koanf/v2 v2.3.6
 	github.com/manifoldco/promptui v0.9.0
-	github.com/mmcdole/gofeed v1.4.1
+	github.com/mmcdole/gofeed v1.4.2
 	github.com/showwin/speedtest-go v1.7.11
 	github.com/sirupsen/logrus v1.10.1
 	github.com/stretchr/testify v1.12.1
