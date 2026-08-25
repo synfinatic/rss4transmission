@@ -217,7 +217,9 @@ and the rotation rules.
 
 `SeenFile` is a JSON file that records every torrent rss4transmission has dispatched. It
 prevents re-downloading the same content and tracks the best preference rank seen for each
-identity key. `SeenCacheDays` controls how long records are retained before being pruned.
+identity key. `SeenCacheDays` controls how long records are retained before being pruned. The
+same setting also prunes the history file when `--history-file` is set; see
+[History Web UI](notifications.md#history-web-ui).
 
 ```yaml
 SeenFile:      /config/seen.json
