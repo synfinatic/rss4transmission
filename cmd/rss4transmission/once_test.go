@@ -160,7 +160,9 @@ func TestAllLabels_MergesFileLabelsOverTitle(t *testing.T) {
 		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
 		[]map[string]string{{"resolution": "1080p"}},
 	)
-	got := c.allLabels([]string{"series", "round", "session"})
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil,
+		[]Group{{Require: map[string][]string{"series": {"MotoGP"}}}})
+	got := c.allLabels(feedCfg)
 	if got["resolution"] != "1080p" {
 		t.Errorf("allLabels()[resolution] = %q, want 1080p (from file label)", got["resolution"])
 	}
@@ -174,7 +176,9 @@ func TestAllLabels_FileLabelOverridesTitleLabel(t *testing.T) {
 		map[string]string{"series": "MotoGP", "resolution": "720p"},
 		[]map[string]string{{"resolution": "1080p"}},
 	)
-	got := c.allLabels([]string{"series"})
+	feedCfg := makeFeed([]string{"series"}, nil,
+		[]Group{{Require: map[string][]string{"series": {"MotoGP"}}}})
+	got := c.allLabels(feedCfg)
 	if got["resolution"] != "1080p" {
 		t.Errorf("allLabels()[resolution] = %q, want 1080p (file label overrides title)", got["resolution"])
 	}
@@ -183,7 +187,8 @@ func TestAllLabels_FileLabelOverridesTitleLabel(t *testing.T) {
 func TestAllLabels_AppliesDefaultsForMissingLabels(t *testing.T) {
 	c := makeCandidate("t1", map[string]string{"series": "MotoGP"}, nil)
 	c.defaults = map[string]string{"language": "English"}
-	got := c.allLabels([]string{"series"})
+	feedCfg := makeFeed([]string{"series"}, nil, nil)
+	got := c.allLabels(feedCfg)
 	if got["language"] != "English" {
 		t.Errorf("allLabels()[language] = %q, want English (from default)", got["language"])
 	}
@@ -200,9 +205,39 @@ func TestAllLabels_ExcludesFileWithoutValidIdentityKey(t *testing.T) {
 			{"resolution": "720p"},                      // sample: no series -> no valid coverage
 		},
 	)
-	got := c.allLabels([]string{"series", "round", "session"})
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil,
+		[]Group{{Require: map[string][]string{"series": {"MotoGP"}}}})
+	got := c.allLabels(feedCfg)
 	if got["resolution"] != "1080p" {
 		t.Errorf("allLabels()[resolution] = %q, want 1080p (sample file's 720p must not override the winning coverage's value)", got["resolution"])
+	}
+}
+
+func TestAllLabels_ExcludesFileNotMatchingAnyGroup(t *testing.T) {
+	// Regression: a "Full Weekend" WSBK pack can bundle a WSS support-class
+	// race file alongside the WSBK files, since both classes race on the
+	// same event weekend. The WSS file forms a valid identity key (every
+	// identity label is present), but its class does not satisfy this feed's
+	// Group Require, so it must not be allowed to overwrite the class value
+	// that actually matched and won selection for this feed.
+	c := makeCandidate("wsbk-bundle",
+		map[string]string{
+			"class": "WSBK", "network": "WEB", "year": "2026",
+			"round": "03", "language": "English",
+		},
+		[]map[string]string{
+			{"session": "Race2"},                 // WSBK Race2 file: class inherited from title
+			{"class": "WSS", "session": "Race2"}, // bundled WSS support-race file
+		},
+	)
+	feedCfg := makeFeed(
+		[]string{"network", "year", "round", "class", "session", "language"},
+		nil,
+		[]Group{{Require: map[string][]string{"class": {"WSBK"}}}},
+	)
+	got := c.allLabels(feedCfg)
+	if got["class"] != "WSBK" {
+		t.Errorf("allLabels()[class] = %q, want WSBK (a bundled WSS file must not overwrite the class that matched this feed's Group)", got["class"])
 	}
 }
 
@@ -219,7 +254,8 @@ func TestDispatch_Skip_RecordsFileDerivedLabelsInCache(t *testing.T) {
 		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
 		[]map[string]string{{"resolution": "1080p"}},
 	)
-	feedCfg := makeFeed([]string{"series", "round", "session"}, nil, nil)
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil,
+		[]Group{{Require: map[string][]string{"series": {"MotoGP"}}}})
 	keys := []string{"series=MotoGP|round=RD01|session=Race"}
 
 	ctx := &RunContext{Cache: emptyCache()}
@@ -240,7 +276,8 @@ func TestDispatch_Skip_RecordsFileDerivedLabelsInHistory(t *testing.T) {
 		map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"},
 		[]map[string]string{{"resolution": "1080p"}},
 	)
-	feedCfg := makeFeed([]string{"series", "round", "session"}, nil, nil)
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil,
+		[]Group{{Require: map[string][]string{"series": {"MotoGP"}}}})
 	keys := []string{"series=MotoGP|round=RD01|session=Race"}
 
 	ctx := &RunContext{

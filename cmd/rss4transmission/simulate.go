@@ -128,7 +128,7 @@ func (cmd *SimulateCmd) dispatchBatch(ctx *RunContext, feedCfg Feed, candidates 
 			for j, cov := range covs {
 				keys[j] = cov.identityKey
 			}
-			labels := c.allLabels(feedCfg.Identity)
+			labels := c.allLabels(feedCfg)
 			log.Infof("WINNER: %s labels=%v", c.item.Item.Title, labels)
 			ctx.Cache.AddItem(c.item, labels, keys)
 			count++

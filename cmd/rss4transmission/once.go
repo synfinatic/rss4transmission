@@ -194,25 +194,44 @@ type coverage struct {
 }
 
 // allLabels returns titleLabels merged with the labels of every file that
-// forms a valid coverage for identityLabels (same scoping as coverages()),
+// forms a valid coverage for feedCfg.Identity and matches at least one of
+// feedCfg.Groups (the same scoping selectWinners uses to decide a match),
 // with extractor defaults filled in for anything still missing. A file that
 // matches only a Prefer-dimension regex but not the identity regexes (a
 // sample clip, an NFO, a stray extra) never wins selection and must not be
-// allowed to overwrite a value that came from the file that did. This is the
-// full label set used when recording a dispatched candidate in the seen
-// cache, so Prefer dimensions that only appear in file names (e.g.
-// resolution) aren't lost on future preference-rank comparisons.
-func (c *candidate) allLabels(identityLabels []string) map[string]string {
+// allowed to overwrite a value that came from the file that did. Nor may a
+// file that belongs to a sibling class or session a shared Extractor also
+// happens to parse — e.g. a WSS support-race file bundled inside a WSBK
+// "Full Weekend" pack — since it never satisfied this feed's Group and had
+// no part in winning selection. This is the full label set used when
+// recording a dispatched candidate in the seen cache, so Prefer dimensions
+// that only appear in file names (e.g. resolution) aren't lost on future
+// preference-rank comparisons.
+func (c *candidate) allLabels(feedCfg Feed) map[string]string {
 	merged := make(map[string]string, len(c.titleLabels)+len(c.fileLabels))
 	maps.Copy(merged, c.titleLabels)
 	for _, fl := range c.fileLabels {
 		combined := withDefaultLabels(MergeLabels(c.titleLabels, fl), c.defaults)
-		if _, ok := IdentityKey(combined, identityLabels); !ok {
+		if _, ok := IdentityKey(combined, feedCfg.Identity); !ok {
+			continue
+		}
+		if !matchesAnyGroup(feedCfg.Groups, combined) {
 			continue
 		}
 		maps.Copy(merged, fl)
 	}
 	return withDefaultLabels(merged, c.defaults)
+}
+
+// matchesAnyGroup reports whether labels satisfy at least one group's
+// Require constraints.
+func matchesAnyGroup(groups []Group, labels map[string]string) bool {
+	for _, g := range groups {
+		if g.Matches(labels) {
+			return true
+		}
+	}
+	return false
 }
 
 // feedAllowed reports whether feedName should be processed given the --feed filter.
@@ -385,7 +404,7 @@ func (cmd *OnceCmd) Run(ctx *RunContext) error {
 // never stop processing, since nothing was produced.
 func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *candidate, keys []string) bool {
 	var err error
-	labels := w.allLabels(feedCfg.Identity)
+	labels := w.allLabels(feedCfg)
 
 	if cmd.NoAction {
 		log.Infof("%s match: %s", feedName, w.item.Item.Title)
@@ -510,7 +529,7 @@ func retryHistoryItem(ctx *RunContext, rec HistoryRecord) (int64, error) {
 // selected Quit.
 func (cmd *OnceCmd) dispatchInteractive(ctx *RunContext, feedCfg Feed, feedName string, w *candidate, keys []string) bool {
 	var err error
-	labels := w.allLabels(feedCfg.Identity)
+	labels := w.allLabels(feedCfg)
 
 	switch prompt(feedName, w.item.Item.Title) {
 	case Download:
