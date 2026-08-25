@@ -12,7 +12,7 @@ All feeds support these options:
 | `URL` | RSS feed URL (required) |
 | `DownloadPath` | Destination directory for torrents added to Transmission |
 | `Exclude` | List of regexes — items whose title matches any are skipped before label extraction |
-| `MinSize` / `MaxSize` | Accept only items within this size range (e.g. `100MB`, `10GB`) |
+| `MinSize` / `MaxSize` | Accept only items within this size range (see [Size format](#size-format) below) |
 | `NoValidateCert` | Skip TLS certificate validation for this feed's URL |
 | `NoSubmit` | Dry-run: log matches but do not send to Transmission |
 | `NoNotify` | Skip ntfy notifications for this feed (see [Notifications](notifications.md)) |
@@ -20,6 +20,13 @@ All feeds support these options:
 
 `Action: notify` and `NoNotify: true` cannot be combined on the same feed — a feed that never
 notifies and never auto-downloads would produce matches nobody can act on.
+
+### Size format
+
+`MinSize` and `MaxSize` take a number followed by a unit, with no space, for example `500MB` or
+`1.5GiB`. The parser accepts both SI units (`KB`, `MB`, `GB`, `TB`) and IEC units (`KiB`, `MiB`,
+`GiB`, `TiB`), and unit names are not case-sensitive. Leave the field empty, or omit it, to skip
+that bound.
 
 ### Notify-only feeds
 
