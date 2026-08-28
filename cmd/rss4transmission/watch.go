@@ -267,6 +267,13 @@ type liveState struct {
 	ExitIP func() exitIPFunc
 }
 
+// stopTorrents pauses the given torrents in Transmission rather than removing
+// them, so a user who taps Cancel on a "torrent started" notification can
+// still resume the download later from the Transmission UI.
+func stopTorrents(rCtx context.Context, tx *transmissionrpc.Client, ids []int64) error {
+	return tx.TorrentStopIDs(rCtx, ids)
+}
+
 // setupWebServers wires and starts the HTTP listener(s) for /cancel, /start,
 // /healthz, and (on the private listener) the history UI, based on which of
 // --public-listen / --private-listen were configured. It sets
@@ -412,10 +419,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	logNtfyStatus(ctx.Config.Ntfy)
 
 	removeT := func(rCtx context.Context, ids []int64) error {
-		return ctx.Tx().TorrentRemove(rCtx, transmissionrpc.TorrentRemovePayload{
-			IDs:             ids,
-			DeleteLocalData: false,
-		})
+		return stopTorrents(rCtx, ctx.Tx(), ids)
 	}
 	getProgress := func(rCtx context.Context, torrentID int64) (int64, float64, error) {
 		torrents, err := ctx.Tx().TorrentGet(rCtx,

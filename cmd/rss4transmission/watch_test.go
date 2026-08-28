@@ -1,13 +1,20 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/hekmon/transmissionrpc/v3"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWatchCmd_HasHistoryFileField(t *testing.T) {
@@ -735,4 +742,51 @@ func TestConfigReloader_OnWatchEvent_WatchError_CancelsPendingDebouncedReload(t 
 		t.Errorf("expected exactly 1 reload (from recover()), got %d — "+
 			"a stale debounce timer fired a redundant reload", got)
 	}
+}
+
+// --- stopTorrents (the /cancel action stops, never removes, a torrent) ---
+
+func TestStopTorrents_CallsTorrentStopNotTorrentRemove(t *testing.T) {
+	const sessionID = "test-session-id"
+	var method string
+	var gotIDs []int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Transmission-Session-Id") != sessionID {
+			w.Header().Set("X-Transmission-Session-Id", sessionID)
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		var req struct {
+			Tag       int    `json:"tag"`
+			Method    string `json:"method"`
+			Arguments struct {
+				IDs []int64 `json:"ids"`
+			} `json:"arguments"`
+		}
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(body, &req))
+		method = req.Method
+		gotIDs = req.Arguments.IDs
+
+		resp := map[string]any{
+			"result":    "success",
+			"tag":       req.Tag,
+			"arguments": map[string]any{},
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
+	}))
+	defer srv.Close()
+
+	endpoint, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	client, err := transmissionrpc.New(endpoint, nil)
+	require.NoError(t, err)
+
+	err = stopTorrents(t.Context(), client, []int64{42})
+	require.NoError(t, err)
+
+	assert.Equal(t, "torrent-stop", method,
+		"the /cancel action must pause the torrent, not remove it from Transmission")
+	assert.Equal(t, []int64{42}, gotIDs)
 }

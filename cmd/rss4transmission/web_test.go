@@ -1579,7 +1579,7 @@ func TestPostCancelHandler_AccessLog_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.True(t, removed)
 	assert.Contains(t, buf.String(), "level=info")
-	assert.Contains(t, buf.String(), "result=cancelled")
+	assert.Contains(t, buf.String(), "result=paused")
 	assert.Contains(t, buf.String(), "client_ip=10.0.0.1")
 }
 

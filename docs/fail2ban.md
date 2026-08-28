@@ -45,7 +45,7 @@ The access log uses logrus `TextFormatter` with RFC3339 timestamps and `key=valu
 
 ```
 time="2026-07-01T10:30:00Z" level=warning msg="cancel access" client_ip=1.2.3.4 endpoint=/cancel method=GET result=invalid_token
-time="2026-07-01T10:30:01Z" level=info msg="cancel access" client_ip=1.2.3.4 endpoint=/cancel method=POST result=cancelled
+time="2026-07-01T10:30:01Z" level=info msg="cancel access" client_ip=1.2.3.4 endpoint=/cancel method=POST result=paused
 ```
 
 Fields are sorted alphabetically after `time`/`level`/`msg`: `client_ip`, `endpoint`, `method`,
@@ -57,10 +57,10 @@ Result values logged per outcome:
 |---|---|---|
 | Missing or invalid token signature | `warning` | `invalid_token` |
 | Token expired | `warning` | `expired` |
-| Torrent ID not in store (already cancelled or never existed) | `warning` | `not_found` |
+| Torrent ID not in store (already paused or never existed) | `warning` | `not_found` |
 | Transmission RPC call failed | `warning` | `error` |
 | Confirmation page rendered successfully | `info` | `ok` |
-| Torrent cancelled successfully | `info` | `cancelled` |
+| Torrent paused successfully | `info` | `paused` |
 
 Note: IPv6 addresses are quoted by logrus because they contain colons, e.g.
 `client_ip="2001:db8::1"`.

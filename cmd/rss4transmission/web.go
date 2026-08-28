@@ -629,7 +629,7 @@ func makeGetCancelHandler(store *Store, notif func() NotificationsConfig, getPro
 					"result":    "not_found",
 				}).Warn("cancel access")
 			}
-			http.Error(w, "download not found or already cancelled", http.StatusNotFound)
+			http.Error(w, "download not found or already paused", http.StatusNotFound)
 			return
 		}
 
@@ -671,7 +671,7 @@ func makeGetCancelHandler(store *Store, notif func() NotificationsConfig, getPro
 }
 
 // makePostCancelHandler processes the confirmation form submission. It re-validates
-// the token, removes the torrent from Transmission, and only then consumes the
+// the token, pauses the torrent in Transmission, and only then consumes the
 // store entry so users can retry if the Transmission call fails.
 func makePostCancelHandler(store *Store, notif func() NotificationsConfig, remove removeFunc, accessLog *logrus.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -704,7 +704,7 @@ func makePostCancelHandler(store *Store, notif func() NotificationsConfig, remov
 			return
 		}
 
-		// Peek (not Take) so the entry survives a failed remove and the user can retry.
+		// Peek (not Take) so the entry survives a failed pause and the user can retry.
 		torrentID, _, ok := store.Peek(id)
 		if !ok {
 			if accessLog != nil {
@@ -715,12 +715,12 @@ func makePostCancelHandler(store *Store, notif func() NotificationsConfig, remov
 					"result":    "not_found",
 				}).Warn("cancel access")
 			}
-			http.Error(w, "download not found or already cancelled", http.StatusNotFound)
+			http.Error(w, "download not found or already paused", http.StatusNotFound)
 			return
 		}
 
 		if err := remove(r.Context(), []int64{torrentID}); err != nil {
-			log.WithError(err).Errorf("Failed to remove torrent %d from Transmission", torrentID)
+			log.WithError(err).Errorf("Failed to pause torrent %d in Transmission", torrentID)
 			if accessLog != nil {
 				accessLog.WithFields(logrus.Fields{
 					"client_ip": clientIP(r),
@@ -729,11 +729,11 @@ func makePostCancelHandler(store *Store, notif func() NotificationsConfig, remov
 					"result":    "error",
 				}).Warn("cancel access")
 			}
-			http.Error(w, "failed to cancel download", http.StatusInternalServerError)
+			http.Error(w, "failed to pause download", http.StatusInternalServerError)
 			return
 		}
 
-		// Remove succeeded: consume the store entry.
+		// Pause succeeded: consume the store entry.
 		store.Take(id) //nolint:errcheck
 
 		if accessLog != nil {
@@ -741,13 +741,13 @@ func makePostCancelHandler(store *Store, notif func() NotificationsConfig, remov
 				"client_ip": clientIP(r),
 				"endpoint":  "/cancel",
 				"method":    r.Method,
-				"result":    "cancelled",
+				"result":    "paused",
 			}).Info("cancel access")
 		}
-		log.Infof("Cancelled download via web confirmation: torrent %d (cancel-id %s)", torrentID, id)
+		log.Infof("Paused download via web confirmation: torrent %d (cancel-id %s)", torrentID, id)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "Download cancelled.") //nolint:errcheck
+		fmt.Fprintln(w, "Download paused. Resume it from Transmission when you want it to continue.") //nolint:errcheck
 	}
 }
 
