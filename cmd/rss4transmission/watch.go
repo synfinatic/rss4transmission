@@ -280,7 +280,7 @@ func stopTorrents(rCtx context.Context, tx *transmissionrpc.Client, ids []int64)
 // ctx.CancelRoutesEnabled / ctx.StartRoutesEnabled to reflect what was
 // actually registered. Factored out of WatchCmd.Run to keep its cyclomatic
 // complexity down.
-func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, removeT removeFunc,
+func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, pauseT pauseFunc,
 	getProgress progressFunc, retryHistory retryFunc, feedConfigured func(string) bool,
 	feedGroups func(string) []Group, forgetHistory forgetFunc, accessLog *logrus.Logger,
 ) {
@@ -314,7 +314,7 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, removeT rem
 		if err != nil {
 			log.Fatalf("--public-listen: %s", err)
 		}
-		cancelMux := newCancelMux(ctx.CancelStore, notif, removeT, getProgress,
+		cancelMux := newCancelMux(ctx.CancelStore, notif, pauseT, getProgress,
 			ctx.StartStore, retryHistory, ctx.History, accessLog)
 		go startWebServer("public", cancelMux, addr)
 
@@ -345,7 +345,7 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, removeT rem
 		registerSpeedRoutes(mux, live.Speed, ctx.PeerPortOpen, ctx.PeerPort, live.ExitIP, live.Actions, nav)
 		registerTransmissionRoutes(mux, tx, nav)
 		registerNtfyRoutes(mux, ntfyCfg, nav)
-		registerCancelRoutes(mux, ctx.CancelStore, notif, removeT, getProgress, accessLog)
+		registerCancelRoutes(mux, ctx.CancelStore, notif, pauseT, getProgress, accessLog)
 		ctx.CancelRoutesEnabled = true
 		if ctx.History != nil {
 			registerStartRoutes(mux, ctx.StartStore, notif, retryHistory, ctx.History, accessLog)
@@ -418,7 +418,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	warnNotifyFeedsWithoutHistory(ctx.Config.Feeds, ctx.History)
 	logNtfyStatus(ctx.Config.Ntfy)
 
-	removeT := func(rCtx context.Context, ids []int64) error {
+	pauseT := func(rCtx context.Context, ids []int64) error {
 		return stopTorrents(rCtx, ctx.Tx(), ids)
 	}
 	getProgress := func(rCtx context.Context, torrentID int64) (int64, float64, error) {
@@ -526,7 +526,7 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 		return err
 	}
 
-	setupWebServers(cmd, ctx, live, removeT, getProgress, retryHistory,
+	setupWebServers(cmd, ctx, live, pauseT, getProgress, retryHistory,
 		feedConfigured, feedGroups, forgetHistory, accessLog)
 
 	go ctx.PortMonitor.Run()
