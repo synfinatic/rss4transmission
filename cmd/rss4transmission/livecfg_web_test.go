@@ -77,7 +77,7 @@ func TestCancelRoutes_SecretIsReadPerRequest(t *testing.T) {
 	mux := http.NewServeMux()
 	registerCancelRoutes(mux, store, func() NotificationsConfig {
 		return live.Load().(NotificationsConfig)
-	}, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
+	}, makePauseFunc(new(bool)), noProgressFunc(), nil)
 
 	// A token signed with the second secret must fail while the first is live.
 	expires, sig := GenerateToken([]byte("second"), "test-id", time.Hour)
@@ -135,7 +135,7 @@ func TestCancelAndStartRoutes_404WhileSecretIsEmpty(t *testing.T) {
 	h := historyWithNotifiedRecord("shows", "guid-1", "My Show S01E01")
 
 	mux := http.NewServeMux()
-	registerCancelRoutes(mux, store, get, makeRemoveFunc(new(bool)), noProgressFunc(), nil)
+	registerCancelRoutes(mux, store, get, makePauseFunc(new(bool)), noProgressFunc(), nil)
 	registerStartRoutes(mux, startStore, get, makeRetryFunc(new(bool), nil, 42, nil), h, nil)
 
 	for _, path := range []string{"/cancel", "/start"} {

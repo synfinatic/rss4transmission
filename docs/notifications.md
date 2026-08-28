@@ -6,8 +6,8 @@ RSS4Transmission supports five kinds of push notifications via [ntfy](https://nt
 
 - **Torrent started** — sent by rss4transmission immediately after submitting a torrent to
   Transmission. Includes a **More Info** action button that opens a browser confirmation
-  page showing torrent details and live download progress. Confirming removes the torrent from
-  Transmission.
+  page showing torrent details and live download progress. Confirming pauses the torrent in
+  Transmission. The torrent stays in Transmission, so you can resume it later.
 - **Torrent found** — sent instead of "Torrent started" for feeds configured with
   `Action: notify` (see [Notify-only feeds](feeds.md#notify-only-feeds)). Includes a **Start
   Download** action button that opens a confirmation page; nothing is submitted to Transmission
@@ -266,8 +266,9 @@ Ntfy:
 ## Cancel Endpoint
 
 The `/cancel` endpoint serves a confirmation page where the user can review torrent details and
-live download progress before removing the torrent from Transmission. It must be reachable from
-the internet so ntfy can open it when the user taps Cancel.
+live download progress before pausing the torrent in Transmission. Transmission keeps the torrent
+and its downloaded data, so the user can resume the download later. The endpoint must be reachable
+from the internet so ntfy can open it when the user taps Cancel.
 
 There are two deployment models.
 

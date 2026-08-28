@@ -72,7 +72,7 @@ func (r SpeedResult) OK() bool {
 // activeDownloadsFunc reports how many torrents are currently downloading.
 // rotateRequestFunc asks for a VPN rotation; nil in measure-only mode.
 //
-// These mirror the function-type injection style already used for removeFunc
+// These mirror the function-type injection style already used for pauseFunc
 // and progressFunc in web.go: the policy and bookkeeping below stay testable
 // without a network, a VPN, or a Transmission instance.
 type (

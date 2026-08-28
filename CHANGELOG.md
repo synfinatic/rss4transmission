@@ -63,6 +63,8 @@
 
 ### Other changes
 
+- The `/cancel` confirmation page now pauses the torrent in Transmission instead of removing it,
+  so a user can resume the download later.
 - Seen cache now tracks per-GUID error hold-downs to avoid spamming retries on transient failures.
 - Docker: `HISTORY_LISTEN` env var added to `Dockerfile` and both compose files (empty = disabled).
   The gluetun compose file includes a commented `ports:` block to expose the history UI.
