@@ -400,6 +400,19 @@ func (f *Feed) Validate(name string, extractors map[string]*ExtractorSet) error 
 	if f.Action == "notify" && f.NoNotify {
 		return fmt.Errorf("feed %q: NoNotify cannot be combined with Action: notify", name)
 	}
+
+	identitySet := make(map[string]bool, len(f.Identity))
+	for _, label := range f.Identity {
+		identitySet[label] = true
+	}
+	for _, dim := range f.Prefer {
+		if identitySet[dim.Label] {
+			log.Warnf("feed %q: label %q is in both Identity and Prefer; "+
+				"since candidates for the same identity key already share the same "+
+				"%q value, Prefer has no effect on it", name, dim.Label, dim.Label)
+		}
+	}
+
 	return nil
 }
 

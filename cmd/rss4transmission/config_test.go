@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mmcdole/gofeed"
+	"github.com/sirupsen/logrus"
 )
 
 func makeItem(title string, enclosureLength string) *gofeed.Item {
@@ -215,6 +216,49 @@ func TestFeedValidate_ActionDefaultEmpty(t *testing.T) {
 	}
 	if err := f.Validate("myfeed", map[string]*ExtractorSet{"racing": es}); err != nil {
 		t.Errorf("expected empty Action (default download) to be valid: %v", err)
+	}
+}
+
+func TestFeedValidate_WarnsWhenLabelInIdentityAndPrefer(t *testing.T) {
+	hook := withTestLogHook(t)
+	es := &ExtractorSet{Labels: map[string]LabelDef{}}
+	f := &Feed{
+		Extractor: "racing",
+		Identity:  []string{"series", "network"},
+		Groups:    []Group{{Require: map[string][]string{"series": {"MotoGP"}}}},
+		Prefer:    []PreferDimension{{Label: "network", Order: []string{"TNT", "WEB"}}},
+	}
+	if err := f.Validate("myfeed", map[string]*ExtractorSet{"racing": es}); err != nil {
+		t.Errorf("label in both Identity and Prefer should warn, not fail: %v", err)
+	}
+	found := false
+	for _, e := range hook.AllEntries() {
+		if e.Level == logrus.WarnLevel && strings.Contains(e.Message, "Identity and Prefer") &&
+			strings.Contains(e.Message, "network") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected an Identity/Prefer overlap warning mentioning the label 'network'")
+	}
+}
+
+func TestFeedValidate_NoWarnWhenPreferLabelNotInIdentity(t *testing.T) {
+	hook := withTestLogHook(t)
+	es := &ExtractorSet{Labels: map[string]LabelDef{}}
+	f := &Feed{
+		Extractor: "racing",
+		Identity:  []string{"series"},
+		Groups:    []Group{{Require: map[string][]string{"series": {"MotoGP"}}}},
+		Prefer:    []PreferDimension{{Label: "network", Order: []string{"TNT", "WEB"}}},
+	}
+	if err := f.Validate("myfeed", map[string]*ExtractorSet{"racing": es}); err != nil {
+		t.Errorf("expected valid feed to pass validation: %v", err)
+	}
+	for _, e := range hook.AllEntries() {
+		if e.Level == logrus.WarnLevel && strings.Contains(e.Message, "Identity and Prefer") {
+			t.Errorf("expected no Identity/Prefer overlap warning, got: %s", e.Message)
+		}
 	}
 }
 
