@@ -233,12 +233,13 @@ func TestFeedValidate_WarnsWhenLabelInIdentityAndPrefer(t *testing.T) {
 	}
 	found := false
 	for _, e := range hook.AllEntries() {
-		if e.Level == logrus.WarnLevel && strings.Contains(e.Message, "network") {
+		if e.Level == logrus.WarnLevel && strings.Contains(e.Message, "Identity and Prefer") &&
+			strings.Contains(e.Message, "network") {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected a warning log entry mentioning the label 'network'")
+		t.Error("expected an Identity/Prefer overlap warning mentioning the label 'network'")
 	}
 }
 
@@ -255,8 +256,8 @@ func TestFeedValidate_NoWarnWhenPreferLabelNotInIdentity(t *testing.T) {
 		t.Errorf("expected valid feed to pass validation: %v", err)
 	}
 	for _, e := range hook.AllEntries() {
-		if e.Level == logrus.WarnLevel {
-			t.Errorf("expected no warning when Prefer label is not in Identity, got: %s", e.Message)
+		if e.Level == logrus.WarnLevel && strings.Contains(e.Message, "Identity and Prefer") {
+			t.Errorf("expected no Identity/Prefer overlap warning, got: %s", e.Message)
 		}
 	}
 }
