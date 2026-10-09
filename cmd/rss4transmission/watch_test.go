@@ -8,10 +8,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/alecthomas/kong"
 	"github.com/hekmon/transmissionrpc/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -789,4 +791,138 @@ func TestStopTorrents_CallsTorrentStopNotTorrentRemove(t *testing.T) {
 	assert.Equal(t, "torrent-stop", method,
 		"the /cancel action must pause the torrent, not remove it from Transmission")
 	assert.Equal(t, []int64{42}, gotIDs)
+}
+
+func TestConfigReloader_ReloadNow_ReturnsReloadError(t *testing.T) {
+	want := fmt.Errorf("bad yaml")
+	r := &configReloader{reload: func() error { return want }}
+
+	if got := r.reloadNow(); got != want {
+		t.Errorf("reloadNow() = %v, want %v", got, want)
+	}
+}
+
+func TestConfigReloader_ReloadNow_HoldsLockAndNotifiesOutsideIt(t *testing.T) {
+	var r *configReloader
+	var notified error
+	notifyCalls := 0
+	r = &configReloader{
+		reload: func() error {
+			if r.mu.TryLock() {
+				r.mu.Unlock()
+				t.Error("reload ran without holding mu")
+			}
+			return fmt.Errorf("boom")
+		},
+		notifyReload: func(cfg Config, err error) {
+			notifyCalls++
+			notified = err
+			if !r.mu.TryLock() {
+				t.Error("notifyReload ran while mu was held")
+			} else {
+				r.mu.Unlock()
+			}
+		},
+	}
+
+	_ = r.reloadNow()
+
+	if notifyCalls != 1 || notified == nil {
+		t.Errorf("expected one failure notification, got %d (err %v)", notifyCalls, notified)
+	}
+}
+
+func TestConfigReloader_ReloadNow_CancelsPendingDebounce(t *testing.T) {
+	calls := 0
+	r := &configReloader{
+		reload:           func() error { calls++; return nil },
+		debounceInterval: 50 * time.Millisecond,
+	}
+
+	r.onWatchEvent(nil, nil) // schedules a debounced reload
+	if err := r.reloadNow(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	if calls != 1 {
+		t.Errorf("expected exactly one reload, got %d", calls)
+	}
+}
+
+func TestWatchCmd_ValidateConfigUpload(t *testing.T) {
+	tests := map[string]struct {
+		cmd     WatchCmd
+		wantErr string
+	}{
+		"off needs nothing": {WatchCmd{}, ""},
+		"on without a password": {
+			WatchCmd{ConfigUpload: true, ConfigUploadUser: "admin", PrivateListen: "8080", PublicListen: "9090"},
+			"--config-upload-password",
+		},
+		"on without a private listener": {
+			WatchCmd{ConfigUpload: true, ConfigUploadUser: "admin", ConfigUploadPassword: "x", PublicListen: "9090"},
+			"--private-listen",
+		},
+		"on with a single listener": {
+			WatchCmd{ConfigUpload: true, ConfigUploadUser: "admin", ConfigUploadPassword: "x", PrivateListen: "8080"},
+			"--public-listen",
+		},
+		"on without a user": {
+			WatchCmd{ConfigUpload: true, ConfigUploadPassword: "x", PrivateListen: "8080", PublicListen: "9090"},
+			"--config-upload-user",
+		},
+		"fully set": {
+			WatchCmd{ConfigUpload: true, ConfigUploadUser: "admin", ConfigUploadPassword: "x", PrivateListen: "8080", PublicListen: "9090"},
+			"",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			err := tc.cmd.validateConfigUpload()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error %v does not mention %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestWatchCmd_ConfigUploadFlagsReadEnvironment(t *testing.T) {
+	t.Setenv("CONFIG_UPLOAD", "true")
+	t.Setenv("CONFIG_UPLOAD_USER", "bob")
+	t.Setenv("CONFIG_UPLOAD_PASSWORD", "hunter2")
+
+	var cli CLI
+	parser, err := kong.New(&cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"watch"}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := cli.Watch
+	if !w.ConfigUpload || w.ConfigUploadUser != "bob" || w.ConfigUploadPassword != "hunter2" {
+		t.Errorf("env not applied: %+v", w)
+	}
+}
+
+func TestWatchCmd_ConfigUploadUserDefaultsToAdmin(t *testing.T) {
+	var cli CLI
+	parser, err := kong.New(&cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"watch"}); err != nil {
+		t.Fatal(err)
+	}
+	if cli.Watch.ConfigUploadUser != "admin" || cli.Watch.ConfigUpload {
+		t.Errorf("unexpected defaults: %+v", cli.Watch)
+	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -30,6 +31,32 @@ type WatchCmd struct {
 	PublicListen    string   `kong:"help='Address to serve /cancel, /start, and /healthz on (host:port or bare port); splits listeners so history stays on the private listener'"`
 	TorrentCacheDir string   `kong:"help='Directory to cache fetched .torrent files across runs'"`
 	AccessLog       string   `kong:"help='Path to append-mode HTTP access log for fail2ban integration (disabled if empty)'"`
+
+	ConfigUpload         bool   `kong:"env='CONFIG_UPLOAD',help='Serve a /config page on the private listener to upload a new config file (requires --private-listen, --public-listen and a password)'"`
+	ConfigUploadUser     string `kong:"env='CONFIG_UPLOAD_USER',default='admin',help='HTTP Basic user for the /config page'"`
+	ConfigUploadPassword string `kong:"env='CONFIG_UPLOAD_PASSWORD',help='HTTP Basic password for the /config page'"`
+}
+
+// validateConfigUpload checks the --config-upload flags. The upload page can
+// replace credentials and the Transmission URL, so it never starts without a
+// password, and never on a port that also serves the public routes.
+func (cmd *WatchCmd) validateConfigUpload() error {
+	if !cmd.ConfigUpload {
+		return nil
+	}
+	if cmd.ConfigUploadPassword == "" {
+		return errors.New("--config-upload needs --config-upload-password")
+	}
+	if cmd.ConfigUploadUser == "" {
+		return errors.New("--config-upload needs --config-upload-user")
+	}
+	if cmd.PrivateListen == "" {
+		return errors.New("--config-upload needs --private-listen")
+	}
+	if cmd.PublicListen == "" {
+		return errors.New("--config-upload needs --public-listen, so the page is not on the public port")
+	}
+	return nil
 }
 
 // warnNotifyFeedsWithoutHistory logs a startup warning for each feed configured
@@ -194,6 +221,35 @@ func (r *configReloader) doReload() {
 	}
 }
 
+// reloadNow reloads the config at once and returns the error, for a caller
+// (the web upload) that must report the result. It bumps debounceGen first, so
+// a debounced reload that the file write itself triggered does not run a
+// second time.
+func (r *configReloader) reloadNow() error {
+	r.debounceMu.Lock()
+	r.debounceGen++
+	r.debounceMu.Unlock()
+
+	var cfg Config
+	err := func() error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
+		log.Infof("config uploaded. reloading...")
+		err := r.reload()
+		cfg = r.currentConfig()
+		return err
+	}()
+
+	if err != nil {
+		log.WithError(err).Errorf("failed to reload uploaded config file")
+	}
+	if r.notifyReload != nil {
+		r.notifyReload(cfg, err)
+	}
+	return err
+}
+
 // currentConfig is the config in effect, or a zero one when no source was
 // wired. The caller must hold mu.
 func (r *configReloader) currentConfig() Config {
@@ -265,6 +321,10 @@ type liveState struct {
 	// getter has to be able to answer nil rather than a func that always says
 	// "unknown".
 	ExitIP func() exitIPFunc
+	// ConfigPath and ReloadNow serve the config upload page. ConfigPath is the
+	// file the program reads, and ReloadNow applies it and returns the error.
+	ConfigPath func() string
+	ReloadNow  func() error
 }
 
 // stopTorrents pauses the given torrents in Transmission rather than removing
@@ -302,6 +362,7 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, pauseT paus
 			c := ntfyCfg()
 			return ntfyTopicURL(c.BaseURL, c.AlertTopic) != ""
 		},
+		Config: func() bool { return cmd.ConfigUpload },
 	}
 
 	if cmd.PublicListen != "" {
@@ -330,6 +391,14 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, pauseT paus
 			registerSpeedRoutes(privMux, live.Speed, ctx.PeerPortOpen, ctx.PeerPort, live.ExitIP, live.Actions, nav)
 			registerTransmissionRoutes(privMux, tx, nav)
 			registerNtfyRoutes(privMux, ntfyCfg, nav)
+			if cmd.ConfigUpload {
+				registerConfigRoutes(privMux, configUploadDeps{
+					Path:     live.ConfigPath,
+					User:     cmd.ConfigUploadUser,
+					Password: cmd.ConfigUploadPassword,
+					Reload:   live.ReloadNow,
+				}, nav)
+			}
 			go startWebServer("private", privMux, histAddr)
 		}
 	} else if cmd.PrivateListen != "" {
@@ -379,6 +448,10 @@ func newConfigReloader(ctx *RunContext) *configReloader {
 }
 
 func (cmd *WatchCmd) Run(ctx *RunContext) error {
+	if err := cmd.validateConfigUpload(); err != nil {
+		return err
+	}
+
 	reloader := newConfigReloader(ctx)
 	_ = reloader.registerWatch(reloader.onWatchEvent)
 
@@ -485,7 +558,9 @@ func (cmd *WatchCmd) Run(ctx *RunContext) error {
 	// The accessors the web handlers read through. Each takes the reload lock,
 	// so a request always sees a fully applied config.
 	live := liveState{
-		Config: func() Config { return reloader.liveConfig(ctx) },
+		Config:     func() Config { return reloader.liveConfig(ctx) },
+		ConfigPath: func() string { return GetPath(ctx.configFile) },
+		ReloadNow:  reloader.reloadNow,
 		Speed: func() *SpeedFile {
 			reloader.mu.Lock()
 			defer reloader.mu.Unlock()

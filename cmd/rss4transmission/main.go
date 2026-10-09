@@ -279,10 +279,8 @@ func GetPath(path string) string {
 }
 
 func (rc *RunContext) loadConfig(configFile string) error {
-	konf := koanf.New(".")
-
-	// load our defaults
-	if err := konf.Load(confmap.Provider(ConfigDefaults, "."), nil); err != nil {
+	konf, err := newDefaultKoanf()
+	if err != nil {
 		log.WithError(err).Fatalf("Unable to load defaults")
 	}
 
@@ -298,29 +296,75 @@ func (rc *RunContext) loadConfig(configFile string) error {
 		return err
 	}
 
-	var cfg Config
-	if err := konf.Unmarshal("", &cfg); err != nil {
+	cfg, err := parseConfig(konf)
+	if err != nil {
 		return err
 	}
 
+	// Only commit the newly parsed config once every check has passed, so a
+	// bad reload (e.g. watch.go's live config-reload) leaves the previously
+	// running config fully intact instead of partially applied.
+	rc.Config = cfg
+
+	return nil
+}
+
+// validateConfigBytes runs every check loadConfig runs against raw YAML and
+// returns the parsed config. It has no side effect: the web upload uses it to
+// vet a file before the file replaces the running one.
+func validateConfigBytes(data []byte) (Config, error) {
+	konf, err := newDefaultKoanf()
+	if err != nil {
+		return Config{}, err
+	}
+
+	raw, err := yaml.Parser().Unmarshal(data)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid YAML: %w", err)
+	}
+	if err := konf.Load(confmap.Provider(raw, "."), nil); err != nil {
+		return Config{}, err
+	}
+
+	return parseConfig(konf)
+}
+
+// newDefaultKoanf returns a koanf tree that holds only ConfigDefaults.
+func newDefaultKoanf() (*koanf.Koanf, error) {
+	konf := koanf.New(".")
+	if err := konf.Load(confmap.Provider(ConfigDefaults, "."), nil); err != nil {
+		return nil, err
+	}
+	return konf, nil
+}
+
+// parseConfig unmarshals a loaded koanf tree into a Config and validates it.
+// Every check lives here so that loadConfig and validateConfigBytes cannot
+// drift apart.
+func parseConfig(konf *koanf.Koanf) (Config, error) {
+	var cfg Config
+	if err := konf.Unmarshal("", &cfg); err != nil {
+		return Config{}, err
+	}
+
 	if err := cfg.Ntfy.Validate(); err != nil {
-		return fmt.Errorf("invalid ntfy template: %w", err)
+		return Config{}, fmt.Errorf("invalid ntfy template: %w", err)
 	}
 
 	if err := cfg.SpeedTest.Validate(); err != nil {
-		return fmt.Errorf("invalid SpeedTest configuration: %w", err)
+		return Config{}, fmt.Errorf("invalid SpeedTest configuration: %w", err)
 	}
 
 	if err := cfg.TorrentComplete.Validate(); err != nil {
-		return fmt.Errorf("invalid TorrentComplete configuration: %w", err)
+		return Config{}, fmt.Errorf("invalid TorrentComplete configuration: %w", err)
 	}
 
 	if err := cfg.Transmission.Validate(); err != nil {
-		return fmt.Errorf("invalid Transmission configuration: %w", err)
+		return Config{}, fmt.Errorf("invalid Transmission configuration: %w", err)
 	}
 
 	if err := cfg.Gluetun.Validate(); err != nil {
-		return fmt.Errorf("invalid Gluetun configuration: %w", err)
+		return Config{}, fmt.Errorf("invalid Gluetun configuration: %w", err)
 	}
 
 	// Compiling the extractors here does double duty: it rejects a bad Regexp
@@ -329,28 +373,23 @@ func (rc *RunContext) loadConfig(configFile string) error {
 	// to another goroutine cannot race on the lazy compile.
 	for name, es := range cfg.Extractors {
 		if err := es.Compile(); err != nil {
-			return fmt.Errorf("invalid extractor %q: %w", name, err)
+			return Config{}, fmt.Errorf("invalid extractor %q: %w", name, err)
 		}
 	}
 
 	if err := validateFeedNames(cfg.Feeds); err != nil {
-		return fmt.Errorf("invalid feed configuration: %w", err)
+		return Config{}, fmt.Errorf("invalid feed configuration: %w", err)
 	}
 
 	for i := range cfg.Feeds {
 		feedCfg := &cfg.Feeds[i]
 		if err := feedCfg.Validate(feedCfg.Name, cfg.Extractors); err != nil {
-			return fmt.Errorf("invalid feed %q config: %w", feedCfg.Name, err)
+			return Config{}, fmt.Errorf("invalid feed %q config: %w", feedCfg.Name, err)
 		}
 		if err := feedCfg.Compile(); err != nil {
-			return fmt.Errorf("invalid feed %q config: %w", feedCfg.Name, err)
+			return Config{}, fmt.Errorf("invalid feed %q config: %w", feedCfg.Name, err)
 		}
 	}
 
-	// Only commit the newly parsed config once every check above has passed,
-	// so a bad reload (e.g. watch.go's live config-reload) leaves the
-	// previously running config fully intact instead of partially applied.
-	rc.Config = cfg
-
-	return nil
+	return cfg, nil
 }

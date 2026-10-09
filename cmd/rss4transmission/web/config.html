@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <title>RSS4Transmission Config</title>
+    <style>
+        body { font-family: monospace; margin: 0; background: #1a1a1a; color: #e0e0e0; }
+        #nav { margin: 0; padding: 0.8em 1em; background: #2a2a2a; }
+        #nav a { color: #6aa8e0; text-decoration: underline; }
+        #nav .here { color: #e0e0e0; }
+        main { padding: 1em; max-width: 50em; }
+        #drop {
+            border: 2px dashed #666; border-radius: 6px; padding: 2.5em 1em;
+            text-align: center; cursor: pointer;
+        }
+        #drop.over { border-color: #6aa8e0; background: #222; }
+        button { margin-top: 1em; padding: 0.5em 1.2em; font-family: inherit; }
+        #result { margin-top: 1em; white-space: pre-wrap; padding: 0.8em; display: none; }
+        #result.ok { display: block; background: #1e3a1e; }
+        #result.err { display: block; background: #4a1e1e; }
+    </style>
+</head>
+<body>
+    {{ template "nav" "config" }}
+    <main>
+        <h2>Upload config.yaml</h2>
+        <p>The program checks the file first. If a check fails, the running config stays in place.</p>
+        <div id="drop" tabindex="0">Drop config.yaml here or click to choose a file.</div>
+        <input id="picker" type="file" accept=".yaml,.yml,text/yaml,text/plain" hidden>
+        <p id="chosen"></p>
+        <button id="send" disabled>Upload and apply</button>
+        <div id="result" role="status" aria-live="polite"></div>
+    </main>
+    <script>
+        (function () {
+            var drop = document.getElementById('drop');
+            var picker = document.getElementById('picker');
+            var send = document.getElementById('send');
+            var chosen = document.getElementById('chosen');
+            var result = document.getElementById('result');
+            var file = null;
+
+            function show(cls, text) {
+                result.className = cls;
+                result.textContent = text;
+            }
+            function pick(f) {
+                file = f;
+                chosen.textContent = f ? f.name + ' (' + f.size + ' bytes)' : '';
+                send.disabled = !f;
+                result.className = '';
+            }
+
+            drop.addEventListener('click', function () { picker.click(); });
+            drop.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); picker.click(); }
+            });
+            picker.addEventListener('change', function () { pick(picker.files[0] || null); });
+            ['dragenter', 'dragover'].forEach(function (n) {
+                drop.addEventListener(n, function (e) { e.preventDefault(); drop.classList.add('over'); });
+            });
+            ['dragleave', 'drop'].forEach(function (n) {
+                drop.addEventListener(n, function (e) { e.preventDefault(); drop.classList.remove('over'); });
+            });
+            drop.addEventListener('drop', function (e) {
+                pick(e.dataTransfer.files[0] || null);
+            });
+
+            send.addEventListener('click', function () {
+                if (!file) { return; }
+                var form = new FormData();
+                form.append('file', file);
+                send.disabled = true;
+                show('', '');
+                fetch('/config', { method: 'POST', body: form, credentials: 'same-origin' })
+                    .then(function (resp) {
+                        return resp.json().then(function (j) { return { status: resp.status, body: j }; });
+                    })
+                    .then(function (r) {
+                        if (r.body.ok) {
+                            show('ok', 'Config applied.');
+                        } else {
+                            show('err', r.body.error || ('Upload failed (HTTP ' + r.status + ').'));
+                        }
+                    })
+                    .catch(function (err) { show('err', 'Upload failed: ' + err); })
+                    .then(function () { send.disabled = !file; });
+            });
+        })();
+    </script>
+</body>
+</html>

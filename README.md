@@ -70,6 +70,8 @@ Pre-built images are available on [DockerHub](https://hub.docker.com/r/synfinati
 - **Live config reload** — `watch` re-reads the whole config file when you save it and applies
   every setting to the running process. A bad edit is rejected, and the previous config keeps
   running
+- **Config upload page** — an optional `/config` page on the private listener. Drop a new
+  `config.yaml` on it. The program checks the file, applies it, and shows any error in the page
 
 ## Live config reload
 
@@ -99,6 +101,49 @@ process:
 - `--sleep`, `--torrent-cache-dir`, and `--feed`
 - `--download` and `--download-path`
 - `--seen-file`, which pins the cache path and overrides `SeenFile` in the config file
+
+## Upload a config file from the web page
+
+The private listener can serve a `/config` page. On this page you drop a new `config.yaml` in the
+browser. You do not copy the file to the host with `sftp` or `scp`.
+
+The page is off by default. A config upload can change the Transmission URL and every password, so
+the page needs a login. To turn it on, set these `watch` flags:
+
+- `--config-upload` (env `CONFIG_UPLOAD`) turns the page on
+- `--config-upload-user` (env `CONFIG_UPLOAD_USER`) is the HTTP Basic user. The default is `admin`
+- `--config-upload-password` (env `CONFIG_UPLOAD_PASSWORD`) is the HTTP Basic password
+
+The flags have these rules:
+
+- `--config-upload-password` is required. Set it with the environment variable, so that the
+  password does not show in the process list.
+- `--private-listen` and `--public-listen` are both required. The page is served on the private
+  listener only. `watch` does not start if the page would share a port with the public routes.
+- The password is not in the config file. A bad upload cannot lock you out.
+
+When you upload a file, `watch` does these steps:
+
+1. It checks the file with the same checks as a config reload. If a check fails, the page shows
+   the error. The running config and the file on disk do not change.
+2. It copies the old file to `config.yaml.bak`.
+3. It writes the new file next to the old one and renames it into place.
+4. It reloads the config. If the reload fails, it puts the old file back and shows the error.
+
+A file larger than 1 MiB is rejected. The page does not show the running config, so no password
+leaves the program.
+
+`watch` replaces the file with a rename. Mount the directory that holds the config file in the
+container, not the single file. A single-file bind mount fails with "device or resource busy".
+
+The listener does not use TLS, and HTTP Basic sends the password in clear text. Use a trusted
+network or a reverse proxy that adds TLS.
+
+You can also upload from a script:
+
+```bash
+curl -u admin:"$CONFIG_UPLOAD_PASSWORD" -F file=@config.yaml http://localhost:8080/config
+```
 
 ## Documentation
 

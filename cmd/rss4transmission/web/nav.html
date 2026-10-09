@@ -33,5 +33,10 @@
         {{- if eq . "alerts" }} <span class="here">Alerts</span>
         {{- else }} <a href="/alerts">Alerts</a>{{ end }}
         {{- end }}
+        {{- if configEnabled }}
+        &middot;
+        {{- if eq . "config" }} <span class="here">Config</span>
+        {{- else }} <a href="/config">Config</a>{{ end }}
+        {{- end }}
     </p>
 {{- end -}}
