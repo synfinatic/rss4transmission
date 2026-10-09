@@ -274,3 +274,37 @@ func TestExtractFromFiles_DefaultDoesNotAffectFileSkip(t *testing.T) {
 		t.Errorf("expected 1 label set (subtitle skipped), got %d", len(got))
 	}
 }
+
+// TestExtractLabels_PracticeSessionsStayDistinct checks that FP1, FP2 and FP
+// never collapse to one label. The Regexp must capture the .One/.Two suffix,
+// because Normalize runs on the captured text only.
+func TestExtractLabels_PracticeSessionsStayDistinct(t *testing.T) {
+	es := &ExtractorSet{
+		Labels: map[string]LabelDef{
+			"session": {
+				Regexp: `(?i)\.(Sprint(?:\.?Race)?|Qual\w*|FP[12]?|(?:Free\.?)?Practice(?:\.(?:One|Two))?|Race)\.`,
+				Normalize: map[string]string{
+					`(?i)Qual\w*`:                       "Qualifying",
+					`(?i)Sprint(\.?Race)?`:              "Sprint",
+					`(?i)^(Free\.?)?Practice$`:          "FP",
+					`(?i)^(Free\.?)?Practice\.(One|1)$`: "FP1",
+					`(?i)^(Free\.?)?Practice\.(Two|2)$`: "FP2",
+				},
+			},
+		},
+	}
+	tests := map[string]string{
+		"MotoGP.2026.Round17.Indonesia.FP1.WEB-DL.1080p.H264.English-MWR":      "FP1",
+		"MotoGP.2026.Round17.Indonesia.FP2.WEB-DL.1080p.H264.English-MWR":      "FP2",
+		"MotoGP.2026.Round17.Indonesia.Practice.WEB-DL.1080p.H264.English-MWR": "FP",
+		"MotoGP.2026.Indonesia.Free.Practice.One.1080p.WEB.h264-BILLIE.mkv":    "FP1",
+		"MotoGP.2026.Indonesia.Free.Practice.Two.1080p.WEB.h264-BILLIE.mkv":    "FP2",
+		"MotoGP.2026.Indonesia.Free.Practice.1080p.WEB.h264-BILLIE.mkv":        "FP",
+	}
+	for name, want := range tests {
+		got := es.ExtractLabels(name)["session"]
+		if got != want {
+			t.Errorf("%q: session = %q, want %q", name, got, want)
+		}
+	}
+}
