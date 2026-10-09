@@ -26,6 +26,10 @@ services:
       - PRIVATE_LISTEN=     # host:port or bare port — enables history UI (private/internal)
       - PUBLIC_LISTEN=      # public-facing /cancel, /start, and /healthz only
       - TORRENT_CACHE_DIR=  # directory to cache .torrent files (e.g. /config/torrent-cache)
+      # Optional /config upload page. Needs PRIVATE_LISTEN and PUBLIC_LISTEN. See the README.
+      # - CONFIG_UPLOAD=true
+      # - CONFIG_UPLOAD_USER=admin
+      # - CONFIG_UPLOAD_PASSWORD=change-me
     volumes:
       - /volume1/docker/transmission/rss4transmission:/config
     # Option A — Traefik routes /cancel and /healthz externally (PUBLIC_LISTEN not needed):

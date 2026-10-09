@@ -9,6 +9,13 @@
 
 ### New features
 
+**Config upload page**
+
+- Added the `--config-upload`, `--config-upload-user`, and `--config-upload-password` flags to the
+  `watch` command (env `CONFIG_UPLOAD`, `CONFIG_UPLOAD_USER`, `CONFIG_UPLOAD_PASSWORD`). They turn
+  on a `/config` page on the private listener. The page takes a dropped `config.yaml`, validates
+  it, applies it, and shows any error. HTTP Basic auth guards the page.
+
 **Label-based feed selection**
 
 - Added top-level `Extractors` config block. Each extractor set maps label names to a single-capture

@@ -872,3 +872,75 @@ func TestLoadConfig_TorrentCompletePollInterval(t *testing.T) {
 		t.Fatal("loadConfig with an unparseable TorrentComplete.PollInterval returned nil error")
 	}
 }
+
+func TestValidateConfigBytes_Valid(t *testing.T) {
+	cfg, err := validateConfigBytes([]byte(validExtractorYAML + `
+Feeds:
+  - Name: Aaa
+    URL: https://example.com/a
+    Extractor: demo
+    Identity: [series]
+    Groups:
+      - Require:
+          series: [X]
+`))
+	if err != nil {
+		t.Fatalf("validateConfigBytes failed: %v", err)
+	}
+	if len(cfg.Feeds) != 1 || cfg.Feeds[0].Name != "Aaa" {
+		t.Errorf("unexpected feeds: %+v", cfg.Feeds)
+	}
+}
+
+func TestValidateConfigBytes_Rejects(t *testing.T) {
+	tests := map[string]struct {
+		yaml string
+		want string
+	}{
+		"bad yaml": {"Feeds: [unclosed", ""},
+		"duplicate feed names": {`
+Feeds:
+  - Name: Dup
+    URL: https://example.com/a
+  - Name: Dup
+    URL: https://example.com/b
+`, "invalid feed configuration"},
+		"unknown extractor": {`
+Feeds:
+  - Name: Aaa
+    URL: https://example.com/a
+    Extractor: missing
+    Identity: [series]
+`, `invalid feed "Aaa" config`},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := validateConfigBytes([]byte(tc.yaml)); err == nil {
+				t.Fatal("expected an error")
+			} else if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateConfigBytes_NoSideEffects(t *testing.T) {
+	// validateConfigBytes has no RunContext, so a valid upload cannot touch the
+	// running config. loadConfig must still agree with it on the same input.
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte(validExtractorYAML), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rc := &RunContext{}
+	if err := rc.loadConfig(cfgPath); err != nil {
+		t.Fatalf("loadConfig failed: %v", err)
+	}
+	got, err := validateConfigBytes([]byte(validExtractorYAML))
+	if err != nil {
+		t.Fatalf("validateConfigBytes failed: %v", err)
+	}
+	if len(got.Extractors) != len(rc.Config.Extractors) {
+		t.Errorf("extractors differ: %d vs %d", len(got.Extractors), len(rc.Config.Extractors))
+	}
+}

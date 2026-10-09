@@ -20,6 +20,10 @@ services:
       - POLL_SECONDS=120
       - LOG_LEVEL=info
       - HISTORY_FILE=       # path to history JSON file (e.g. /config/history.json)
+      # Optional /config upload page (needs PRIVATE_LISTEN and PUBLIC_LISTEN; see the README):
+      # - CONFIG_UPLOAD=true
+      # - CONFIG_UPLOAD_USER=admin
+      # - CONFIG_UPLOAD_PASSWORD=change-me
       - PRIVATE_LISTEN=     # set to host:port or bare port to enable the history web UI (private)
       - PUBLIC_LISTEN=      # public-facing /cancel, /start, and /healthz only (e.g. 0.0.0.0:8080)
                             # port-forward from your firewall/NAS to this port

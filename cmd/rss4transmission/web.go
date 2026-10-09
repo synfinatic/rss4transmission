@@ -57,6 +57,7 @@ type navConfig struct {
 	Transmission  func() bool
 	Notifications func() bool
 	Alerts        func() bool
+	Config        func() bool
 }
 
 // navFuncs returns the FuncMap entries that web/nav.html needs. Every template
@@ -68,6 +69,7 @@ func (n navConfig) navFuncs() template.FuncMap {
 		"transmissionEnabled":  func() bool { return n.Transmission != nil && n.Transmission() },
 		"notificationsEnabled": func() bool { return n.Notifications != nil && n.Notifications() },
 		"alertsEnabled":        func() bool { return n.Alerts != nil && n.Alerts() },
+		"configEnabled":        func() bool { return n.Config != nil && n.Config() },
 	}
 }
 

@@ -67,9 +67,11 @@ go run ./cmd/rss4transmission/... watch --help
 All code lives in `cmd/rss4transmission/` as a single `main` package. There are no sub-packages.
 
 **Entry point & wiring (`main.go`)**: Parses CLI with `kong`, loads config via `koanf`, opens the
-seen-cache, creates the `transmissionrpc.Client`, then delegates to a subcommand. `loadConfig` does
-all validation — ntfy templates, `SpeedTest`, `Transmission`, `Gluetun`, extractors, and feeds — and
-assigns `rc.Config` only after every check passes, so a bad reload leaves the running config intact.
+seen-cache, creates the `transmissionrpc.Client`, then delegates to a subcommand. `loadConfig`
+reads the file and `validateConfigBytes` reads raw bytes (the upload page uses it). Both call
+`parseConfig`, which does all validation — ntfy templates, `SpeedTest`, `Transmission`, `Gluetun`,
+extractors, and feeds. `loadConfig` assigns `rc.Config` only after every check passes, so a bad
+reload leaves the running config intact.
 `RunContext` is threaded through every command and holds the live config, the cache, the long-lived
 `watch` components, and the Transmission client. It does not keep the `koanf` tree: `rc.Config` is
 the single source of truth. Read the RPC client through `rc.Tx()`, never from a captured field — a
@@ -138,7 +140,13 @@ Transmission page frames the Transmission web client, served through the `/trans
 proxy in the same file: the proxy injects the configured Basic auth and strips `X-Frame-Options`
 and CSP `frame-ancestors` from responses.
 
-All four pages share the nav bar in `web/nav.html`, a `{{ define "nav" }}` partial parsed into each
+A fifth page, `/config` (`configweb.go`, `web/config.html`), uploads a new config file. It exists
+only when `--config-upload` is on, and only on the private listener in split-listener mode. HTTP
+Basic auth guards it, `POST` refuses a cross-origin request, and the body is capped. The handler
+runs `validateConfigBytes`, writes the file with a rename, keeps `<config>.bak`, and calls
+`configReloader.reloadNow`. If the reload fails, it restores the old file and reloads again.
+
+All pages share the nav bar in `web/nav.html`, a `{{ define "nav" }}` partial parsed into each
 page's template set and given the current page name as its dot. It needs the funcs that
 `navConfig.navFuncs()` (`web.go`) returns in that set's FuncMap, so every template set that parses
 `navTmpl` must merge them in.
