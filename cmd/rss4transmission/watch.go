@@ -10,6 +10,7 @@ import (
 
 	"github.com/hekmon/transmissionrpc/v3"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const defaultRetryInterval = 60 * time.Second
@@ -32,23 +33,33 @@ type WatchCmd struct {
 	TorrentCacheDir string   `kong:"help='Directory to cache fetched .torrent files across runs'"`
 	AccessLog       string   `kong:"help='Path to append-mode HTTP access log for fail2ban integration (disabled if empty)'"`
 
-	ConfigUpload         bool   `kong:"env='CONFIG_UPLOAD',help='Serve a /config page on the private listener to upload a new config file (requires --private-listen, --public-listen and a password)'"`
-	ConfigUploadUser     string `kong:"env='CONFIG_UPLOAD_USER',default='admin',help='HTTP Basic user for the /config page'"`
-	ConfigUploadPassword string `kong:"env='CONFIG_UPLOAD_PASSWORD',help='HTTP Basic password for the /config page'"`
+	ConfigUpload string `kong:"env='CONFIG_UPLOAD',help='Serve a /config page on the private listener to upload a new config file. The value is the login as user:bcrypt-hash, the output of htpasswd -nbB (requires --private-listen and --public-listen; disabled if empty)'"`
 }
 
-// validateConfigUpload checks the --config-upload flags. The upload page can
+// parseConfigUpload splits the --config-upload value, which is the output of
+// `htpasswd -nbB user password`, into the user and the bcrypt hash.
+func parseConfigUpload(value string) (user, hash string, err error) {
+	user, hash, found := strings.Cut(strings.TrimSpace(value), ":")
+	if !found || user == "" {
+		return "", "", errors.New("--config-upload must be user:hash, " +
+			"for example from: htpasswd -nbB admin 'password'")
+	}
+	if _, err := bcrypt.Cost([]byte(hash)); err != nil {
+		return "", "", errors.New("--config-upload needs a bcrypt hash after the colon, " +
+			"for example from: htpasswd -nbB admin 'password'")
+	}
+	return user, hash, nil
+}
+
+// validateConfigUpload checks the --config-upload flag. The upload page can
 // replace credentials and the Transmission URL, so it never starts without a
-// password, and never on a port that also serves the public routes.
+// login, and never on a port that also serves the public routes.
 func (cmd *WatchCmd) validateConfigUpload() error {
-	if !cmd.ConfigUpload {
+	if cmd.ConfigUpload == "" {
 		return nil
 	}
-	if cmd.ConfigUploadPassword == "" {
-		return errors.New("--config-upload needs --config-upload-password")
-	}
-	if cmd.ConfigUploadUser == "" {
-		return errors.New("--config-upload needs --config-upload-user")
+	if _, _, err := parseConfigUpload(cmd.ConfigUpload); err != nil {
+		return err
 	}
 	if cmd.PrivateListen == "" {
 		return errors.New("--config-upload needs --private-listen")
@@ -362,7 +373,7 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, pauseT paus
 			c := ntfyCfg()
 			return ntfyTopicURL(c.BaseURL, c.AlertTopic) != ""
 		},
-		Config: func() bool { return cmd.ConfigUpload },
+		Config: func() bool { return cmd.ConfigUpload != "" },
 	}
 
 	if cmd.PublicListen != "" {
@@ -391,12 +402,13 @@ func setupWebServers(cmd *WatchCmd, ctx *RunContext, live liveState, pauseT paus
 			registerSpeedRoutes(privMux, live.Speed, ctx.PeerPortOpen, ctx.PeerPort, live.ExitIP, live.Actions, nav)
 			registerTransmissionRoutes(privMux, tx, nav)
 			registerNtfyRoutes(privMux, ntfyCfg, nav)
-			if cmd.ConfigUpload {
+			if cmd.ConfigUpload != "" {
+				user, hash, _ := parseConfigUpload(cmd.ConfigUpload) // checked by validateConfigUpload
 				registerConfigRoutes(privMux, configUploadDeps{
-					Path:     live.ConfigPath,
-					User:     cmd.ConfigUploadUser,
-					Password: cmd.ConfigUploadPassword,
-					Reload:   live.ReloadNow,
+					Path:         live.ConfigPath,
+					User:         user,
+					PasswordHash: hash,
+					Reload:       live.ReloadNow,
 				}, nav)
 			}
 			go startWebServer("private", privMux, histAddr)
