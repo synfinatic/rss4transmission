@@ -69,6 +69,8 @@ func registerConfigRoutes(mux *http.ServeMux, deps configUploadDeps, nav navConf
 	tmpl := template.Must(template.Must(
 		template.New("config").Funcs(pageNav.navFuncs()).Parse(navTmpl)).Parse(configTmpl))
 
+	log.Infof("Config upload page enabled at /config on the private listener (user %q)", deps.User)
+
 	var uploadMu sync.Mutex
 
 	mux.HandleFunc("GET /config", basicAuth(deps, func(w http.ResponseWriter, r *http.Request) {

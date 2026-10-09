@@ -333,3 +333,17 @@ func TestBasicAuth_BadHashRefusesEveryone(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
+
+func TestRegisterConfigRoutes_LogsThatThePageIsOn(t *testing.T) {
+	origLog := log
+	defer func() { log = origLog }()
+	lg, buf := makeTestAccessLogger()
+	log = lg
+
+	newUploadFixture(t)
+
+	out := buf.String()
+	assert.Contains(t, out, "/config")
+	assert.Contains(t, out, uploadUser)
+	assert.NotContains(t, out, "$2", "the log must not show the password hash")
+}

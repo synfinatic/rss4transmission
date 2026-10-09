@@ -13,6 +13,7 @@ services:
       # Optional /config upload page (needs PRIVATE_LISTEN and PUBLIC_LISTEN; see the README):
       # user:bcrypt-hash from: htpasswd -nbB admin PASSWORD
       # Write each $ as $$ here, because Compose reads $ as a variable mark.
+      # Do not quote the value. Check it with: docker compose config
       # - CONFIG_UPLOAD=admin:$$2y$$10$$wfFHZcmVYq8JBjNVSJBjgOtUFD0hyQV/vh/JLi/TbvTOlzqg0V8se
       - PRIVATE_LISTEN=     # host:port or bare port — enables history UI (private/internal listener)
       - PUBLIC_LISTEN=      # host:port or bare port — public-facing /cancel, /start, and /healthz only.

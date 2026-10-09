@@ -130,7 +130,11 @@ The flag has these rules:
 - The login is not in the config file. A bad upload cannot lock you out.
 - bcrypt reads only the first 72 bytes of a password.
 - Docker Compose reads `$` as a variable mark. In `docker-compose.yaml`, write each `$` of the
-  value as `$$`.
+  value as `$$`, and do not put quotes around the value. In the list form (`- KEY=value`), Compose
+  keeps the quotes as part of the value. To check the result, run `docker compose config` and look
+  at the `CONFIG_UPLOAD` line. It must show single `$` marks.
+- If `watch` stops with "needs a bcrypt hash", the cause is usually a `$` that Compose replaced
+  or a quote that Compose kept.
 
 When you upload a file, `watch` does these steps:
 

@@ -29,6 +29,7 @@ services:
       # Optional /config upload page. Needs PRIVATE_LISTEN and PUBLIC_LISTEN. See the README.
       # user:bcrypt-hash from: htpasswd -nbB admin PASSWORD
       # Write each $ as $$ here, because Compose reads $ as a variable mark.
+      # Do not quote the value. Check it with: docker compose config
       # - CONFIG_UPLOAD=admin:$$2y$$10$$wfFHZcmVYq8JBjNVSJBjgOtUFD0hyQV/vh/JLi/TbvTOlzqg0V8se
     volumes:
       - /volume1/docker/transmission/rss4transmission:/config
