@@ -19,7 +19,6 @@ package main
  */
 
 import (
-	"crypto/sha256"
 	"crypto/subtle"
 	_ "embed"
 	"encoding/json"
@@ -105,24 +104,35 @@ func registerConfigRoutes(mux *http.ServeMux, deps configUploadDeps, nav navConf
 	}))
 }
 
-// basicAuth wraps next in an HTTP Basic check. It compares SHA-256 digests so
-// that the comparison time does not depend on the length of the input.
+// basicAuth wraps next in an HTTP Basic check. The credentials are compared in
+// constant time and nothing is hashed: the password is held in memory only,
+// so there is no stored value to protect with a slow hash.
 func basicAuth(deps configUploadDeps, next http.HandlerFunc) http.HandlerFunc {
-	wantUser := sha256.Sum256([]byte(deps.User))
-	wantPass := sha256.Sum256([]byte(deps.Password))
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()
-		gotUser := sha256.Sum256([]byte(user))
-		gotPass := sha256.Sum256([]byte(pass))
-		userOK := subtle.ConstantTimeCompare(gotUser[:], wantUser[:])
-		passOK := subtle.ConstantTimeCompare(gotPass[:], wantPass[:])
-		if !ok || userOK&passOK != 1 {
+		// Evaluate both comparisons, so the time does not tell which one failed.
+		userOK := secureEqual(user, deps.User)
+		passOK := secureEqual(pass, deps.Password)
+		if !ok || !userOK || !passOK {
 			w.Header().Set("WWW-Authenticate", `Basic realm="rss4transmission config", charset="UTF-8"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		next(w, r)
 	}
+}
+
+// secureEqual compares two strings in constant time. Both are padded to the
+// longer length first, because subtle.ConstantTimeCompare returns at once when
+// the lengths differ, and that would leak the length of the secret.
+func secureEqual(a, b string) bool {
+	n := max(len(a), len(b))
+	pa := make([]byte, n)
+	pb := make([]byte, n)
+	copy(pa, a)
+	copy(pb, b)
+	sameLen := subtle.ConstantTimeEq(int32(len(a)), int32(len(b))) //nolint:gosec // G115: lengths are far below MaxInt32
+	return subtle.ConstantTimeCompare(pa, pb)&sameLen == 1
 }
 
 // sameOrigin reports whether a browser request came from this site. A request

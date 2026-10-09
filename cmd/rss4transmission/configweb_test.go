@@ -279,3 +279,23 @@ func TestConfigNav_LinkOnlyWhenEnabled(t *testing.T) {
 	_, body = getBody(t, mux, "/notifications")
 	assert.NotContains(t, navLine(t, body), "/config")
 }
+
+func TestSecureEqual(t *testing.T) {
+	tests := map[string]struct {
+		a, b string
+		want bool
+	}{
+		"equal":              {"s3cret", "s3cret", true},
+		"both empty":         {"", "", true},
+		"different":          {"s3cret", "s3creT", false},
+		"prefix of secret":   {"s3cre", "s3cret", false},
+		"secret is a prefix": {"s3cretX", "s3cret", false},
+		"empty vs set":       {"", "s3cret", false},
+		"set vs empty":       {"s3cret", "", false},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, secureEqual(tc.a, tc.b))
+		})
+	}
+}
