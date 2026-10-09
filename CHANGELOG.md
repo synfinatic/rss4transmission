@@ -1,11 +1,13 @@
 # Changelog
 
-## v2.0.0 (unreleased)
+## v2.1.0
 
-### Breaking changes
+### Changes in behavior
 
-- **`Regexp` and `Categories` feed fields removed.** Replace them with the new label-based system
-  (`Extractor`, `Identity`, `Groups`, `Prefer`) described in the README.
+- **Cancel now pauses the torrent.** The `/cancel` confirmation page used to remove the torrent
+  from Transmission. It now pauses the torrent. The torrent and its data stay in Transmission, and
+  a user can resume the download later. The page text and the access log result (`paused`, not
+  `cancelled`) changed to match. If a script or log filter depends on the old text, update it.
 
 ### New features
 
@@ -14,7 +16,56 @@
 - Added the `--config-upload` flag to the `watch` command (env `CONFIG_UPLOAD`). Its value is the
   login as `user:hash`, the output of `htpasswd -nbB`. It turns on a `/config` page on the private
   listener. The page takes a dropped `config.yaml`, validates it, applies it, and shows any error.
-  HTTP Basic auth guards the page. The cleartext password is not stored.
+- The flag needs both `--private-listen` and `--public-listen`. The `watch` command refuses to
+  start without them, so the page is never on the public port.
+- HTTP Basic auth guards the page. The cleartext password is not stored. A `POST` from another
+  origin is refused, and the upload size is limited.
+- The program writes the new file with a rename and keeps the old file as `<config>.bak`. If the
+  reload fails, the program restores the old file and reloads it again.
+- In Docker Compose, write each `$` in the hash as `$$`. Do not quote the value. Both compose
+  files show an example.
+
+**Notifications and Alerts pages**
+
+- Added the `/notifications` and `/alerts` pages. Each page frames the ntfy web page for one topic
+  (`Ntfy.Topic` and `Ntfy.AlertTopic`). A page is on only when `Ntfy.BaseURL` and its own topic
+  are set. The nav bar shows the page links.
+- The browser loads the frame directly from the ntfy server. The ntfy server must not send
+  `X-Frame-Options` or a CSP `frame-ancestors` header that blocks framing.
+
+**Config warning**
+
+- A feed that lists the same label in both `Identity` and `Prefer` now logs a warning at startup.
+  The `Prefer` entry has no effect on that label, because all candidates for one identity key
+  share its value.
+
+### Bug fixes
+
+- Fixed: a `.torrent` file that bundles files for a sibling class (for example a support race in a
+  full-weekend pack) could overwrite the `class` label that won selection. The recorded and
+  displayed labels were then wrong. A file now changes the labels only if it matches a feed
+  `Groups` entry.
+
+### Other changes
+
+- The nav bar now shows above the page title, not below it.
+- The config checks now live in one function that `loadConfig` and the upload page both use, so
+  the two cannot differ.
+- Docs: described the `MinSize` and `MaxSize` format, and linked the history file pruning to
+  `SeenCacheDays`.
+- Added the project logo to the README.
+- Docker: the builder image is now `golang:1.27-alpine`.
+- Updated dependencies: `koanf/v2` 2.3.7, `gofeed` 1.5.0, `logrus` 1.10.2,
+  `speedtest-go` 1.8.3, and `testify` 1.12.1.
+
+## v2.0.0
+
+### Breaking changes
+
+- **`Regexp` and `Categories` feed fields removed.** Replace them with the new label-based system
+  (`Extractor`, `Identity`, `Groups`, `Prefer`) described in the README.
+
+### New features
 
 **Label-based feed selection**
 
@@ -35,10 +86,15 @@
 - Added `--history-file` flag to the `watch` command (env `HISTORY_FILE` in Docker). When set, every
   feed item outcome (dispatched, downloaded, skipped, excluded, error) is recorded with its feed name,
   title, labels, and timestamps. `HistoryFile` is no longer a config-file key.
-- Added `--history-listen` flag to the `watch` command (env `HISTORY_LISTEN` in Docker). Accepts a
+- Added `--private-listen` flag to the `watch` command (env `PRIVATE_LISTEN` in Docker). Accepts a
   bare port number (binds to `127.0.0.1`) or a full `host:port` / `[ipv6]:port` address. When set,
-  starts an HTTP server serving a browsable, reverse-chronological history page. Records are pruned
-  on the same schedule as the seen cache. Requires `--history-file`.
+  starts a private HTTP server serving a browsable, reverse-chronological history page. Records are
+  pruned on the same schedule as the seen cache. Without `--history-file`, the history page
+  answers 404.
+- Added `--public-listen` flag to the `watch` command (env `PUBLIC_LISTEN` in Docker). It starts a
+  separate public HTTP server for `/cancel`, `/start`, and `/healthz` only, so the history page
+  stays on the private listener. Without it, the private listener also serves `/cancel` and
+  `/start`.
 
 **`simulate` command**
 
@@ -70,10 +126,9 @@
 
 ### Other changes
 
-- The `/cancel` confirmation page now pauses the torrent in Transmission instead of removing it,
-  so a user can resume the download later.
 - Seen cache now tracks per-GUID error hold-downs to avoid spamming retries on transient failures.
-- Docker: `HISTORY_LISTEN` env var added to `Dockerfile` and both compose files (empty = disabled).
-  The gluetun compose file includes a commented `ports:` block to expose the history UI.
+- Docker: `PRIVATE_LISTEN` and `PUBLIC_LISTEN` env vars added to `Dockerfile` and both compose
+  files (empty = disabled). The gluetun compose file includes a commented `ports:` block to expose
+  the listener ports.
 - Makefile: added `make coverage` (atomic coverage report) and `make vulncheck` (`govulncheck`);
   `vulncheck` is now part of `make precheck`.
