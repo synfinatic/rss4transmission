@@ -108,19 +108,29 @@ The private listener can serve a `/config` page. On this page you drop a new `co
 browser. You do not copy the file to the host with `sftp` or `scp`.
 
 The page is off by default. A config upload can change the Transmission URL and every password, so
-the page needs a login. To turn it on, set these `watch` flags:
+the page needs a login. To turn it on, set the `watch` flag `--config-upload` (env
+`CONFIG_UPLOAD`). Its value is the login, in the format `user:hash`. The hash is a bcrypt hash of
+the password. The cleartext password is not stored anywhere.
 
-- `--config-upload` (env `CONFIG_UPLOAD`) turns the page on
-- `--config-upload-user` (env `CONFIG_UPLOAD_USER`) is the HTTP Basic user. The default is `admin`
-- `--config-upload-password` (env `CONFIG_UPLOAD_PASSWORD`) is the HTTP Basic password
+To make the value, run this command. `htpasswd` is in the `apache2-utils` or `httpd-tools` package.
 
-The flags have these rules:
+```bash
+htpasswd -nbB admin 'your-password'
+```
 
-- `--config-upload-password` is required. Set it with the environment variable, so that the
-  password does not show in the process list.
+The command prints a line like `admin:$2y$05$...`. Use that line as the value.
+
+The flag has these rules:
+
+- `--config-upload` must be `user:hash` with a bcrypt hash. `watch` does not start if the hash is
+  cleartext or another hash type.
+- Set the value with the environment variable, so that it does not show in the process list.
 - `--private-listen` and `--public-listen` are both required. The page is served on the private
   listener only. `watch` does not start if the page would share a port with the public routes.
-- The password is not in the config file. A bad upload cannot lock you out.
+- The login is not in the config file. A bad upload cannot lock you out.
+- bcrypt reads only the first 72 bytes of a password.
+- Docker Compose reads `$` as a variable mark. In `docker-compose.yaml`, write each `$` of the
+  value as `$$`.
 
 When you upload a file, `watch` does these steps:
 
@@ -139,10 +149,10 @@ container, not the single file. A single-file bind mount fails with "device or r
 The listener does not use TLS, and HTTP Basic sends the password in clear text. Use a trusted
 network or a reverse proxy that adds TLS.
 
-You can also upload from a script:
+You can also upload from a script. `curl` asks for the password:
 
 ```bash
-curl -u admin:"$CONFIG_UPLOAD_PASSWORD" -F file=@config.yaml http://localhost:8080/config
+curl -u admin -F file=@config.yaml http://localhost:8080/config
 ```
 
 ## Documentation

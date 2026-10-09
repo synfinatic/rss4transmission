@@ -850,30 +850,68 @@ func TestConfigReloader_ReloadNow_CancelsPendingDebounce(t *testing.T) {
 	}
 }
 
+// testApr1Hash is an Apache MD5 hash. The check must refuse it.
+const testApr1Hash = "$apr1$r31.....$HqJZimcKQFAMYayBlzkrA/" //nolint:gosec // G101: a sample hash
+
+// testBcryptHash is a bcrypt hash, as made by `htpasswd -nbB`.
+const testBcryptHash = "$2y$05$ZpR0cIzJwBtEQmqBmo1kqeqVuA1D7F0kJ0KQdLW1uG0VjxZ2gq1Lq"
+
+func TestParseConfigUpload(t *testing.T) {
+	tests := map[string]struct {
+		in       string
+		wantUser string
+		wantHash string
+		wantErr  string
+	}{
+		"user and hash":    {"admin:" + testBcryptHash, "admin", testBcryptHash, ""},
+		"other user":       {"bob:" + testBcryptHash, "bob", testBcryptHash, ""},
+		"no colon":         {testBcryptHash, "", "", "user:hash"},
+		"empty user":       {":" + testBcryptHash, "", "", "user:hash"},
+		"cleartext":        {"admin:hunter2", "", "", "htpasswd -nbB"},
+		"apache md5 hash":  {"admin:" + testApr1Hash, "", "", "htpasswd -nbB"},
+		"empty hash":       {"admin:", "", "", "htpasswd -nbB"},
+		"htpasswd newline": {"admin:" + testBcryptHash + "\n", "admin", testBcryptHash, ""},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			user, hash, err := parseConfigUpload(tc.in)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error %v does not mention %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if user != tc.wantUser || hash != tc.wantHash {
+				t.Errorf("got %q, %q", user, hash)
+			}
+		})
+	}
+}
+
 func TestWatchCmd_ValidateConfigUpload(t *testing.T) {
+	auth := "admin:" + testBcryptHash
 	tests := map[string]struct {
 		cmd     WatchCmd
 		wantErr string
 	}{
 		"off needs nothing": {WatchCmd{}, ""},
-		"on without a password": {
-			WatchCmd{ConfigUpload: true, ConfigUploadUser: "admin", PrivateListen: "8080", PublicListen: "9090"},
-			"--config-upload-password",
+		"bad value": {
+			WatchCmd{ConfigUpload: "hunter2", PrivateListen: "8080", PublicListen: "9090"},
+			"--config-upload",
 		},
 		"on without a private listener": {
-			WatchCmd{ConfigUpload: true, ConfigUploadUser: "admin", ConfigUploadPassword: "x", PublicListen: "9090"},
+			WatchCmd{ConfigUpload: auth, PublicListen: "9090"},
 			"--private-listen",
 		},
 		"on with a single listener": {
-			WatchCmd{ConfigUpload: true, ConfigUploadUser: "admin", ConfigUploadPassword: "x", PrivateListen: "8080"},
+			WatchCmd{ConfigUpload: auth, PrivateListen: "8080"},
 			"--public-listen",
 		},
-		"on without a user": {
-			WatchCmd{ConfigUpload: true, ConfigUploadPassword: "x", PrivateListen: "8080", PublicListen: "9090"},
-			"--config-upload-user",
-		},
 		"fully set": {
-			WatchCmd{ConfigUpload: true, ConfigUploadUser: "admin", ConfigUploadPassword: "x", PrivateListen: "8080", PublicListen: "9090"},
+			WatchCmd{ConfigUpload: auth, PrivateListen: "8080", PublicListen: "9090"},
 			"",
 		},
 	}
@@ -893,10 +931,8 @@ func TestWatchCmd_ValidateConfigUpload(t *testing.T) {
 	}
 }
 
-func TestWatchCmd_ConfigUploadFlagsReadEnvironment(t *testing.T) {
-	t.Setenv("CONFIG_UPLOAD", "true")
-	t.Setenv("CONFIG_UPLOAD_USER", "bob")
-	t.Setenv("CONFIG_UPLOAD_PASSWORD", "hunter2")
+func TestWatchCmd_ConfigUploadFlagReadsEnvironment(t *testing.T) {
+	t.Setenv("CONFIG_UPLOAD", "bob:"+testBcryptHash)
 
 	var cli CLI
 	parser, err := kong.New(&cli)
@@ -906,14 +942,12 @@ func TestWatchCmd_ConfigUploadFlagsReadEnvironment(t *testing.T) {
 	if _, err := parser.Parse([]string{"watch"}); err != nil {
 		t.Fatal(err)
 	}
-
-	w := cli.Watch
-	if !w.ConfigUpload || w.ConfigUploadUser != "bob" || w.ConfigUploadPassword != "hunter2" {
-		t.Errorf("env not applied: %+v", w)
+	if cli.Watch.ConfigUpload != "bob:"+testBcryptHash {
+		t.Errorf("env not applied: %+v", cli.Watch)
 	}
 }
 
-func TestWatchCmd_ConfigUploadUserDefaultsToAdmin(t *testing.T) {
+func TestWatchCmd_ConfigUploadIsOffByDefault(t *testing.T) {
 	var cli CLI
 	parser, err := kong.New(&cli)
 	if err != nil {
@@ -922,7 +956,7 @@ func TestWatchCmd_ConfigUploadUserDefaultsToAdmin(t *testing.T) {
 	if _, err := parser.Parse([]string{"watch"}); err != nil {
 		t.Fatal(err)
 	}
-	if cli.Watch.ConfigUploadUser != "admin" || cli.Watch.ConfigUpload {
-		t.Errorf("unexpected defaults: %+v", cli.Watch)
+	if cli.Watch.ConfigUpload != "" {
+		t.Errorf("unexpected default: %+v", cli.Watch)
 	}
 }

@@ -32,6 +32,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 //go:embed web/config.html
@@ -45,10 +47,11 @@ const maxConfigUploadBytes = 1 << 20
 type configUploadDeps struct {
 	// Path is the config file in effect.
 	Path func() string
-	// User and Password are the HTTP Basic credentials. They come from flags,
+	// User and PasswordHash are the HTTP Basic credentials. They come from flags,
 	// not from the config file, so a bad upload cannot lock the user out.
-	User     string
-	Password string //nolint:gosec // G117: an in-memory credential, never marshaled
+	// PasswordHash is a bcrypt hash, as made by `htpasswd -nbB`.
+	User         string
+	PasswordHash string
 	// Reload applies the file on disk and returns the error. It is
 	// configReloader.reloadNow in production.
 	Reload func() error
@@ -104,15 +107,15 @@ func registerConfigRoutes(mux *http.ServeMux, deps configUploadDeps, nav navConf
 	}))
 }
 
-// basicAuth wraps next in an HTTP Basic check. The credentials are compared in
-// constant time and nothing is hashed: the password is held in memory only,
-// so there is no stored value to protect with a slow hash.
+// basicAuth wraps next in an HTTP Basic check. The user name is compared in
+// constant time. The password is checked against a bcrypt hash, so the
+// cleartext is never configured. The bcrypt check always runs, even for a
+// wrong user or a missing header, so the time does not tell which field failed.
 func basicAuth(deps configUploadDeps, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()
-		// Evaluate both comparisons, so the time does not tell which one failed.
 		userOK := secureEqual(user, deps.User)
-		passOK := secureEqual(pass, deps.Password)
+		passOK := bcrypt.CompareHashAndPassword([]byte(deps.PasswordHash), []byte(pass)) == nil
 		if !ok || !userOK || !passOK {
 			w.Header().Set("WWW-Authenticate", `Basic realm="rss4transmission config", charset="UTF-8"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)

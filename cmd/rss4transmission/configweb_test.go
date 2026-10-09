@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -36,11 +37,14 @@ func newUploadFixture(t *testing.T) *uploadFixture {
 	f := &uploadFixture{path: filepath.Join(t.TempDir(), "config.yaml")}
 	require.NoError(t, os.WriteFile(f.path, []byte(oldConfig), 0640)) //nolint:gosec // the test needs a non-default mode
 
+	hash, err := bcrypt.GenerateFromPassword([]byte(uploadPass), bcrypt.MinCost)
+	require.NoError(t, err)
+
 	f.mux = http.NewServeMux()
 	registerConfigRoutes(f.mux, configUploadDeps{
-		Path:     func() string { return f.path },
-		User:     uploadUser,
-		Password: uploadPass,
+		Path:         func() string { return f.path },
+		User:         uploadUser,
+		PasswordHash: string(hash),
 		Reload: func() error {
 			var err error
 			if f.reloads < len(f.reloadErrs) {
@@ -298,4 +302,34 @@ func TestSecureEqual(t *testing.T) {
 			assert.Equal(t, tc.want, secureEqual(tc.a, tc.b))
 		})
 	}
+}
+
+func TestBasicAuth_RejectsTheHashAsPassword(t *testing.T) {
+	f := newUploadFixture(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte(uploadPass), bcrypt.MinCost)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/config", nil)
+	req.SetBasicAuth(uploadUser, string(hash))
+	rec := httptest.NewRecorder()
+	f.mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestBasicAuth_BadHashRefusesEveryone(t *testing.T) {
+	mux := http.NewServeMux()
+	registerConfigRoutes(mux, configUploadDeps{
+		Path:         func() string { return "unused" },
+		User:         uploadUser,
+		PasswordHash: uploadPass, // cleartext, not a hash
+		Reload:       func() error { return nil },
+	}, navConfig{Config: navOn()})
+
+	req := httptest.NewRequest(http.MethodGet, "/config", nil)
+	req.SetBasicAuth(uploadUser, uploadPass)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }

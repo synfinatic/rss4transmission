@@ -11,10 +11,10 @@
 
 **Config upload page**
 
-- Added the `--config-upload`, `--config-upload-user`, and `--config-upload-password` flags to the
-  `watch` command (env `CONFIG_UPLOAD`, `CONFIG_UPLOAD_USER`, `CONFIG_UPLOAD_PASSWORD`). They turn
-  on a `/config` page on the private listener. The page takes a dropped `config.yaml`, validates
-  it, applies it, and shows any error. HTTP Basic auth guards the page.
+- Added the `--config-upload` flag to the `watch` command (env `CONFIG_UPLOAD`). Its value is the
+  login as `user:hash`, the output of `htpasswd -nbB`. It turns on a `/config` page on the private
+  listener. The page takes a dropped `config.yaml`, validates it, applies it, and shows any error.
+  HTTP Basic auth guards the page. The cleartext password is not stored.
 
 **Label-based feed selection**
 

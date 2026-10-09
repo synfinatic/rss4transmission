@@ -27,9 +27,9 @@ services:
       - PUBLIC_LISTEN=      # public-facing /cancel, /start, and /healthz only
       - TORRENT_CACHE_DIR=  # directory to cache .torrent files (e.g. /config/torrent-cache)
       # Optional /config upload page. Needs PRIVATE_LISTEN and PUBLIC_LISTEN. See the README.
-      # - CONFIG_UPLOAD=true
-      # - CONFIG_UPLOAD_USER=admin
-      # - CONFIG_UPLOAD_PASSWORD=change-me
+      # user:bcrypt-hash from: htpasswd -nbB admin PASSWORD
+      # Write each $ as $$ here, because Compose reads $ as a variable mark.
+      # - CONFIG_UPLOAD=admin:$$2y$$10$$wfFHZcmVYq8JBjNVSJBjgOtUFD0hyQV/vh/JLi/TbvTOlzqg0V8se
     volumes:
       - /volume1/docker/transmission/rss4transmission:/config
     # Option A — Traefik routes /cancel and /healthz externally (PUBLIC_LISTEN not needed):
