@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.1.1
+
+- Security fix in Golang for SSL CA revocation
+
 ## v2.1.0
 
 ### Changes in behavior

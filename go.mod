@@ -1,6 +1,6 @@
 module github.com/synfinatic/rss4transmission
 
-go 1.26.6
+go 1.26.10
 
 // toolchain go1.23.5
 
