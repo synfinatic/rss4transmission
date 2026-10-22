@@ -6,7 +6,7 @@ go 1.26.10
 
 require (
 	github.com/alecthomas/kong v1.16.1
-	github.com/hekmon/transmissionrpc/v3 v3.0.0
+	github.com/hekmon/transmissionrpc/v3 v3.1.0
 	github.com/inhies/go-bytesize v0.0.0-20220417184213-4913239db9cf
 	github.com/knadh/koanf v1.5.0
 	github.com/knadh/koanf/v2 v2.4.1
@@ -30,7 +30,7 @@ require (
 require (
 	github.com/fsnotify/fsnotify v1.4.9 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
-	github.com/hekmon/cunits/v2 v2.1.0 // indirect
+	github.com/hekmon/cunits/v2 v2.1.1 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	golang.org/x/net v0.60.0 // indirect; security
