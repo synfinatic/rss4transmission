@@ -261,6 +261,9 @@ func (c *CacheFile) CheckError(item FeedItem) bool {
 // error entry is new or false if it was already cached.
 func (c *CacheFile) AddError(item FeedItem) bool {
 	if c.CheckError(item) {
+		if c.Errors == nil {
+			c.Errors = map[string]int64{}
+		}
 		c.Errors[item.Item.GUID] = time.Now().Add(time.Hour * ERROR_HOLD_DOWN).Unix()
 		return true
 	}

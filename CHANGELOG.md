@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### New features
+
+- A matched torrent that fails now sends a **Torrent Error** alert to `Ntfy.AlertTopic`. For
+  example, the alert goes out when Transmission refuses the connection. Before this change, the
+  error showed only in the log and the history page. The alert for one GUID is sent at most once
+  per hour. New config fields: `Ntfy.TorrentErrorTitle`, `Ntfy.TorrentErrorBody`, and
+  `Ntfy.TorrentErrorPriority` (default `high`).
+
+### Bug fixes
+
+- The seen cache no longer crashes when its file has `"Errors": null`.
+
 ## v2.1.1
 
 - Security fix in Golang for SSL CA revocation

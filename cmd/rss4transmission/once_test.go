@@ -1378,3 +1378,45 @@ func TestPruneTorrentCache(t *testing.T) {
 		t.Error("old file should have been deleted but still exists")
 	}
 }
+
+// A Transmission submit that fails must raise an ntfy alert, but the
+// per-GUID error hold-down must stop the next tick from sending it again.
+func TestDispatch_TorrentError_SendsAlertOncePerHoldDown(t *testing.T) {
+	var titles []string
+	ntfySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		titles = append(titles, r.Header.Get("Title"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ntfySrv.Close()
+	ntfyCfg := NtfyConfig{BaseURL: ntfySrv.URL, AlertTopic: "alerts"}
+	require.NoError(t, ntfyCfg.Validate())
+
+	// A closed server gives "connection refused", as in production.
+	deadSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	endpoint, err := url.Parse(deadSrv.URL)
+	require.NoError(t, err)
+	deadSrv.Close()
+	client, err := transmissionrpc.New(endpoint, nil)
+	require.NoError(t, err)
+
+	c := makeCandidate("guid1", map[string]string{"series": "MotoGP", "round": "RD01", "session": "Race"}, nil)
+	c.torrentBytes = []byte("fake torrent data")
+	feedCfg := makeFeed([]string{"series", "round", "session"}, nil, nil)
+	keys := []string{"series=MotoGP|round=RD01|session=Race"}
+
+	ctx := &RunContext{
+		Cache:        emptyCache(),
+		History:      &HistoryFile{guidIndex: map[string]int{}},
+		Config:       Config{Ntfy: ntfyCfg},
+		transmission: client,
+	}
+	cmd := &OnceCmd{}
+
+	assert.False(t, cmd.dispatch(ctx, feedCfg, "testfeed", c, keys))
+	assert.False(t, cmd.dispatch(ctx, feedCfg, "testfeed", c, keys))
+
+	assert.Equal(t, []string{"Torrent Error"}, titles, "alert must be sent exactly once within the hold-down")
+	records := ctx.History.GetRecords()
+	require.Len(t, records, 1)
+	assert.Equal(t, "error", records[0].Outcome)
+}

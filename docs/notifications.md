@@ -20,6 +20,8 @@ RSS4Transmission supports five kinds of push notifications via [ntfy](https://nt
   the reload succeeded or failed; on failure, the notification body includes the actual error
   (e.g. a YAML parse error), so a bad edit is visible immediately without tailing logs.
 - **Port closed / reopened** — see [Port Notifications](#port-notifications) below.
+- **Torrent error** — sent to `Ntfy.AlertTopic` when a matched torrent cannot be submitted to
+  Transmission or downloaded. See [Torrent Error Notifications](#torrent-error-notifications).
 
 ## ntfy and Notifications Configuration
 
@@ -76,6 +78,9 @@ PortCheck:
 | `Ntfy.VpnRotatedTitle` | `"VPN Rotated"` | `text/template` string for the rotation-complete notification title |
 | `Ntfy.VpnRotatedBody` | see [VPN Rotation Notifications](#vpn-rotation-notifications) | `text/template` string for the rotation-complete notification body |
 | `Ntfy.VpnRotatedPriority` | `default` | ntfy priority for rotation-complete notifications |
+| `Ntfy.TorrentErrorTitle` | `"Torrent Error"` | `text/template` string for the torrent-error notification title |
+| `Ntfy.TorrentErrorBody` | `"{{.Title}}\n{{.Error}}"` | `text/template` string for the torrent-error notification body |
+| `Ntfy.TorrentErrorPriority` | `high` | ntfy priority for torrent-error notifications |
 | `PortCheck.Enabled` | `false` | Enables the periodic port-open check when Gluetun is **not** configured (see [Port Notifications](#port-notifications)) |
 | `Notifications.HMACSecret` | — | Secret key for signing cancel/start URLs (HMAC-SHA256) |
 | `Notifications.BaseURL` | — | Public base URL of rss4transmission (used in cancel/start links) |
@@ -85,8 +90,8 @@ Cancel/start links are omitted from notifications when `Notifications.HMACSecret
 `Notifications.BaseURL` is not configured — the torrent started/found notification is still sent,
 just without the action link. Ntfy notifications are entirely disabled when `Ntfy.BaseURL` is not
 set. `Ntfy.Topic` and `Ntfy.AlertTopic` gate their respective notification groups independently:
-torrent started/found/completed notifications require `Topic`, config-reload and port-state
-notifications require `AlertTopic`, and either can be configured without the other.
+torrent started/found/completed notifications require `Topic`, config-reload, port-state, and
+torrent-error notifications require `AlertTopic`, and either can be configured without the other.
 
 > **Breaking renames:** `Ntfy.ConfigTopic` was renamed to `Ntfy.AlertTopic`. If your config sets
 > `ConfigTopic`, rename it to `AlertTopic` — it now gates both config-reload and port-state
@@ -177,6 +182,25 @@ Ntfy:
     Failed to reload {{.ConfigFile}}:
     {{.Error}}
 ```
+
+## Torrent Error Notifications
+
+When a matched torrent fails, it gets the `error` outcome in the history UI, and an alert goes to
+`Ntfy.AlertTopic`. For example, the alert is sent when Transmission refuses the connection, or the
+`.torrent` file cannot be fetched.
+
+A failed torrent is not added to the seen cache, so each `watch` tick tries it again. To stop an
+alert on every retry, the alert for one GUID is sent at most once per hour.
+
+The `TorrentErrorTitle` and `TorrentErrorBody` templates use this context:
+
+| Field | Type | Description |
+|---|---|---|
+| `{{.Title}}` | `string` | RSS item title |
+| `{{.FeedName}}` | `string` | Name of the feed that matched the item |
+| `{{.GUID}}` | `string` | RSS item GUID |
+| `{{.Link}}` | `string` | RSS item link |
+| `{{.Error}}` | `string` | Error text |
 
 ## Port Notifications
 
