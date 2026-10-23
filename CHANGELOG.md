@@ -13,6 +13,8 @@
 ### Bug fixes
 
 - The seen cache no longer crashes when its file has `"Errors": null`.
+- `make docker` now works on older Docker installs that do not have the `buildx` plugin, for
+  example on a Synology NAS. If `docker buildx` is not available, it uses `docker build`.
 
 ## v2.1.1
 

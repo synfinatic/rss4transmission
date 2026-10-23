@@ -222,7 +222,11 @@ $(OUTPUT_NAME): .build_files
 	go build -ldflags='$(LDFLAGS)' -o $(OUTPUT_NAME) ./cmd/$(PROJECT_NAME)/...
 	@echo "Created: $(OUTPUT_NAME)"
 
+# Older docker (e.g. Synology) has no buildx plugin.  Recursive (=) so docker
+# is only probed when the docker target runs.
+DOCKER_BUILD = $(shell docker buildx version >/dev/null 2>&1 && echo "docker buildx build" || echo "docker build")
+
 .PHONY: docker
-docker:
-	docker buildx build -t $(DOCKER_REPO)/$(PROJECT_NAME):v$(PROJECT_VERSION) .
+docker:  ## Build the docker image (uses buildx when available)
+	$(DOCKER_BUILD) -t $(DOCKER_REPO)/$(PROJECT_NAME):v$(PROJECT_VERSION) .
 
