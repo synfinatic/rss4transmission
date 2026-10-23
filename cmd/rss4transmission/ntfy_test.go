@@ -1100,3 +1100,66 @@ func TestSendVpnRotated_CustomTemplate(t *testing.T) {
 
 	assert.Equal(t, "now on 2.2.2.2 (was 1.1.1.1)", body)
 }
+
+// --- Torrent error alert ---
+
+func TestSendTorrentError_Headers(t *testing.T) {
+	captured := captureNtfyRequest(t, "alerts", func(c *NtfyClient) error {
+		return c.SendTorrentError(&NtfyTorrentErrorContext{
+			Title:    "My.Show.S01E01",
+			FeedName: "myfeed",
+			Error:    "connection refused",
+		})
+	})
+
+	assert.Equal(t, "/alerts", captured.URL.Path)
+	assert.Equal(t, "Torrent Error", captured.Header.Get("Title"))
+	assert.Equal(t, "high", captured.Header.Get("Priority"))
+}
+
+func TestSendTorrentError_Body(t *testing.T) {
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		require.NoError(t, err)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "alerts"})
+	require.NoError(t, NewNtfyClient(cfg).SendTorrentError(&NtfyTorrentErrorContext{
+		Title: "My.Show.S01E01",
+		Error: "connection refused",
+	}))
+	assert.Equal(t, "My.Show.S01E01\nconnection refused", string(body))
+}
+
+func TestNtfyValidate_InvalidTorrentErrorPriority(t *testing.T) {
+	cfg := NtfyConfig{BaseURL: "http://x", AlertTopic: "alerts", TorrentErrorPriority: "urgent"}
+	assert.Error(t, cfg.Validate())
+}
+
+func TestNotifyTorrentError_NoopWhenAlertTopicEmpty(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	notifyTorrentError(NtfyConfig{BaseURL: srv.URL, Topic: "t"}, &NtfyTorrentErrorContext{Title: "x"})
+	assert.Equal(t, 0, requests)
+}
+
+func TestNotifyTorrentError_SendFailureIsNonFatal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cfg := mustValidateNtfyConfig(t, NtfyConfig{BaseURL: srv.URL, AlertTopic: "alerts"})
+	assert.NotPanics(t, func() {
+		notifyTorrentError(cfg, &NtfyTorrentErrorContext{Title: "x"})
+	})
+}

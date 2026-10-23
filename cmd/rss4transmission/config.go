@@ -106,6 +106,9 @@ type NtfyConfig struct {
 	VpnRotatedTitle        string `koanf:"VpnRotatedTitle"`
 	VpnRotatedBody         string `koanf:"VpnRotatedBody"`
 	VpnRotatedPriority     string `koanf:"VpnRotatedPriority"`
+	TorrentErrorTitle      string `koanf:"TorrentErrorTitle"`
+	TorrentErrorBody       string `koanf:"TorrentErrorBody"`
+	TorrentErrorPriority   string `koanf:"TorrentErrorPriority"`
 
 	startedTitleTmpl        *template.Template
 	startedBodyTmpl         *template.Template
@@ -125,6 +128,8 @@ type NtfyConfig struct {
 	vpnRotatedTitleTmpl     *template.Template
 	vpnRotatedBodyTmpl      *template.Template
 	portOpenedBodyTmpl      *template.Template
+	torrentErrorTitleTmpl   *template.Template
+	torrentErrorBodyTmpl    *template.Template
 }
 
 type PortCheckConfig struct {

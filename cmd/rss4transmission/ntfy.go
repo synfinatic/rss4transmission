@@ -44,6 +44,16 @@ type NtfyVpnRotatedContext struct {
 	SameExit   bool
 }
 
+// NtfyTorrentErrorContext holds the data available to the templates for the
+// alert sent when a matched torrent cannot be submitted or downloaded.
+type NtfyTorrentErrorContext struct {
+	Title    string
+	FeedName string
+	GUID     string
+	Link     string
+	Error    string
+}
+
 // NtfyTemplateContext holds all torrent data available to notification templates.
 type NtfyTemplateContext struct {
 	Title     string
@@ -177,6 +187,13 @@ func (c *NtfyConfig) Validate() error {
 				"{{if .SameExit}}\nReconnected to the same exit{{end}}",
 			"default",
 			"VpnRotatedTitle", "VpnRotatedBody", "VpnRotatedPriority")
+		if err != nil {
+			return err
+		}
+		c.torrentErrorTitleTmpl, c.torrentErrorBodyTmpl, err = compileNotificationTemplates(
+			&c.TorrentErrorTitle, &c.TorrentErrorBody, &c.TorrentErrorPriority,
+			"Torrent Error", "{{.Title}}\n{{.Error}}", "high",
+			"TorrentErrorTitle", "TorrentErrorBody", "TorrentErrorPriority")
 		if err != nil {
 			return err
 		}
@@ -345,6 +362,18 @@ func (c *NtfyClient) SendVpnRotated(ctx *NtfyVpnRotatedContext) error {
 	return c.post(c.cfg.AlertTopic, title, body, "", c.cfg.VpnRotatedPriority)
 }
 
+func (c *NtfyClient) SendTorrentError(ctx *NtfyTorrentErrorContext) error {
+	title, err := renderTemplate(c.cfg.torrentErrorTitleTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	body, err := renderTemplate(c.cfg.torrentErrorBodyTmpl, ctx)
+	if err != nil {
+		return err
+	}
+	return c.post(c.cfg.AlertTopic, title, body, "", c.cfg.TorrentErrorPriority)
+}
+
 // notifyConfigReload sends a config-reload outcome notification to ntfy's
 // AlertTopic. No-op when BaseURL or AlertTopic is unset. Send failures are
 // logged as warnings, never fatal — a broken notification channel must not
@@ -423,5 +452,18 @@ func notifyVpnRotated(cfg NtfyConfig, ctx *NtfyVpnRotatedContext) {
 	client := NewNtfyClient(cfg)
 	if err := client.SendVpnRotated(ctx); err != nil {
 		log.WithError(err).Warn("Failed to send ntfy vpn-rotated notification")
+	}
+}
+
+// notifyTorrentError sends the "matched torrent failed" alert to ntfy's
+// AlertTopic. Same no-op and failure rules as notifyPortClosed.
+func notifyTorrentError(cfg NtfyConfig, ctx *NtfyTorrentErrorContext) {
+	if cfg.BaseURL == "" || cfg.AlertTopic == "" {
+		return
+	}
+
+	client := NewNtfyClient(cfg)
+	if err := client.SendTorrentError(ctx); err != nil {
+		log.WithError(err).Warn("Failed to send ntfy torrent-error notification")
 	}
 }

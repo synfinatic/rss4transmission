@@ -400,6 +400,18 @@ func TestCheckError_ActiveEntry(t *testing.T) {
 	}
 }
 
+// A cache file with "Errors": null unmarshals to a nil map.
+func TestAddError_NilMap(t *testing.T) {
+	fi := makeFeedItem("nil-map-guid")
+	c := &CacheFile{}
+	if !c.AddError(*fi) {
+		t.Error("AddError should return true for new entry")
+	}
+	if _, ok := c.Errors["nil-map-guid"]; !ok {
+		t.Error("AddError should insert entry into Errors map")
+	}
+}
+
 func TestAddError_NewEntry(t *testing.T) {
 	fi := makeFeedItem("new-error-guid")
 	c := &CacheFile{Errors: map[string]int64{}}

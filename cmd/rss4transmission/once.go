@@ -423,7 +423,7 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 	if cmd.Download {
 		if _, err = w.item.Download(ctx, cmd.DownloadPath, cmd.TorrentCacheDir); err != nil {
 			log.WithError(err).Errorf("Unable to download: %s", w.item.Item.Title)
-			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), labels)
+			ctx.recordDispatchError(feedName, w.item, err, labels)
 			return false
 		}
 		ctx.recordHistory(feedName, w.item.Item, "downloaded", "", labels)
@@ -441,13 +441,13 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 		torrentBytes, err := ensureTorrentBytes(w.item, cmd.TorrentCacheDir, w.torrentBytes)
 		if err != nil {
 			log.WithError(err).Errorf("Unable to fetch torrent data for %s", w.item.Item.Title)
-			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), labels)
+			ctx.recordDispatchError(feedName, w.item, err, labels)
 			return false
 		}
 		torrentID, err := w.item.TorrentWithBytes(ctx, feedCfg.DownloadPath, torrentBytes)
 		if err != nil {
 			log.WithError(err).Errorf("Unable to torrent: %s", feedName)
-			ctx.recordHistory(feedName, w.item.Item, "error", err.Error(), labels)
+			ctx.recordDispatchError(feedName, w.item, err, labels)
 			return false
 		}
 		meta := CancelMetadata{
@@ -462,6 +462,24 @@ func (cmd *OnceCmd) dispatch(ctx *RunContext, feedCfg Feed, feedName string, w *
 	}
 	ctx.Cache.AddItem(w.item, labels, keys)
 	return true
+}
+
+// recordDispatchError records a failed dispatch in history and sends an ntfy
+// alert. The failed item is not cached, so every tick retries it. The
+// per-GUID error hold-down in the seen cache stops a repeat alert on each
+// retry.
+func (ctx *RunContext) recordDispatchError(feedName string, item *FeedItem, err error, labels map[string]string) {
+	ctx.recordHistory(feedName, item.Item, "error", err.Error(), labels)
+	if !ctx.Cache.AddError(*item) {
+		return
+	}
+	notifyTorrentError(ctx.Config.Ntfy, &NtfyTorrentErrorContext{
+		Title:    item.Item.Title,
+		FeedName: feedName,
+		GUID:     item.Item.GUID,
+		Link:     item.Item.Link,
+		Error:    err.Error(),
+	})
 }
 
 // retryHistoryItem re-submits a previously skipped/excluded/error history
